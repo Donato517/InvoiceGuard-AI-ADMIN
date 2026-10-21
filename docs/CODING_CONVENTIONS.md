@@ -1,15 +1,16 @@
-# 開發規範與程式碼備註格式 — 前端（Vue 3）
+# 開發規範與程式碼備註格式 — Python 網站（FastAPI + Jinja2）
 
 > InvoiceGuard-AI（前台）與 InvoiceGuard-AI-ADMIN（後台）共用此規範。
+> Python 的部分與 InvoiceGuard-AI-API 相同，三個專案寫法一致。
 
 ## 1. 基本原則
 
-1. 以 **ESLint + Prettier** 自動檢查與格式化（`npm run lint`、`npm run format`），不手動爭論格式。
-2. 元件一律使用 **Composition API + `<script setup>`**，不使用 Options API。
-3. 一個元件只負責一件事；單檔超過約 300 行就考慮拆分。
-4. 識別字用**英文**；備註、畫面文字、錯誤訊息用**繁體中文**。
-5. 跨資料夾 import 一律使用 `@/` 別名，不寫 `../../`。
-6. 前端不存放任何金鑰；`VITE_` 環境變數會公開。
+1. Python 以 **Ruff** 檢查與格式化（`ruff check .`、`ruff format .`）；樣板以 **djLint** 檢查與格式化（`djlint app/templates --lint`、`--reformat`）。
+2. 所有 Python 函式參數與回傳值都要加型別註記。
+3. 識別字（變數、函式、類別、CSS class）用**英文**；備註、畫面文字、錯誤訊息用**繁體中文**。
+4. 商業邏輯寫在 Python，**樣板只負責呈現**。
+5. 密碼、金鑰、連線字串禁止寫在程式碼，一律從 `app.core.config.settings` 讀取。
+6. 資料存取只走固定通道：前台透過 `app/clients/` 呼叫 API；後台透過 `app/db/repositories/` 存取資料庫。
 
 ---
 
@@ -17,190 +18,196 @@
 
 | 對象 | 規則 | 範例 |
 |---|---|---|
-| Vue 元件檔 | PascalCase，至少兩個單字 | `InvoiceCard.vue`、`AppHeader.vue` |
-| 頁面元件 | PascalCase + `View` 結尾 | `InvoiceListView.vue` |
-| 版型元件 | PascalCase + `Layout` 結尾 | `DefaultLayout.vue` |
-| 通用元件 | `Base` 開頭 | `BaseButton.vue`、`BaseModal.vue` |
-| JS 檔案 | camelCase | `http.js`、`format.js` |
-| 資料夾 | 小寫 kebab-case | `views/invoice/`、`components/common/` |
-| 組合式函式 | `use` 開頭 | `useLoading.js` → `useLoading()` |
-| Pinia store | 檔名為名詞，函式 `use<名詞>Store` | `user.js` → `useUserStore()` |
-| 函式 / 變數 | camelCase，函式以動詞開頭 | `fetchInvoices()`、`totalAmount` |
-| API 函式 | `fetch`（查詢）/ `create` / `update` / `delete` / 動詞 | `fetchInvoice()`、`uploadInvoice()` |
-| 事件處理 | `handle` / `on` 開頭 | `handleSubmit()` |
-| 布林 | `is` / `has` / `can` 開頭 | `isLoggedIn`、`hasPermission` |
-| 常數 | UPPER_SNAKE_CASE | `INVOICE_STATUS` |
-| 路由 name | kebab-case | `invoice-detail` |
-| CSS class | kebab-case，BEM 結構 | `.app-header__logo`、`.risk-badge--danger` |
+| Python 模組 / 資料夾 | snake_case | `invoice_review_service.py`、`routers/` |
+| 類別 | PascalCase | `ApiError`、`InvoiceStatus` |
+| 函式 / 變數 | snake_case，函式以動詞開頭 | `fetch_invoices()`、`total_amount` |
+| 常數 | UPPER_SNAKE_CASE | `SESSION_COOKIE_NAME` |
+| 布林 | `is_` / `has_` / `can_` 開頭 | `is_active` |
+| 路由函式 | `<名詞>_<頁面類型>` | `invoice_list()`、`invoice_detail()` |
+| 網址路徑 | 小寫 kebab-case、資源用複數 | `/invoices`、`/audit-logs` |
+| 樣板資料夾 | 與 routers 檔名一致 | `routers/invoices.py` → `templates/pages/invoices/` |
+| 樣板檔 | 小寫 snake_case，表達頁面類型 | `list.html`、`detail.html`、`job_runs.html` |
+| CSS 檔 | 小寫 kebab-case | `components.css` |
+| CSS class | kebab-case，BEM 結構 | `.app-header__logo`、`.badge--flagged` |
 | CSS 變數 | `--<類別>-<名稱>` | `--color-primary`、`--space-4` |
 | 圖片檔 | 小寫 kebab-case，`<用途>-<描述>` | `banner-home.webp`、`icon-upload.svg` |
-| 測試檔 | 與被測檔同名 + `.test.js` | `format.test.js` |
+| 測試檔 / 函式 | `test_<模組>.py`、`test_<行為>_<預期>` | `test_protected_page_redirects_to_login` |
 
 ---
 
 ## 3. 備註格式
 
-### 3.1 JS 檔案開頭 — 每個 `.js` 檔必填
+### 3.1 Python 檔案開頭（Module Docstring）— 每個 `.py` 檔必填
 
-```js
-/**
- * @file 發票 API
- * @description 前台使用者的發票 API：列表、詳情、上傳、重新分析。對應後端：/api/v1/invoices
- */
+```python
+"""
+模組名稱：app.routers.invoices
+功能說明：我的發票——列表、上傳、詳情（皆需登入）。
+路由：GET /invoices、GET /invoices/upload、GET /invoices/{invoice_id}
+注意事項：
+    - 列表頁為「router → clients → 樣板」的完整參考寫法。
+"""
+```
+
+| 欄位 | 必填 | 說明 |
+|---|---|---|
+| 模組名稱 | ✓ | import 路徑 |
+| 功能說明 | ✓ | 一句話說清楚這個檔案負責什麼 |
+| 路由 | routers 必填 | 此檔處理的網址 |
+| 相依模組 / 相依設定 | | 主要相依的內部模組或環境變數 |
+| 注意事項 | | 使用限制、副作用、安全考量 |
+
+`__init__.py` 與簡單檔案可用一行 docstring。**作者與異動歷史以 git 為準**，檔頭不寫異動紀錄（後台 DB Model 檔例外，見 `app/db/README.md`）。
+
+### 3.2 Python 函式 Docstring（Google Style）
+
+公開函式必填；簡單到看名稱就懂的私有函式可省略。
+
+```python
+async def fetch_invoices(token: str, *, page: int = 1, status: str | None = None) -> dict[str, Any]:
+    """取得我的發票列表（GET /invoices）。
+
+    Args:
+        token: 使用者的 access token。
+        page: 頁碼，從 1 開始。
+        status: 依狀態篩選；None 表示全部。
+
+    Returns:
+        {"items": [...], "total": int, "page": int, "page_size": int}
+
+    Raises:
+        ApiError: API 回傳錯誤或連線失敗。
+    """
+```
+
+區塊：第一行摘要（必填）→ 詳細說明 → `Args:` → `Returns:` / `Yields:` → `Raises:` → `Example:`。
+
+### 3.3 Jinja2 樣板開頭 — 每個 `.html` 樣板必填
+
+使用 Jinja 備註 `{# #}`（不會輸出到瀏覽器）：
+
+```jinja
+{#
+  @template pages/invoices/list.html
+  @description 我的發票列表：依狀態篩選（HTMX 只替換表格區塊）、分頁。
+  @route GET /invoices（需登入）
+  @context result: dict       API 分頁結果 {items, total, page, page_size}
+  @context status: str | None 目前篩選的狀態；None 為全部
+#}
 ```
 
 | 標籤 | 必填 | 說明 |
 |---|---|---|
-| `@file` | ✓ | 檔案名稱或用途（簡短） |
-| `@description` | ✓ | 負責什麼、使用限制、對應的後端路徑 |
-| `@example` | | 用法不直覺時（composables 建議必填） |
+| `@template` | ✓ | 相對於 `app/templates/` 的路徑 |
+| `@description` | ✓ | 頁面 / 片段用途 |
+| `@route` | 頁面樣板必填 | 對應網址、是否需登入 |
+| `@context` | 有傳入變數時 | `名稱: 型別  說明`，每個變數一行 |
+| `@block` | 版型 / base 必填 | 子樣板可覆寫的 block 與用途 |
 
-### 3.2 Vue 元件開頭 — 每個 `.vue` 檔必填
+### 3.4 樣板內備註
 
-寫在檔案最上方、`<script setup>` 之前：
+```jinja
+{# ✓ 內部說明一律用 Jinja 備註：不會出現在瀏覽器原始碼 #}
+{# 選擇狀態後由 HTMX 取回整頁，只替換 #invoice-table #}
 
-```vue
-<!--
-  @component InvoiceDetailView
-  @description 發票詳情：發票資料、明細、AI 風險分數與判斷理由。
-  @route /invoices/:id （name: invoice-detail，需登入）
--->
+<!-- ✗ 不要用 HTML 備註寫內部說明：任何人按「檢視原始碼」都看得到 -->
 ```
 
-| 標籤 | 必填 | 說明 |
-|---|---|---|
-| `@component` | ✓ | 元件名稱（與檔名一致） |
-| `@description` | ✓ | 元件用途 |
-| `@route` | 頁面元件必填 | 路徑、路由 name、是否需登入 |
-| `@slot` | 有 slot 時 | 各 slot 用途 |
-
-> **作者與異動歷史以 git 為準**，檔頭不寫異動紀錄，避免備註與實際內容不同步。
-
-### 3.3 函式（JSDoc）
-
-所有 `export` 的函式必填；內部小函式在用途不明顯時才寫。
-
-```js
-/**
- * 取得我的發票列表
- * @param {Object} [params] - 查詢條件
- * @param {number} [params.page=1] - 頁碼
- * @param {string} [params.status] - 依狀態篩選，值見 constants/invoice.js
- * @returns {Promise<{ items: Object[], total: number }>} 分頁結果
- * @throws {ApiError} 呼叫失敗時（見 api/http.js）
- */
-export function fetchInvoices(params) {
-  return http.get('/invoices', { params })
-}
-```
-
-| 標籤 | 格式 |
-|---|---|
-| `@param` | `{型別} 名稱 - 說明`；選填參數用 `[名稱]`，有預設值用 `[名稱=預設]` |
-| `@returns` | `{型別} 說明` |
-| `@throws` | 會拋出 / reject 的錯誤 |
-| `@example` | 用法範例 |
-| `@typedef` | 定義共用的物件結構（例：`ApiError`） |
-
-### 3.4 Props / Emits / 狀態
-
-每個 prop、emit、ref 用一行 `/** */` 說明（IDE 滑鼠移上去就看得到）：
-
-```js
-const props = defineProps({
-  /** 發票 ID（由路由參數 :id 傳入） */
-  id: { type: String, required: true },
-  /** 是否顯示明細 */
-  showItems: { type: Boolean, default: false },
-})
-
-const emit = defineEmits({
-  /** 使用者確認複核結果，參數為 'passed' | 'rejected' */
-  review: (decision) => ['passed', 'rejected'].includes(decision),
-})
-
-/** 目前登入的使用者資料，未載入時為 null */
-const profile = ref(null)
-```
-
-### 3.5 行內備註 — 說明「為什麼」，不是「做什麼」
-
-```js
-// ✗ 不好：重複程式碼本身
-count.value++ // count 加 1
-
-// ✓ 好：說明原因
-timeout: 30000, // AI 分析可能較久，逾時設 30 秒
-
-// ✓ 好：說明業務規則
-// Pinia 必須先於 Router 掛載，路由守衛才能使用 store
-createApp(App).use(pinia).use(router).mount('#app')
-```
-
-Template 內的備註使用 `<!-- -->`，只在區塊結構複雜時使用。
-
-### 3.6 標記備註
-
-格式：`// <標記>(<負責人>): <說明> [#<issue 編號>]`
-
-| 標記 | 用途 | 範例 |
-|---|---|---|
-| `TODO` | 待實作 | `// TODO(JerryChien): 加入拖曳上傳 [#18]` |
-| `FIXME` | 已知問題待修正 | `// FIXME(JerryChien): Safari 日期解析錯誤 [#25]` |
-| `NOTE` | 重要提醒，修改前必讀 | `// NOTE: 值須與後端 InvoiceStatus 一致` |
-| `HACK` | 暫時性繞道解法，需說明何時移除 | `// HACK: 套件 bug，升級 2.x 後移除` |
-| `SECURITY` | 安全相關，修改需 review | `// SECURITY: 不可用 v-html 顯示使用者輸入` |
-
-### 3.7 CSS 備註
+### 3.5 CSS 備註
 
 ```css
 /* ==========================================================================
    檔案 / 大區塊標題（說明本檔用途）
    ========================================================================== */
 
-/* ---- 小區塊 ---- */
-.app-header {
-  height: 64px; /* 與 AppSidebar logo 區高度一致 */
+/* ---- 小區塊：對應的樣板或元件 ---- */
+.app-header__nav {
+  height: 64px; /* 與後台側欄 logo 區高度一致 */
 }
 ```
 
-### 3.8 不要寫的備註
+### 3.6 JavaScript 備註（JSDoc）
+
+```js
+/**
+ * @file 全站共用 JavaScript
+ * @description 只放少量通用互動；頁面互動優先使用 HTMX 屬性。
+ */
+
+/**
+ * 送出前確認：表單加上 data-confirm 屬性即會先跳出確認視窗。
+ * @example
+ * <form method="post" action="/logout" data-confirm="確定要登出嗎？">
+ */
+```
+
+### 3.7 行內備註 — 說明「為什麼」，不是「做什麼」
+
+```python
+# ✗ 不好：重複程式碼本身
+page = page + 1  # 頁碼加 1
+
+# ✓ 好：說明原因
+# 不認得的狀態值視為「全部」，避免把任意字串傳給 API
+status = status if status in INVOICE_STATUS_LABEL else None
+```
+
+### 3.8 標記備註
+
+| 語言 | 格式 |
+|---|---|
+| Python | `# <標記>(<負責人>): <說明> [#<issue>]` |
+| Jinja2 樣板 | `{# <標記>(<負責人>): <說明> [#<issue>] #}` |
+| CSS / JS | `/* <標記>(<負責人>): <說明> */`、`// <標記>(<負責人>): <說明>` |
+
+| 標記 | 用途 | 範例 |
+|---|---|---|
+| `TODO` | 待實作 | `# TODO(JerryChien): 加入上傳進度條 [#18]` |
+| `FIXME` | 已知問題待修正 | `# FIXME(JerryChien): 跨月發票期別計算錯誤 [#31]` |
+| `NOTE` | 重要提醒，修改前必讀 | `{# NOTE: result 是 dict，需用 result["items"] #}` |
+| `HACK` | 暫時性繞道解法，需說明何時移除 | `# HACK: 套件 bug，升級 2.x 後移除` |
+| `SECURITY` | 安全相關，修改需 review | `# SECURITY: next 參數必須經過 safe_next_path()` |
+
+### 3.9 不要寫的備註
 
 - 被註解掉的舊程式碼 → 直接刪除，需要時從 git 找回
 - 與程式碼重複、沒有新資訊的備註
 - 作者、日期、修改歷史 → 交給 git
-- 任何金鑰、帳號密碼、個資
+- 任何密碼、金鑰、個資
+- 寫在 HTML 備註 `<!-- -->` 裡的內部說明
 
 ---
 
-## 4. Vue 元件撰寫規則
+## 4. 樣板撰寫規則
 
-1. SFC 區塊順序：**檔頭備註 → `<script setup>` → `<template>` → `<style scoped>`**
-2. `<script setup>` 內順序：import → props / emits → store / router → 狀態（ref / reactive）→ computed → 函式 → 生命週期
-3. Props 一定要寫型別；需要時加 `required` 或 `default`
-4. Template 內不寫複雜運算，抽成 `computed`
-5. `v-for` 一定要有唯一的 `:key`（使用資料 id，不用 index）
-6. 禁止用 `v-html` 顯示使用者或 API 輸入的內容（XSS 風險）
-7. 頁面元件負責取資料，`components/common/` 只透過 props / emits 溝通
-
----
-
-## 5. API 呼叫規則
-
-1. 一律透過 `src/api/modules/*.js`，元件內禁止直接 `axios` / `fetch`
-2. 一個後端資源一個檔案，函式要有 JSDoc 並註明對應的後端路徑
-3. 錯誤統一為 `ApiError`，畫面顯示 `error.message`；需要特別處理時判斷 `error.code`
-4. API 位址只從 `import.meta.env.VITE_API_BASE_URL` 取得，禁止寫死
+1. 頁面一律 `{% extends "layouts/<版型>.html" %}`，只覆寫 `title`、`content` 等 block；不要直接繼承 `base.html`
+2. 多頁共用的區塊抽成 `partials/`，用 `{% include %}` 引入
+3. **樣板不寫商業邏輯**：只做顯示用的判斷與迴圈，計算放在 Python
+4. **禁止**對使用者或 API / 資料庫資料使用 `|safe`（會造成 XSS）
+5. dict 的 `items` 鍵要寫 `result["items"]`；`result.items` 會取到 dict 的方法
+6. 靜態檔網址一律用 `{{ static_url('css/main.css') }}`（自動附版本參數）
+7. 站內連結直接寫路徑（`href="/invoices"`）。不使用 `url_for()`：它會產生含 `http://` 的完整網址，在 Vercel 代理後方可能變成不安全的混合內容（djLint J018 因此關閉）
+8. 會變更資料的操作一律用 `<form method="post">`，路由加上 `Depends(verify_same_origin)`；不要用 GET 連結做刪除 / 登出
+9. 表單欄位都要有 `<label for>`；圖片都要有 `alt`
 
 ---
 
-## 6. 樣式規則
+## 5. HTMX 使用規則
 
-1. 元件樣式一律 `<style scoped>`
-2. 顏色、字級、間距、圓角使用 `variables.css` 的 CSS 變數，禁止寫死
-3. class 採 BEM：`區塊__元素--狀態`，例：`.invoice-card__title--muted`
-4. 避免 `!important` 與 ID 選擇器
-5. 全站共用樣式才放 `assets/css/main.css`
+1. 先確保**不靠 JavaScript 也能用**（一般連結 / 表單），再用 `hx-*` 屬性加強體驗
+2. 優先用 `hx-select` 從整頁回應中取出要替換的區塊，路由不必另外寫「片段版」
+3. 需要專用片段時，片段樣板放在 `templates/pages/<功能>/_<名稱>.html`（底線開頭）
+4. 不要在 `main.js` 用 `fetch` 呼叫 API；資料一律由伺服器端處理
+
+---
+
+## 6. CSS 規則
+
+1. 顏色、字級、間距、圓角使用 `variables.css` 的 CSS 變數，禁止寫死
+2. class 採 BEM：`區塊__元素--狀態`，例：`.invoice-card__title--muted`
+3. 共用元件（按鈕、表單、表格…）放 `components.css`；版型與頁面樣式放 `main.css` 對應區塊
+4. 單一頁面樣式變多時，拆成 `css/pages/<頁面>.css`，在該頁樣板的 `{% block head %}` 載入
+5. 避免 `!important` 與 ID 選擇器；不寫 inline style
 
 ---
 
@@ -208,20 +215,33 @@ Template 內的備註使用 `<!-- -->`，只在區塊結構複雜時使用。
 
 | 類型 | 建議格式 | 位置 |
 |---|---|---|
-| 照片、橫幅 | WebP（必要時 JPG） | `src/assets/img/` |
-| 圖示、Logo | SVG | `src/assets/icons/` |
-| 需固定網址（favicon、OG 圖） | SVG / PNG | `public/` |
+| 照片、橫幅 | WebP（必要時 JPG） | `app/static/img/` |
+| 圖示、Logo、favicon | SVG | `app/static/icons/` |
+| 字型 | WOFF2 | `app/static/fonts/` |
+| 第三方函式庫 | 原檔 | `app/static/js/vendor/`（記錄版本與授權） |
 
 - 單張圖片建議 **200 KB 以下**，上傳前先壓縮
 - 檔名小寫 kebab-case，不使用中文與空白
-- `<img>` 一定要有 `alt`
+- 不從外部 CDN 載入 JS / CSS（避免依賴第三方服務）
 
 ---
 
-## 8. 提交前檢查清單
+## 8. Python 其他規則
 
-- [ ] `npm run lint`、`npm run test`、`npm run build` 通過
-- [ ] 新檔案都有檔頭備註，export 的函式都有 JSDoc
+- **Import 順序**（Ruff 自動排序）：標準函式庫 → 第三方套件 → `app.` 開頭的專案模組
+- **例外處理**：可預期錯誤拋出 `app.core.exceptions` 或 `ApiError`，由全域處理器顯示錯誤頁；不要 `except Exception: pass`
+- **日誌**：`logger = logging.getLogger(__name__)`，使用 `%s` 參數而不是 f-string；禁止記錄密碼、token、cookie
+- **時間**：一律 timezone-aware，顯示時用 `|taipei_date`、`|taipei_datetime` filter
+- **金額**：一律 `Decimal` 或字串，顯示時用 `|currency` filter，禁止 `float`
+- **測試**：單元測試不呼叫真實 API / 資料庫，以 monkeypatch 替換
+
+---
+
+## 9. 提交前檢查清單
+
+- [ ] `ruff check .` 無錯誤、`ruff format .` 已執行
+- [ ] `djlint app/templates --lint` 無錯誤、`djlint app/templates --reformat` 已執行
+- [ ] `pytest` 全部通過
+- [ ] 新的 `.py` 檔與樣板都有檔頭備註，公開函式都有 docstring
 - [ ] 新增的 `TODO` 都有負責人
-- [ ] 沒有 `console.log` 殘留（除錯用的請刪除）
-- [ ] 沒有寫死的色碼、API 網址、金鑰
+- [ ] 沒有寫死的色碼、網址、金鑰

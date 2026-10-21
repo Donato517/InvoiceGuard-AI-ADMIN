@@ -1,0 +1,28 @@
+{#
+  @template pages/dashboard/index.html
+  @description 儀表板：今日上傳數、待複核數、高風險發票數、最近排程狀態。
+  @route GET /dashboard（需管理者登入）
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}儀表板{% endblock %}
+{% block content %}
+  {# TODO(JerryChien): 由 dashboard_service 提供 summary，取代下方的 "-" #}
+  <div class="stat-grid">
+    <section class="stat-card">
+      <h2 class="stat-card__label">今日上傳</h2>
+      <p class="stat-card__value">-</p>
+    </section>
+    <section class="stat-card">
+      <h2 class="stat-card__label">待人工複核</h2>
+      <p class="stat-card__value">-</p>
+    </section>
+    <section class="stat-card">
+      <h2 class="stat-card__label">高風險發票</h2>
+      <p class="stat-card__value">-</p>
+    </section>
+    <section class="stat-card">
+      <h2 class="stat-card__label">最近排程</h2>
+      <p class="stat-card__value">-</p>
+    </section>
+  </div>
+{% endblock content %}

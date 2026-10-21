@@ -7,6 +7,10 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
+indent_size = 4
+
+# 樣板與靜態檔使用 2 格縮排
+[*.{html,css,js,json,svg,yml,yaml,toml}]
 indent_size = 2
 
 [*.md]

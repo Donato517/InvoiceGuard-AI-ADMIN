@@ -1,0 +1,11 @@
+{#
+  @template layouts/blank.html
+  @description 空白版型：無側欄與頁首、內容置中。用於登入頁、錯誤頁。
+  @block content 頁面主要內容
+#}
+{% extends "base.html" %}
+{% block body %}
+  <main class="blank-layout">
+    {% block content %}{% endblock %}
+  </main>
+{% endblock body %}

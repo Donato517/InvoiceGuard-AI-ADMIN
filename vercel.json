@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "functions": {
+    "app/main.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{tests/**,docs/**,tmp/**}"
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -12,7 +17,7 @@
       ]
     },
     {
-      "source": "/assets/(.*)",
+      "source": "/static/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     }
   ]

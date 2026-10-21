@@ -1,0 +1,136 @@
+/* ==========================================================================
+   共用元件樣式：按鈕、表單、表格、提示、標籤、分頁、空狀態
+   在樣板中以 class 使用，例如 <button class="btn btn--primary">。
+   命名採 BEM：區塊__元素--狀態。
+   ========================================================================== */
+
+/* ---- 按鈕 ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.btn--primary {
+  color: var(--color-bg);
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.btn--primary:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.btn--text {
+  padding: 0;
+  color: var(--color-primary);
+  background: none;
+  border: none;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ---- 表單 ---- */
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.form-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ---- 表格 ---- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--color-bg);
+}
+
+.table th,
+.table td {
+  padding: var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ---- 提示訊息 ---- */
+.alert {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.alert--danger {
+  color: var(--color-danger);
+  background-color: rgb(220 38 38 / 8%);
+}
+
+/* ---- 狀態標籤（對應發票狀態值）---- */
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-muted);
+}
+
+.badge--passed {
+  color: var(--color-success);
+}
+
+.badge--flagged,
+.badge--rejected {
+  color: var(--color-danger);
+}
+
+.badge--pending,
+.badge--analyzing {
+  color: var(--color-warning);
+}
+
+/* ---- 分頁 ---- */
+.pagination {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.pagination__item {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.pagination__item--active {
+  color: var(--color-bg);
+  background-color: var(--color-primary);
+}
+
+/* ---- 空狀態 ---- */
+.empty-state {
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--color-text-muted);
+}

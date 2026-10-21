@@ -1,3 +1,0 @@
-# 後台不開放搜尋引擎索引
-User-agent: *
-Disallow: /

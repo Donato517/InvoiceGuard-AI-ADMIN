@@ -1,0 +1,13 @@
+{#
+  @template pages/invoices/detail.html
+  @description 發票審核詳情：原始檔、辨識結果、AI 判斷理由，並提供核准 / 駁回。
+  @route GET /invoices/{invoice_id}（需管理者登入）
+  @context invoice_id: int 發票 ID
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}發票審核詳情{% endblock %}
+{% block content %}
+  <p>發票 #{{ invoice_id }}</p>
+  {# TODO(JerryChien): 核准 / 駁回使用 POST 表單送到 /invoices/{invoice_id}/review #}
+  <p class="empty-state">內容建置中</p>
+{% endblock content %}

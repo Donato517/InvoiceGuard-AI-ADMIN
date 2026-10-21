@@ -1,0 +1,11 @@
+{#
+  @template pages/invoices/list.html
+  @description 發票審核列表：依狀態 / 風險分數篩選，預設顯示待人工複核（flagged）的發票。
+  @route GET /invoices（需管理者登入）
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}發票審核{% endblock %}
+{% block content %}
+  {# TODO(JerryChien): 篩選列 + 表格，寫法參考 pages/system/job_runs.html #}
+  <p class="empty-state">內容建置中</p>
+{% endblock content %}

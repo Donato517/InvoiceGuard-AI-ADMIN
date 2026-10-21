@@ -1,7 +1,13 @@
-# ---- 相依套件 / 建置輸出 ----
-node_modules/
-dist/
-coverage/
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # ---- 環境變數（只提交 .env.example）----
 .env

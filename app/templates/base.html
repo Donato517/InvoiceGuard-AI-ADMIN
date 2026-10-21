@@ -1,0 +1,31 @@
+{#
+  @template base.html
+  @description 所有頁面的 HTML 骨架：<head>、全站 CSS / JS。版型（layouts/）繼承此檔，頁面不直接繼承。
+  @block title   頁面標題（瀏覽器分頁顯示「標題 | 網站名稱」，後台版型也用於頁首）
+  @block head    額外的 <head> 內容，例如頁面專用 CSS
+  @block body    <body> 內容（由版型填入）
+  @block scripts 頁面專用 JS
+#}
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>
+      {% block title %}{% endblock %}
+      | {{ SITE_NAME }}
+    </title>
+    <link rel="icon"
+          type="image/svg+xml"
+          href="{{ static_url('icons/favicon.svg') }}">
+    <link rel="stylesheet" href="{{ static_url('css/main.css') }}">
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    {% block body %}{% endblock %}
+    <script src="{{ static_url('js/vendor/htmx.min.js') }}" defer></script>
+    <script src="{{ static_url('js/main.js') }}" defer></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

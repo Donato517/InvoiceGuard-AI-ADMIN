@@ -1,0 +1,171 @@
+/* ==========================================================================
+   全域樣式入口（於 templates/base.html 載入）
+   載入順序：設計變數 → 重置 → 共用元件 → 本檔（基礎排版、版型、頁面）
+   頁面樣式變多時，拆成 css/pages/<頁面>.css，並在該頁樣板的 {% block head %} 載入。
+   ========================================================================== */
+
+@import url('./variables.css');
+@import url('./reset.css');
+@import url('./components.css');
+
+/* ---- 基礎排版 ---- */
+body {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  color: var(--color-text);
+  background-color: var(--color-bg-muted);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+}
+
+/* ---- 版型：layouts/admin.html ---- */
+.admin-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: 100vh;
+}
+
+.admin-layout__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* 避免寬表格撐破 grid 欄寬 */
+}
+
+.admin-layout__content {
+  flex: 1;
+  padding: var(--space-6);
+}
+
+/* ---- 版型：layouts/blank.html ---- */
+.blank-layout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-4);
+}
+
+/* ---- 側欄：partials/sidebar.html ---- */
+.app-sidebar {
+  color: var(--color-sidebar-text);
+  background-color: var(--color-sidebar-bg);
+}
+
+.app-sidebar__logo {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  padding-inline: var(--space-4);
+  font-weight: 700;
+  color: var(--color-bg);
+}
+
+.app-sidebar__link {
+  display: block;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+}
+
+.app-sidebar__link:hover,
+.app-sidebar__link--active {
+  color: var(--color-bg);
+  background-color: var(--color-primary);
+}
+
+/* ---- 頁首：layouts/admin.html ---- */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--header-height);
+  padding-inline: var(--space-6);
+  background-color: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header__title {
+  margin-right: auto;
+  font-size: var(--font-size-lg);
+}
+
+.app-header__user {
+  color: var(--color-text-muted);
+}
+
+/* ---- 頁面共用區塊 ---- */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+/* 排程狀態標籤（共用 .badge，見 components.css） */
+.badge--success {
+  color: var(--color-success);
+}
+
+.badge--failed {
+  color: var(--color-danger);
+}
+
+.badge--running {
+  color: var(--color-warning);
+}
+
+/* ---- 頁面：儀表板 ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.stat-card {
+  padding: var(--space-6);
+  background-color: var(--color-bg);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card__label {
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.stat-card__value {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+}
+
+/* ---- 頁面：登入 ---- */
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  padding: var(--space-8);
+  background-color: var(--color-bg);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-card__title {
+  margin-bottom: var(--space-6);
+  font-size: var(--font-size-lg);
+}
+
+/* ---- 頁面：錯誤頁 ---- */
+.error-page {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  text-align: center;
+}

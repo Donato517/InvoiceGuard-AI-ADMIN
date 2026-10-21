@@ -1,0 +1,14 @@
+{#
+  @template pages/errors/403.html
+  @description 403 頁面：已登入但沒有權限，或請求來源檢查失敗（由 app.core.exceptions 處理）。
+  @context message: str 拒絕原因
+#}
+{% extends "layouts/blank.html" %}
+{% block title %}沒有權限{% endblock %}
+{% block content %}
+  <section class="error-page">
+    <h1>沒有權限</h1>
+    <p>{{ message }}</p>
+    <a href="/dashboard" class="btn btn--primary">回儀表板</a>
+  </section>
+{% endblock content %}

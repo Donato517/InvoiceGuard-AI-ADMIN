@@ -1,8 +1,9 @@
 {
   "recommendations": [
-    "vue.volar",
-    "dbaeumer.vscode-eslint",
-    "esbenp.prettier-vscode",
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "monosans.djlint",
+    "samuelcolvin.jinjahtml",
     "editorconfig.editorconfig"
   ]
 }

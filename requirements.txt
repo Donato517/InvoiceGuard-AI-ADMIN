@@ -1,0 +1,15 @@
+# =============================================================
+# 正式環境依賴（Vercel 部署時自動安裝）
+# 規則：
+#   - 一律鎖定精確版本（==），升級時整批測試後再更新
+#   - 只放執行期需要的套件；開發 / 測試工具放 requirements-dev.txt
+#   - SQLAlchemy / psycopg / pwdlib 版本需與 InvoiceGuard-AI-API 一致
+# =============================================================
+fastapi==0.156.4
+jinja2==3.1.6
+python-multipart==0.0.32
+pydantic-settings==2.16.1
+SQLAlchemy==2.1.5
+psycopg[binary]==3.3.6
+itsdangerous==2.2.0
+pwdlib[argon2]==0.3.1

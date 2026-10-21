@@ -1,0 +1,13 @@
+{#
+  @template partials/sidebar.html
+  @description 後台左側選單；項目來自 app.constants.MENU_ITEMS，目前所在頁面加上 --active。
+#}
+<aside class="app-sidebar">
+  <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
+  <nav aria-label="後台選單">
+    {% for label, path in MENU_ITEMS %}
+      <a href="{{ path }}"
+         class="app-sidebar__link {% if request.url.path.startswith(path) %}app-sidebar__link--active{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+</aside>

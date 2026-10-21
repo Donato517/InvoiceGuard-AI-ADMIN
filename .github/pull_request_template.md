@@ -21,13 +21,15 @@
 
 ## 畫面截圖
 
-<!-- UI 變更時附上修改前 / 後截圖 -->
+<!-- 畫面變更時附上修改前 / 後截圖 -->
 
 ## 檢查清單
 
-- [ ] 程式碼備註符合 `docs/CODING_CONVENTIONS.md`
-- [ ] `npm run lint`、`npm run test`、`npm run build` 通過
-- [ ] 新增環境變數時：已更新 `.env.example` 與 `docs/ARCHITECTURE.md`
-- [ ] 新增頁面時：已在 `src/router/index.js` 設定 `meta.title`
-- [ ] 沒有寫死的色碼（使用 `variables.css` 變數）與 API 網址
-- [ ] 沒有提交任何金鑰、`.env.local` 檔
+- [ ] 程式碼與樣板備註符合 `docs/CODING_CONVENTIONS.md`
+- [ ] `ruff check .`、`djlint app/templates --lint`、`pytest` 通過
+- [ ] 同步 Model 時：已對照 InvoiceGuard-AI-API 的定義，並在異動紀錄註明 API revision
+- [ ] 沒有在本專案新增 migration 或手動變更資料表結構
+- [ ] 會變更資料的操作已寫入 `audit_logs`
+- [ ] 新增環境變數時：已更新 `.env.example`、`app/core/config.py`、`docs/ARCHITECTURE.md`
+- [ ] 沒有對資料庫資料使用 `|safe`
+- [ ] 沒有提交任何金鑰、`.env` 檔

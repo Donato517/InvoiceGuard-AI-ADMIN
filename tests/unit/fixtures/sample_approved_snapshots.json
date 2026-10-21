@@ -1,0 +1,24 @@
+[
+  {
+    "case_id": "case-0001",
+    "invoice_number": "EC08904069",
+    "invoice_date": "2026-09-15",
+    "seller": {"name": "範例文具有限公司", "tax_id": "27601907"},
+    "sales_amount": "6000",
+    "tax_type": "taxable",
+    "tax_amount": "300",
+    "total_amount": "6300",
+    "deduction_code": "1"
+  },
+  {
+    "case_id": "case-0002",
+    "invoice_number": "ED00001234",
+    "invoice_date": "2026-10-02",
+    "seller": {"name": "範例設備股份有限公司", "tax_id": "04595252"},
+    "sales_amount": "20000",
+    "tax_type": "taxable",
+    "tax_amount": "1000",
+    "total_amount": "21000",
+    "deduction_code": "2"
+  }
+]

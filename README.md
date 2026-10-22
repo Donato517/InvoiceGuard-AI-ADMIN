@@ -12,22 +12,22 @@ InvoiceGuard AI 管理後台：發票審核、使用者管理、排程與稽核�
 | 部署 | Vercel Python Runtime（自動偵測 `app/main.py`），不開放搜尋引擎索引 |
 | 相關專案 | [InvoiceGuard-AI-API](https://github.com/Donato517/InvoiceGuard-AI-API)（後端 API，資料表結構管理者）、[InvoiceGuard-AI](https://github.com/Donato517/InvoiceGuard-AI)（前台） |
 
-## 快速開始（本機）
+## 快速開始（本機離線驗證）
 
-```bash
-# 1. 建立虛擬環境並安裝套件（Windows 用 .venv\Scripts\activate）
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-
-# 2. 建立環境變數檔，填入 DATABASE_URL、SESSION_SECRET_KEY（Windows 用 copy）
-cp .env.example .env
-
-# 3. 啟動（資料表需先由 InvoiceGuard-AI-API 執行 alembic upgrade head 建立）
-uvicorn app.main:app --reload --port 8002
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m app.integrations.vercel --check local
+.\.venv\Scripts\python.exe -m pytest -q --basetemp=tmp/pytest
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 ```
 
-開啟 <http://localhost:8002>。本機埠號：API `8000`、前台 `8001`、後台 `8002`。
+預設不讀 `.env`，公司 DB、Storage、模型及 Session 密鑰只保留在雲端。
+本階段完成模組設定驗證與介面契約，實際檔案／CRUD 服務及 localhost 遠端登入尚未接線。
+本機直接建立 DB Engine 會被阻擋；不要將公司密鑰填入本機以繞過限制。
+可先開啟 <http://127.0.0.1:8002/health> 與 <http://127.0.0.1:8002/login>。
+本機埠號：API `8000`、前台 `8001`、後台 `8002`。
+完整狀態、契約與 PowerShell 驗證方式見 [模組契約](docs/MODULE_CONTRACT.md)。
 
 ## 常用指令
 
@@ -47,3 +47,4 @@ uvicorn app.main:app --reload --port 8002
 | [docs/CODING_CONVENTIONS.md](docs/CODING_CONVENTIONS.md) | 命名規則、**程式碼與樣板備註格式** |
 | [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md) | 分支、Commit 訊息、PR 規範 |
 | [app/db/README.md](app/db/README.md) | **DB Schema 總覽**、與 API 專案的同步流程、存取規則 |
+| [docs/MODULE_CONTRACT.md](docs/MODULE_CONTRACT.md) | Vercel / DB 模組第一階段、機密邊界、檔案與 CRUD 契約、離線驗證 |

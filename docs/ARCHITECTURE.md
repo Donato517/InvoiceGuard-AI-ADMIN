@@ -23,7 +23,7 @@ InvoiceGuard AI 由三個獨立的 Git repository 組成，**全部以 Python �
            │ SQL                              │
            ▼                                  │
 ┌──────────────────────┐                      │
-│ PostgreSQL (Neon)    │◀─────────────────────┘
+│ PostgreSQL           │◀─────────────────────┘
 └──────────────────────┘
 ```
 
@@ -170,13 +170,25 @@ InvoiceGuard-AI-ADMIN/
 
 完整範本見 [`.env.example`](../.env.example)，讀取統一透過 `app/core/config.py`。
 
+目前模組第一階段採用公司密鑰僅留雲端的規則，預設不讀取 `.env`。
+本機以離線契約測試為主，遠端 ADMIN 傳輸尚未接線；直接建立 DB Engine 會被阻擋。
+以下 DB / Session 必填是雲端用途，不要求一般開發者持有。
+完整新增設定、檢查能力及未完成功能見 [MODULE_CONTRACT.md](MODULE_CONTRACT.md)。
+
 | 變數 | 說明 | 必填 |
 |---|---|---|
-| `APP_ENV` | `local` / `preview` / `production`；非 local 時 cookie 只走 HTTPS | ✓ |
+| `APP_ENV` | `local` / `preview` / `production`；非 local 時 cookie 只走 HTTPS。Vercel 不會自動設定，必須明確設為 preview / production，否則登入一律拒絕 | ✓ |
 | `DEBUG` | 日誌輸出 DEBUG 等級 | |
 | `DATABASE_URL` | PostgreSQL pooled 連線字串（與 API 相同資料庫） | ✓ |
 | `SESSION_SECRET_KEY` | 簽署登入 cookie 的金鑰，至少 32 字元；變更後所有人需重新登入 | ✓ |
 | `SESSION_MAX_AGE_SECONDS` | 登入有效秒數（預設 8 小時） | |
+| `MODULE_BACKEND` | auto：Vercel 使用 cloud，其餘 remote；不取代授權 | |
+| `REMOTE_ADMIN_BASE_URL` | 本機公開 HTTPS 設定；遠端傳輸尚未實作 | |
+| `DB_POOL_MODE` | transaction / session / direct；預設 transaction | |
+| `DB_SSL_MODE` / `DB_CONNECT_TIMEOUT_SECONDS` | TLS 模式與連線逾時；預設 require / 5 秒 | |
+| `SUPABASE_URL` / `SUPABASE_STORAGE_BUCKET` | 雲端檔案模組的公開設定 | 檔案模組必填 |
+| `SUPABASE_SECRET_KEY` | 雲端檔案模組專用機密，不交付開發者 | 檔案模組必填 |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` | 雲端選填；本階段不呼叫模型服務 | |
 
 新增變數時：`.env.example`、`app/core/config.py`、本表、Vercel Project Settings 四處同步。
 

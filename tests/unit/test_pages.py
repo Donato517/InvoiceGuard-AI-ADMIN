@@ -115,6 +115,43 @@ def test_unknown_page_shows_custom_404(client: TestClient) -> None:
     assert "找不到頁面" in response.text
 
 
+def test_invalid_form_shows_error_page_without_echoing_input(admin_client: TestClient) -> None:
+    response = admin_client.post("/login", data={"password": "synthetic-pass-marker"})
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "synthetic-pass-marker" not in response.text
+
+
+def test_invalid_path_parameter_is_not_echoed(admin_client: TestClient) -> None:
+    response = admin_client.get("/invoices/synthetic-path-marker")
+
+    assert response.status_code == 400
+    assert "synthetic-path-marker" not in response.text
+
+
+def test_stale_cookie_without_local_session_key_redirects_to_login(client: TestClient) -> None:
+    client.cookies.set(SESSION_COOKIE_NAME, "stale-synthetic-cookie")
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?next=%2Fdashboard"
+
+
+def test_cloud_session_misconfiguration_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Vercel 上 APP_ENV 保持預設 local → session 設定不合格，不可改為導向登入頁
+    monkeypatch.setattr(settings, "VERCEL", "1")
+    cloud_client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
+    cloud_client.cookies.set(SESSION_COOKIE_NAME, "stale-synthetic-cookie")
+
+    response = cloud_client.get("/dashboard")
+
+    assert response.status_code == 500
+
+
 def test_login_rejects_cross_site_post(client: TestClient) -> None:
     response = client.post(
         "/login",

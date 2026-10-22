@@ -18,6 +18,11 @@
 
 本專案**沒有** `migrations/`，也不安裝 Alembic。
 
+第一階段新增 `contracts.py` 定義 Repository 介面，未實作通用 CRUD，也未改動 ORM 模型或 Schema。
+`session.py` 先驗證雲端執行限制、TLS 與設定，再延遲建立 Engine；本機直接連線會被阻擋。
+transaction pooler 模式停用 psycopg prepared statements；實際連線模式仍須由管理者確認。
+完整驗證及未完成項目見 [模組契約](../../docs/MODULE_CONTRACT.md)。
+
 ---
 
 ## 2. 資料表索引

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy.exc import ArgumentError, DBAPIError, OperationalError
 
 from app.db.repositories import db_health_repository as repository
@@ -29,7 +30,8 @@ def wire(monkeypatch: pytest.MonkeyPatch, app_env: str, database_url: str, check
     """路由與 service 改用合成設定及替身檢查。"""
     for module in (health, service):
         monkeypatch.setattr(module.settings, "APP_ENV", app_env)
-        monkeypatch.setattr(module.settings, "DATABASE_URL", database_url)
+        # 與實際設定相同型別（SecretStr），避免測試掩蓋型別不符
+        monkeypatch.setattr(module.settings, "DATABASE_URL", SecretStr(database_url))
     monkeypatch.setattr(service, "check_connection", check)
 
 

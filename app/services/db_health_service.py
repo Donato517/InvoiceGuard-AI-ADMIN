@@ -28,7 +28,7 @@ def connection_status() -> dict[str, object]:
     """
     body: dict[str, object] = {
         "app_env": settings.APP_ENV,
-        "database_url_present": bool(settings.DATABASE_URL.strip()),
+        "database_url_present": bool(settings.DATABASE_URL.get_secret_value().strip()),
     }
     prefix = "DB_DIAGNOSTIC app_env=%s database_url_present=%s"
     try:

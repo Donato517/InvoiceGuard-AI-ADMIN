@@ -502,3 +502,10 @@
 - 最終版本註記：13:57 他方再次更新 tests/unit/test_dev_accounts.py 後，本輪又以新快照重新執行 ADMIN 全部指定檢查；仍為 638 passed／9 skipped，checker、Ruff、environment、djLint 全 exit 0，latest-retest-before／after 完全一致。另有他方同步的 DEVELOPMENT_STATUS.md 與 main.js 變更，均保留；以 latest-admin-results.json 與 latest-retest-after.json 作為最後實測版本證據，不把之前的檢查點當成同一版本。
 
 - F 項最終例外：最後觀察三站 branch、HEAD 與 index entries 仍與開始前完全相同；但 ADMIN 的 .git/index SHA256 由 a2a8f8d6099e98b03223d88d090e604f374106dae9b4889b2044e7ee8736c852 變成 e883bcba66cc32051c429240bb08ebb78dc142999d939f1a44f806b227257b72。這代表暫存內容沒變、索引位元組卻有變化，發生來源未確認；不能把上方早先檢查點的「index SHA 相同」當成最後狀態。本輪沒有執行 Git 寫入，也不覆寫／還原索引；F 不宣稱位元組完全不變。詳見 git-final-observation.json。
+
+## 2026-10-26 Claude：main 合併後 GitHub 測試失敗（DATABASE_URL 型別）
+
+- 問題：main 合併 diag/health-db（PR #3）與 feature/python-web（PR #4）後，GitHub Actions 的 `tests/unit/test_db_health.py` 4 項失敗：`AttributeError: 'SecretStr' object has no attribute 'strip'`。
+- 原因：`app/services/db_health_service.py` 依 diag 分支當時的設定，把 `DATABASE_URL` 當字串呼叫 `.strip()`；feature/python-web 已將 `DATABASE_URL` 改為 `SecretStr`。兩個分支各自測試通過，合併後才出錯；測試替身也直接塞字串，沒有抓到型別不符。正式站的 `GET /health/db` 也會因此回 500。
+- 處理：`db_health_service.py` 改用 `settings.DATABASE_URL.get_secret_value().strip()`；`tests/unit/test_db_health.py` 改以 `SecretStr` 設定替身，與實際型別一致。
+- 驗證：以 main（9596149）為基礎先重現 4 項失敗，修正後完整 pytest 660 passed／10 skipped，check_project、ruff check／format、`app.core.environment --check`、djlint 通過。

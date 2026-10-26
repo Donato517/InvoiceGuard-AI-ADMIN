@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.constants import SESSION_COOKIE_NAME
 from app.core.config import settings
-from app.core.exceptions import ForbiddenError, LoginRequiredError
+from app.core.exceptions import ForbiddenError, LoginRequiredError, NotFoundError
 from app.core.security import read_session_token
 from app.db.models.user import User, UserRole
 from app.db.repositories import user_repository
@@ -71,3 +71,23 @@ def require_admin(
 
 # 需要管理者資料的路由：在參數宣告 `admin: CurrentAdmin`
 CurrentAdmin = Annotated[User, Depends(require_admin)]
+
+
+def require_dev_pages() -> None:
+    """保護本機 /dev 示範；帳號與檔案分別使用既有 DB 與 Vercel 模組。
+
+    Raises:
+        NotFoundError: APP_ENV 非 local、VERCEL=1，或解析後 module_backend 非 remote。
+    """
+    if not settings.dev_pages_enabled:
+        raise NotFoundError
+
+
+def require_cloud_db() -> None:
+    """帳號 JSON router 的模式檢查；只檢查解析後 module_backend，不檢查 DB 設定或身分。
+
+    Raises:
+        NotFoundError: 解析後 module_backend 不是 cloud。
+    """
+    if settings.module_backend != "cloud":
+        raise NotFoundError

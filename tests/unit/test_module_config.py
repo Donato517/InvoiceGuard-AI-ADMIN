@@ -25,6 +25,7 @@ def cloud_settings(**values: Any) -> Settings:
     """建立不會連網的雲端設定替身。"""
     defaults = {
         "VERCEL": "1",
+        "VERCEL_ENV": "preview",
         "APP_ENV": "preview",
         "DATABASE_URL": FAKE_DATABASE_URL,
         "SUPABASE_URL": "https://storage.example.invalid",
@@ -36,7 +37,8 @@ def cloud_settings(**values: Any) -> Settings:
 
 
 def test_local_needs_no_company_secrets() -> None:
-    report = make_settings().check_configuration("local")
+    # 明確指定空的遠端網址，不受開發者電腦既有 dev-urls.local.json 影響
+    report = make_settings(REMOTE_ADMIN_BASE_URL="").check_configuration("local")
     assert report.is_valid
     assert not report.as_dict()["connectivity_checked"]
     assert not report.as_dict()["operations_implemented"]
@@ -52,7 +54,6 @@ def test_dotenv_is_not_loaded_by_default(tmp_path: Path, monkeypatch: pytest.Mon
 @pytest.mark.parametrize(
     "name",
     [
-        "DATABASE_URL",
         "SESSION_SECRET_KEY",
         "SUPABASE_SECRET_KEY",
         "GEMINI_API_KEY",
@@ -104,10 +105,18 @@ def test_cloud_requires_explicit_safe_execution_context(values: dict[str, Any]) 
     assert not cloud_settings(**values).check_configuration("cloud").is_valid
 
 
+@pytest.mark.parametrize("url", ["", "   "])
+def test_missing_database_url_is_distinct_from_invalid_format(url: str) -> None:
+    report = cloud_settings(DATABASE_URL=url).check_configuration("database")
+    codes = {(issue.field, issue.code) for issue in report.issues}
+    assert ("DATABASE_URL", "required") in codes
+    assert ("DATABASE_URL", "invalid_postgres_url") not in codes
+    assert not report.is_valid
+
+
 @pytest.mark.parametrize(
     "url",
     [
-        "",
         "postgresql://",
         "sqlite:///test.db",
         "postgresql://user:password@host",
@@ -121,7 +130,26 @@ def test_database_requires_complete_postgres_url(url: str) -> None:
     with pytest.raises(ModuleConfigurationError) as caught:
         configuration.require_configuration("database")
     assert "invalid_postgres_url" in str(caught.value)
-    assert not url or url not in str(caught.value)
+    assert url not in str(caught.value)
+
+
+@pytest.mark.parametrize("option", ["supa=base-pooler.x", "pgbouncer=true", "connection_limit=1"])
+def test_database_rejects_options_the_driver_cannot_use(option: str) -> None:
+    report = cloud_settings(DATABASE_URL=FAKE_DATABASE_URL + "&" + option).check_configuration(
+        "database"
+    )
+    assert not report.is_valid
+    assert any(issue.code == "unsupported_url_option" for issue in report.issues)
+    assert "synthetic-password" not in json.dumps(report.as_dict())
+
+
+@pytest.mark.parametrize(
+    "option",
+    ["channel_binding=require", "application_name=admin", "options=-c%20statement_timeout%3D5000"],
+)
+def test_database_accepts_standard_libpq_options(option: str) -> None:
+    configuration = cloud_settings(DATABASE_URL=FAKE_DATABASE_URL + "&" + option)
+    assert configuration.check_configuration("database").is_valid
 
 
 @pytest.mark.parametrize("prefix", ["postgres://", "postgresql://", "postgresql+psycopg://"])
@@ -209,3 +237,39 @@ def test_cli_reports_no_connection_and_returns_exit_codes(
     assert json.loads(capsys.readouterr().out)["connectivity_checked"] is False
     assert vercel.main(["--check", "cloud"]) == 2
     assert json.loads(capsys.readouterr().out)["configuration_valid"] is False
+
+
+@pytest.mark.parametrize("backend", ["auto", "remote"])
+def test_local_database_configuration_uses_provided_url_without_vercel(backend: str) -> None:
+    configuration = make_settings(DATABASE_URL=FAKE_DATABASE_URL, MODULE_BACKEND=backend)
+    assert configuration.APP_ENV == "local"
+    assert configuration.VERCEL == configuration.VERCEL_ENV == ""
+    assert configuration.check_environment()["configuration_valid"]
+    configuration.require_environment()
+    assert configuration.check_configuration("database").is_valid
+    assert configuration.check_configuration("local").is_valid
+    assert "remote_not_configured" not in {
+        issue.code for issue in configuration.check_configuration("local").issues
+    }
+    assert "synthetic-password" not in json.dumps(configuration.check_environment())
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "not-a-postgres-url",
+        "sqlite:///test.db",
+        FAKE_DATABASE_URL.replace("sslmode=require", "sslmode=disable"),
+        FAKE_DATABASE_URL + "&sslmode=disable",
+    ],
+)
+def test_local_database_still_requires_valid_tls_connection_settings(url: str) -> None:
+    configuration = make_settings(DATABASE_URL=url)
+    report = configuration.check_configuration("database")
+    assert not report.is_valid
+    assert not any(
+        issue.code in {"cloud_runtime_required", "cloud_environment_required"}
+        for issue in report.issues
+    )
+    assert "synthetic-password" not in json.dumps(report.as_dict())

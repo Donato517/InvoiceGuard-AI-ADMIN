@@ -1,5 +1,10 @@
 # 系統架構說明 — InvoiceGuard-AI-ADMIN（後台網站）
 
+AI 先讀根目錄 [AGENTS.md](../AGENTS.md)（Claude 見 [CLAUDE.md](../CLAUDE.md)），
+再依 [開發狀態](DEVELOPMENT_STATUS.md) 區分已完成能力與目標設計。
+本文件描述分工，不代表外部服務或每個流程均已接線。日常三站啟動與全名別名見 [README](../README.md)，
+無密鑰分層與契約檢查見 [PROJECT_CHECKS.md](PROJECT_CHECKS.md)。
+
 ## 1. 系統全貌
 
 InvoiceGuard AI 由三個獨立的 Git repository 組成，**全部以 Python 撰寫**，各自部署為一個 Vercel Python Function：
@@ -71,7 +76,10 @@ InvoiceGuard-AI-ADMIN/
 │   ├── main.py                   # ★ 進入點：建立 app、掛載 /static、註冊例外處理與頁面路由（Vercel 自動偵測）
 │   ├── constants.py              # 全站常數：網站名稱、cookie 名稱、側欄選單、狀態顯示文字
 │   ├── core/                     # 全域核心
-│   │   ├── config.py             #   環境變數設定（唯一讀取環境變數的地方）
+│   │   ├── config.py             #   設定公開入口（環境隔離由 core/environment.py 處理）
+│   │   ├── constants.py          #   三站共用：網址（Vercel 用正式、本機用開發）、網站名稱、圖示、搜尋引擎 noindex
+│   │   ├── environment.py        #   三站相同：環境隔離、本機機密拒絕（check_project 快照比對）
+│   │   ├── module_errors.py      #   模組未就緒／設定錯誤例外（ModuleNotReadyError 等）
 │   │   ├── templating.py         #   Jinja2 樣板環境、filter、static_url()
 │   │   ├── security.py           #   登入 cookie 簽署、密碼雜湊、防 open redirect、同源檢查（防 CSRF）
 │   │   ├── deps.py               #   相依注入：DbSession、require_admin、CurrentAdmin
@@ -79,17 +87,23 @@ InvoiceGuard-AI-ADMIN/
 │   │   └── logging_config.py     #   日誌格式
 │   ├── routers/                  # 頁面路由，一個功能一個檔案
 │   │   ├── health.py             #   GET /health
-│   │   ├── robots.py             #   GET /robots.txt（Disallow: /）
+│   │   ├── robots.py             #   GET /robots.txt（內容取自 core/constants.py；不收錄靠 noindex）
 │   │   ├── auth.py               #   GET/POST /login、POST /logout
 │   │   ├── dashboard.py          #   GET /dashboard
 │   │   ├── invoices.py           #   /invoices（發票審核）
 │   │   ├── users.py              #   /users（使用者管理）
-│   │   └── system.py             #   /system/job-runs、/system/audit-logs
-│   ├── services/                 # 商業邏輯層（auth / invoice_review / user / system）
+│   │   ├── system.py             #   /system/job-runs、/system/audit-logs
+│   │   ├── db_inspection.py      #   GET /system/db-inspection（唯讀 DB 盤點，需登入）
+│   │   ├── dev_accounts.py       #   /dev/accounts 示範 DB 模組（帳號查詢／新增／修改；僅本機）
+│   │   └── dev_files.py          #   /dev/files 示範 Vercel 模組（圖片／RAG 檔案；僅本機）
+│   ├── services/                 # 商業邏輯層（auth / invoice_review / user / system / db_inspection；dev_account / dev_file 供 /dev 示範；data / file 為第一階段契約，未接線）
+│   ├── schemas/                  # Pydantic 資料契約（account / data / files / db_inspection / common）
+│   ├── integrations/             # supabase_storage（Vercel 模組：檔案存取，與 API 相同）、storage_client（第一階段契約，未接線）、remote_admin_client（無呼叫端）、vercel（執行環境資訊與設定檢查）
 │   ├── db/                       # ★ 資料庫模組（說明見 app/db/README.md）
 │   │   ├── README.md             #   Schema 總覽、與 API 的同步流程、存取規則
 │   │   ├── base.py               #   Base、約束命名規則、共用欄位 Mixin
 │   │   ├── session.py            #   Engine / Session / get_db
+│   │   ├── contracts.py          #   Repository 介面契約（Protocol）
 │   │   ├── models/               #   ORM Model（自 API 同步），檔案開頭備註完整 Schema
 │   │   └── repositories/         #   資料存取層
 │   ├── templates/                # ★ Jinja2 樣板（HTML）
@@ -102,6 +116,8 @@ InvoiceGuard-AI-ADMIN/
 │   │       ├── invoices/
 │   │       ├── users/
 │   │       ├── system/
+│   │       ├── dev_accounts/
+│   │       ├── dev_files/
 │   │       └── errors/
 │   ├── static/                   # ★ 靜態檔（網址 /static/...，部署後由 Vercel CDN 提供）
 │   │   ├── css/                  #   variables.css（含後台版面變數）、reset.css、components.css、main.css
@@ -116,6 +132,8 @@ InvoiceGuard-AI-ADMIN/
 │   ├── unit/                     # 單元測試（不連資料庫）
 │   └── integration/              # 整合測試（需測試資料庫）
 ├── docs/
+├── scripts/check_project.py      # 無密鑰架構／契約檢查（三站相同）
+├── contracts/project-contract.json # 跨站非機密契約快照（check_project 使用）
 ├── tmp/                          # 本機暫存（不進版控；Vercel 上改用 /tmp）
 ├── .github/pull_request_template.md
 ├── .vscode/extensions.json
@@ -137,6 +155,8 @@ InvoiceGuard-AI-ADMIN/
 | 商業邏輯 | `app/services/<功能>_service.py` | 控制交易、寫入稽核紀錄 |
 | 資料庫查詢 | `app/db/repositories/<資料表>_repository.py` | routers / services 不直接寫 SQL |
 | 資料表定義 | `app/db/models/` | 只能從 API 專案同步 |
+| 資料契約（Pydantic） | `app/schemas/<主題>.py` | routers 與 services 之間的輸入／輸出 |
+| 外部服務（Storage 等） | `app/integrations/` | routers 不直接呼叫 |
 | 頁面 HTML | `app/templates/pages/<功能>/<頁面>.html` | 資料夾名稱與 routers 檔名一致 |
 | 共用 HTML 片段 / 版型 | `app/templates/partials/`、`layouts/` | |
 | 常數、選單、狀態文字 | `app/constants.py` | 新增頁面時同步更新 `MENU_ITEMS` |
@@ -161,7 +181,8 @@ InvoiceGuard-AI-ADMIN/
 | Open redirect | 登入後導向的 `next` 只允許站內路徑 | `core/security.py` |
 | XSS | Jinja2 自動跳脫；**禁止**對資料庫資料使用 `\|safe` | `core/templating.py` |
 | 稽核 | 審核發票、停用帳號等操作寫入 `audit_logs` | `services/` |
-| 搜尋引擎 | `/robots.txt`（Disallow）、`<meta name="robots">`、`X-Robots-Tag` 標頭三重 noindex | `routers/robots.py`、`base.html`、`vercel.json` |
+| 搜尋引擎 | `<meta name="robots">` 與 `X-Robots-Tag` 標頭 noindex；`/robots.txt` 不封鎖抓取（否則讀不到 noindex），值集中在 `core/constants.py` | `core/constants.py`、`routers/robots.py`、`base.html`、`vercel.json` |
+| 本機與示範檔案 | 本機無法登入（`SESSION_SECRET_KEY` 屬本機禁用機密）；`/dev` 示範檔案只在本機開放、不需登入，直接讀寫正式 DB／Storage | `core/deps.py`、`routers/dev_*.py` |
 | 存取限制（建議） | 正式環境可另開 Vercel Deployment Protection 或限制 IP | Vercel 設定 |
 
 ---
@@ -170,27 +191,29 @@ InvoiceGuard-AI-ADMIN/
 
 完整範本見 [`.env.example`](../.env.example)，讀取統一透過 `app/core/config.py`。
 
-目前模組第一階段採用公司密鑰僅留雲端的規則，預設不讀取 `.env`。
-本機以離線契約測試為主，遠端 ADMIN 傳輸尚未接線；直接建立 DB Engine 會被阻擋。
-以下 DB / Session 必填是雲端用途，不要求一般開發者持有。
+本機 JSON、Vercel Preview／Production 的實際來源與啟動驗證以 [環境與 URL 隔離](ENVIRONMENT_ISOLATION.md) 為準；dotenv 與 secrets 目錄永遠不載入。
+
+預設不讀取 `.env`。本機只由 START 注入核定的 `DATABASE_URL`、`S3_*`、`SUPABASE_STORAGE_BUCKET`（Production 值，連正式 DB／Storage）；其他機密（例如 `SESSION_SECRET_KEY`）出現在本機即拒絕啟動，所以本機無法登入。
 完整新增設定、檢查能力及未完成功能見 [MODULE_CONTRACT.md](MODULE_CONTRACT.md)。
 
 | 變數 | 說明 | 必填 |
 |---|---|---|
-| `APP_ENV` | `local` / `preview` / `production`；非 local 時 cookie 只走 HTTPS。Vercel 不會自動設定，必須明確設為 preview / production，否則登入一律拒絕 | ✓ |
+| `APP_ENV` | `local` / `preview` / `production`；須與 `VERCEL_ENV` 一致，否則拒絕啟動。Vercel 上或非 local 時 cookie 只走 HTTPS。Vercel 不會自動設定，必須明確設為 preview / production | ✓ |
 | `DEBUG` | 日誌輸出 DEBUG 等級 | |
-| `DATABASE_URL` | PostgreSQL pooled 連線字串（與 API 相同資料庫） | ✓ |
-| `SESSION_SECRET_KEY` | 簽署登入 cookie 的金鑰，至少 32 字元；變更後所有人需重新登入 | ✓ |
+| `DATABASE_URL` | PostgreSQL pooled 連線字串（與 API 相同資料庫）；本機由 START 注入 | ✓ |
+| `SESSION_SECRET_KEY` | 簽署登入 cookie 的金鑰，至少 32 字元；變更後所有人需重新登入；本機屬禁用機密 | 雲端 ✓ |
 | `SESSION_MAX_AGE_SECONDS` | 登入有效秒數（預設 8 小時） | |
-| `MODULE_BACKEND` | auto：Vercel 使用 cloud，其餘 remote；不取代授權 | |
-| `REMOTE_ADMIN_BASE_URL` | 本機公開 HTTPS 設定；遠端傳輸尚未實作 | |
+| `MODULE_BACKEND` | auto：Vercel 使用 cloud，其餘 remote；本機 remote 會開放 `/dev` 示範檔案；不取代授權 | |
+| `REMOTE_ADMIN_BASE_URL` | 保留欄位；`remote_admin_client` 沒有呼叫端，空白時回退到正式 ADMIN 網址 | |
 | `DB_POOL_MODE` | transaction / session / direct；預設 transaction | |
 | `DB_SSL_MODE` / `DB_CONNECT_TIMEOUT_SECONDS` | TLS 模式與連線逾時；預設 require / 5 秒 | |
-| `SUPABASE_URL` / `SUPABASE_STORAGE_BUCKET` | 雲端檔案模組的公開設定 | 檔案模組必填 |
-| `SUPABASE_SECRET_KEY` | 雲端檔案模組專用機密，不交付開發者 | 檔案模組必填 |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` | 雲端選填；本階段不呼叫模型服務 | |
+| `SUPABASE_URL` | 第一階段 storage 設定檢查使用；S3StorageClient 不讀此欄位 | 第一階段靜態檢查要求 |
+| `SUPABASE_STORAGE_BUCKET` | S3StorageClient 使用的 Bucket，亦由第一階段靜態檢查驗證 | Storage 用戶端必填 |
+| `SUPABASE_SECRET_KEY` | 第一階段 storage 設定檢查使用；S3StorageClient 改讀 S3 金鑰，不讀此欄位 | 第一階段靜態檢查要求 |
+| `S3_ENDPOINT_URL` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Supabase S3 相容端點與金鑰（`integrations/supabase_storage.py`）；本機由 START 注入 | Storage 用戶端必填 |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` | 雲端選填；模型服務尚未串接 | |
 
-新增變數時：`.env.example`、`app/core/config.py`、本表、Vercel Project Settings 四處同步。
+新增設定需先分類並核定；公開設定同步 `app/core/config.py`、`app/core/environment.py` 的允許集合／驗證、空值範本及文件，不能任意新增 JSON 欄位。公司機密只由管理者存於雲端；只新增或輪替雲端機密不改本機啟動器。
 
 ---
 
@@ -203,7 +226,7 @@ InvoiceGuard-AI-ADMIN/
 | Function 設定 | `vercel.json` → `functions["app/main.py"]`：`maxDuration`、`excludeFiles` |
 | 靜態檔 | `app.mount("/static", ...)` 會在建置時提升到 CDN；**不要加全域 middleware**，否則靜態檔改由 Function 回應 |
 | Production | `main` 分支 |
-| Preview | 其他分支 / PR；`DATABASE_URL` 指向測試資料庫（或 Neon branch），**不可指向正式資料庫** |
+| Preview | 其他分支 / PR；`DATABASE_URL` 指向測試資料庫（或核定的隔離分支），**不可指向正式資料庫** |
 | 部署順序 | 資料表有異動時：API migration → API → 後台 |
 
 ---
@@ -216,4 +239,4 @@ InvoiceGuard-AI-ADMIN/
 4. `app/templates/pages/users/list.html` — 繼承 `layouts/admin.html`，檔頭寫 `@template` 備註；寫法參考 `pages/system/job_runs.html`
 5. 需出現在側欄時，更新 `app/constants.py` 的 `MENU_ITEMS`
 6. `tests/unit/` 新增測試（`admin_client` fixture + monkeypatch service）
-7. `ruff check .`、`djlint app/templates --lint`、`pytest` 通過
+7. 依 AGENTS.md「無公司密鑰驗證」執行檢查，另跑 `djlint app/templates --lint`

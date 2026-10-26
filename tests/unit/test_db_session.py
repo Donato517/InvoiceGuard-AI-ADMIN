@@ -26,17 +26,30 @@ def fake_cloud(**values: Any) -> Settings:
     """僅供參數驗證的假 DSN，不建立真實連線。"""
     defaults = {
         "VERCEL": "1",
+        "VERCEL_ENV": "preview",
         "APP_ENV": "preview",
         "DATABASE_URL": "postgresql://user:synthetic@db.example.invalid:6543/test?sslmode=require",
     }
     return Settings(_env_file=None, _env_prefix="IG_UNIT_TEST_", **(defaults | values))
 
 
-def test_local_mode_blocks_engine_before_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_database_url_blocks_engine_before_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = MagicMock()
     monkeypatch.setattr(session, "settings", Settings(_env_file=None, _env_prefix="IG_UNIT_TEST_"))
     monkeypatch.setattr(session, "create_engine", factory)
     with pytest.raises(ModuleConfigurationError):
+        session.get_engine()
+    factory.assert_not_called()
+
+
+def test_driver_incompatible_url_option_blocks_engine_before_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factory = MagicMock()
+    url = "postgresql://user:synthetic@db.example.invalid:6543/test?sslmode=require&supa=x"
+    monkeypatch.setattr(session, "settings", fake_cloud(DATABASE_URL=url))
+    monkeypatch.setattr(session, "create_engine", factory)
+    with pytest.raises(ModuleConfigurationError, match="unsupported_url_option"):
         session.get_engine()
     factory.assert_not_called()
 
@@ -136,3 +149,31 @@ def test_get_db_closes_session_when_service_raises(monkeypatch: pytest.MonkeyPat
         dependency.throw(RuntimeError("合成測試錯誤"))
     db.close.assert_called_once()
     db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", ["auto", "remote"])
+def test_local_engine_accepts_valid_settings_without_cloud_flags(
+    monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    configuration = fake_cloud(VERCEL="", VERCEL_ENV="", APP_ENV="local", MODULE_BACKEND=backend)
+    factory = MagicMock()
+    monkeypatch.setattr(session, "settings", configuration)
+    monkeypatch.setattr(session, "create_engine", factory)
+    assert session.get_engine() is factory.return_value
+    factory.assert_called_once()
+    assert factory.call_args.kwargs["connect_args"]["sslmode"] == "require"
+    assert factory.call_args.kwargs["poolclass"] is NullPool
+
+
+def test_cached_local_engine_revalidates_changed_database_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configuration = fake_cloud(VERCEL="", VERCEL_ENV="", APP_ENV="local")
+    factory = MagicMock()
+    monkeypatch.setattr(session, "settings", configuration)
+    monkeypatch.setattr(session, "create_engine", factory)
+    session.get_engine()
+    configuration.DATABASE_URL = "postgresql://invalid"
+    with pytest.raises(ModuleConfigurationError, match="invalid_postgres_url"):
+        session.get_engine()
+    factory.assert_called_once()

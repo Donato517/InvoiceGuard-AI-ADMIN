@@ -20,6 +20,7 @@ from app.constants import (
     SITE_NAME,
 )
 from app.core.config import BASE_DIR, settings
+from app.core.constants import ROBOTS_POLICY, SITE_ICON
 from app.utils.format import TAIPEI_TZ, format_currency, format_date, format_datetime
 
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
@@ -45,6 +46,8 @@ def current_year() -> int:
 # ---- 樣板全域變數 / 函式：樣板中可直接使用 ----
 templates.env.globals.update(
     SITE_NAME=SITE_NAME,
+    SITE_ICON=SITE_ICON,
+    ROBOTS_POLICY=ROBOTS_POLICY,
     MENU_ITEMS=MENU_ITEMS,
     INVOICE_STATUS_LABEL=INVOICE_STATUS_LABEL,
     JOB_NAME_LABEL=JOB_NAME_LABEL,

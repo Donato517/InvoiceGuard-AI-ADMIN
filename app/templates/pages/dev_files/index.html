@@ -1,0 +1,96 @@
+{#
+  @template pages/dev_files/index.html
+  @description 開發者檔案（示範 Vercel 模組）：圖片與 RAG 文字檔兩種上傳，各自存到不同 Supabase Storage 路徑；可列表、下載、移動、刪除。
+  @route GET /dev/files、POST /dev/files/{category}/upload|move|delete（只在本機開放）
+  @context sections: list[dict]  每種檔案：key、label、prefix（Storage 路徑）、accept、files（FileEntry）、error、message、action_error
+  @context max_mb: int           單檔上限（MB）
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}開發者檔案{% endblock %}
+{% block content %}
+  {# 上傳、移動、刪除都由 HTMX 送出：回應整頁後只取出 #dev-files 替換，不換頁；結果訊息由回應帶入，不經網址參數 #}
+  <div id="dev-files"
+       hx-target="#dev-files"
+       hx-select="#dev-files"
+       hx-swap="outerHTML">
+    {% for section in sections %}
+      <section id="{{ section.key }}">
+        <h2>{{ section.label }}上傳</h2>
+        <p>
+          Storage 路徑：<code>{{ section.prefix }}</code>；允許 {{ section.accept }}，單檔 {{ max_mb }} MB 以內。
+        </p>
+        {% if section.message %}<p class="alert" role="status">{{ section.message }}</p>{% endif %}
+        {% if section.action_error %}
+          <p class="alert alert--danger" role="alert">{{ section.action_error }}</p>
+        {% endif %}
+        <form method="post"
+              action="/dev/files/{{ section.key }}/upload"
+              hx-post="/dev/files/{{ section.key }}/upload"
+              enctype="multipart/form-data"
+              class="form">
+          <div class="form-field">
+            <label for="{{ section.key }}_file">選擇檔案</label>
+            <input id="{{ section.key }}_file"
+                   name="file"
+                   type="file"
+                   accept="{{ section.accept }}"
+                   required>
+          </div>
+          <button type="submit" class="btn btn--primary">上傳</button>
+        </form>
+        {% if section.error %}
+          <p class="alert alert--danger" role="alert">{{ section.error }}</p>
+        {% elif section.files %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">檔案</th>
+                <th scope="col">大小（bytes）</th>
+                <th scope="col">更新時間</th>
+                <th scope="col">下載</th>
+                <th scope="col">移動到資料夾</th>
+                <th scope="col">刪除</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for file in section.files %}
+                <tr>
+                  <td>
+                    <code>{{ file.name }}</code>
+                  </td>
+                  <td>{{ file.size_bytes }}</td>
+                  <td>{{ file.last_modified.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+                  <td>
+                    <a href="/dev/files/{{ section.key }}/download?name={{ file.name | urlencode }}">下載</a>
+                  </td>
+                  <td>
+                    <form method="post"
+                          action="/dev/files/{{ section.key }}/move"
+                          hx-post="/dev/files/{{ section.key }}/move">
+                      <input type="hidden" name="name" value="{{ file.name }}">
+                      <input name="folder"
+                             type="text"
+                             value="archive"
+                             aria-label="目的資料夾（留空為根目錄）">
+                      <button type="submit" class="btn">移動</button>
+                    </form>
+                  </td>
+                  <td>
+                    <form method="post"
+                          action="/dev/files/{{ section.key }}/delete"
+                          hx-post="/dev/files/{{ section.key }}/delete">
+                      <input type="hidden" name="name" value="{{ file.name }}">
+                      <button type="submit" class="btn">刪除</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty-state">此路徑目前沒有檔案</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+{% endblock content %}

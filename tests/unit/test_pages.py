@@ -36,11 +36,12 @@ def test_static_css_is_served(client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def test_robots_txt_blocks_indexing(client: TestClient) -> None:
+def test_robots_txt_does_not_block_crawling_so_noindex_is_read(client: TestClient) -> None:
+    # 不收錄由頁面 noindex 與 X-Robots-Tag 負責；robots.txt 不封鎖，搜尋引擎才讀得到 noindex。
     response = client.get("/robots.txt")
 
     assert response.status_code == 200
-    assert "Disallow: /" in response.text
+    assert "Allow: /" in response.text
 
 
 def test_dashboard_redirects_to_login_without_session(client: TestClient) -> None:

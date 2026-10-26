@@ -1,8 +1,11 @@
-# ADMIN Vercel / DB 模組：第一階段
+# ADMIN Vercel / DB 模組與契約
 
-本階段完成設定驗證、Python 型別介面、輸入／輸出驗證及離線單元測試。
-未部署、未執行 migration、未建立新表，也未操作真實資料或檔案。
-API、採購前台及啟動器沒有變更。
+AI 入口見 [AGENTS.md](../AGENTS.md)／[CLAUDE.md](../CLAUDE.md)；
+本文件保留第一階段的實作範圍與歷史說明，目前能力以 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) 為準。
+新增或同步契約後執行 [無密鑰契約／分層檢查](PROJECT_CHECKS.md)。
+
+第一階段完成設定驗證、Python 型別介面、輸入／輸出驗證及離線單元測試；其後加入本機也可使用的 DB 模組、Vercel 模組（檔案存取，`integrations/supabase_storage.py`）與 `/dev` 示範檔案（見 DEVELOPMENT_STATUS）。
+部署、migration 與正式資料寫入需使用者明確授權。
 
 ## 可用與未完成的能力
 
@@ -10,14 +13,26 @@ API、採購前台及啟動器沒有變更。
 |---|---|
 | `get_platform()` 安全執行描述 | 已實作，不含密鑰 |
 | `check_configuration()` 與 CLI | 已實作；只做靜態設定檢查 |
-| DB Engine 設定與 Session 關閉 | 已實作保護與參數，真實連線未驗證 |
+| DB Engine 設定與 Session 關閉 | 已實作保護與參數；2026-10-25 本機實測 SELECT 1（見 DEVELOPMENT_STATUS） |
 | 檔案 / CRUD 輸入輸出與 Protocol | 已實作契約，尚無實際業務操作 |
-| Storage / FileService / DataService 工廠 | 明確拋出 `ModuleNotReadyError`，不假裝成功 |
-| Supabase Storage、遠端 ADMIN 用戶端 | 尚未實作 |
-| 新 JSON 路由、身分接續、部門授權 | 尚未實作；既有登入保護保留 |
+| 第一階段契約：Storage / FileService / DataService 工廠 | 尚未接線，明確拋出 `ModuleNotReadyError`，不假裝成功 |
+| Vercel 模組（檔案存取） | `integrations/supabase_storage.py`：上傳、下載、列表、移動、刪除；`/dev/files` 為示範 |
+| 遠端 ADMIN 用戶端 | `remote_admin_client.py` 保留，目前沒有呼叫端 |
+| ADMIN 唯讀盤點 JSON 路由 | GET /system/db-inspection，沿用既有登入；本機無法登入，只能在雲端使用（尚未部署），見 [DB_READONLY_PROBE.md](DB_READONLY_PROBE.md) |
+| 業務 JSON 路由、身分接續、部門授權 | 尚未實作；既有登入保護保留 |
 | StoredFile 表、發票 version 欄位 | 尚未建立；由 API 統一規劃 schema / migration |
 
 ## 匯入方式
+
+Vercel 模組（檔案存取；示範與正式功能都使用）：
+
+```python
+from app.integrations.supabase_storage import S3StorageClient
+
+storage = S3StorageClient.from_settings()
+```
+
+設定檢查與第一階段契約（`get_data_service()`／`get_file_service()` 尚未接線）：
 
 ```python
 from app.integrations.vercel import check_configuration, get_platform
@@ -28,42 +43,44 @@ from app.services.file_service import FileService, get_file_service
 ```
 
 這些匯入不會連線。現在呼叫 `get_data_service()` 或 `get_file_service()` 會明確失敗，
-不能將本階段完成視為已能新增、刪除、修改公司資料。
+不能將契約存在視為已能新增、刪除、修改公司資料。
 
 ## 設定邊界
 
 所有執行期設定只從 `app.core.config.settings` 取得。預設不讀 `.env` 或 secrets 目錄。
-`.env.example` 僅供管理者識別設定名稱，機密欄位保持空白，不複製公司密鑰到本機。
+`.env.example` 僅供管理者識別設定名稱，機密欄位保持空白，不把公司密鑰寫入本機檔案；本機只由 START 把核定的 DATABASE_URL／S3_* 注入程序記憶體。
 Pydantic 的 SecretStr 遮罩 repr / JSON，不等於加密儲存；勿記錄 `get_secret_value()`。
 
 | 名稱 | 用途與預設 |
 |---|---|
-| APP_ENV | local / preview / production；預設 local。Vercel 不會自動設定，必須明確設為 preview / production，否則登入與受保護頁面一律拒絕（500，日誌記錄欄位與代碼） |
+| APP_ENV | local / preview / production；預設 local。Vercel 不會自動設定，必須明確設為 preview / production；與 VERCEL_ENV 不一致（含未設定）時本站拒絕啟動，所有頁面都無法使用 |
 | DEBUG | 預設 false，雲端驗證要求 false |
 | MODULE_BACKEND | auto / remote / cloud；auto 在 Vercel 選 cloud，其餘選 remote |
-| REMOTE_ADMIN_BASE_URL | 公開 HTTPS 網址；空白時本機可做離線測試，不能遠端操作 |
-| DATABASE_URL | 雲端 DB 必填機密；不從 POSTGRES_URL 猜測或自動複製 |
+| REMOTE_ADMIN_BASE_URL | 保留的本機遠端模式欄位；`remote_admin_client.request_json()` 目前沒有呼叫端。空白時 `remote_admin_base_url` 回退到正式 ADMIN 網址（`app/core/constants.py`）；START 啟動時為空值 |
+| DATABASE_URL | DB 連線必填機密，本機／雲端一致（本機由 START 注入 Production 值）；不從 POSTGRES_URL 猜測或自動複製。未設定回報 `required`，格式不符 `invalid_postgres_url`，TLS 降級 `unsafe_ssl_mode`，含驅動不支援的參數（例如 supa、pgbouncer）`unsupported_url_option` |
 | DB_POOL_MODE | transaction / session / direct；預設 transaction，管理者需核對實際連線模式 |
 | DB_SSL_MODE | require / verify-full；預設 require；verify-full 需管理者另確認 CA 設定 |
 | DB_CONNECT_TIMEOUT_SECONDS | 1–30 秒；預設 5 秒 |
-| SUPABASE_URL | 雲端 Storage 必填公開專案網址 |
-| SUPABASE_STORAGE_BUCKET | 雲端 Storage 必填 Bucket 名稱，真正存在與私有設定尚未驗證 |
-| SUPABASE_SECRET_KEY | 雲端 Storage 必填機密，是否有效與權限尚未驗證 |
-| SESSION_SECRET_KEY | ADMIN 雲端 Session 必填機密；至少 32 字元 |
+| SUPABASE_URL | 第一階段 `check_configuration("storage")` 使用的公開專案網址；S3StorageClient 不讀此欄位 |
+| SUPABASE_STORAGE_BUCKET | S3StorageClient 使用的 Bucket 名稱，亦由第一階段靜態檢查驗證；真正存在與私有政策須另驗證 |
+| SUPABASE_SECRET_KEY | 第一階段 storage 設定檢查要求的機密；S3StorageClient 不讀此欄位，使用 S3_ACCESS_KEY_ID／S3_SECRET_ACCESS_KEY |
+| S3_ENDPOINT_URL / S3_REGION | Supabase S3 相容端點與區域；`integrations/supabase_storage.py` 使用。本機由 START 注入（2026-10-25 核定例外） |
+| S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | Supabase S3 金鑰；本機由 START 注入，不在本機機密拒絕清單。`check_configuration("storage")` 仍驗證 SUPABASE_URL／SUPABASE_STORAGE_BUCKET／SUPABASE_SECRET_KEY，不驗證 S3_*；這是第一階段靜態檢查，不是另一個 Storage 模組 |
+| SESSION_SECRET_KEY | ADMIN 雲端 Session 必填機密；至少 32 字元。本機屬禁用機密，因此本機無法登入 |
 | SESSION_MAX_AGE_SECONDS | 1–86400 秒；預設 28800 秒 |
-| GEMINI_API_KEY / OPENAI_API_KEY | 雲端選填；本階段不使用、不要求取得模型金鑰 |
+| GEMINI_API_KEY / OPENAI_API_KEY | 雲端選填；模型服務尚未串接 |
 | VERCEL / VERCEL_GIT_COMMIT_SHA | 平台自動提供，不是使用者授權憑證 |
 
 `VERCEL=1` 是部署標記，並非安全認證；不能靠此旗標保護公開端點。
 表單或路徑參數格式錯誤時顯示 400 錯誤頁，不回顯輸入（不使用 FastAPI 預設 JSON 422）。
 本機沒有 SESSION_SECRET_KEY 時，殘留的登入 cookie 視為未登入並導向登入頁；雲端設定不合格仍拒絕。
-本機檢查會拒絕已知機密欄位；DB 模組在本機模式會阻擋 Engine 建立。
+依 2026-10-24 核定，ADMIN 程序已取得合法 DATABASE_URL 時可在本機建立 Engine，不要求 Vercel／雲端標記；格式、TLS、逾時與去敏檢查保留。其他機密欄位的本機限制與網站授權不變。
 雲端仍須保留真正的登入、角色、資料範圍與每次操作授權。
 目前沒有任何回傳環境變數的 HTTP 端點。
 
-未來密鑰輪替由各站雲端設定及新部署套用，不改七位開發者的啟動檔。
+密鑰輪替由各站雲端設定及新部署套用；本機需重新 START 才會取得新值。
 新增公開設定仍須經核定，不能任意透過 JSON 欄位加入密鑰。
-本階段新增的 REMOTE_ADMIN_BASE_URL 尚未接到啟動器；其現有 PUBLIC_ENV 白名單沒有改動。
+歷史第一階段未調整啟動器 PUBLIC_ENV；目前來源與允許欄位以 [環境隔離](ENVIRONMENT_ISOLATION.md) 及 `app/core/environment.py` 為準，不據歷史描述推定任意 JSON 欄位可用。
 
 ## 契約
 
@@ -88,28 +105,31 @@ OperationContext 是內部授權上下文契約，不是驗證器，也不能從
 StorageClient 為內部 Protocol，必須由 service 完成權限與路徑產生後使用。
 Repository 不 commit；Service 未來負責交易、稽核、補償及冪等性。
 
+
+### 未來上傳傳輸的限制（尚未實作）
+
+DTO 的檔案大小上限為 4 MiB（4,194,304 bytes），不是整個 HTTP request 的預算。
+Vercel Function 請求／回應上限為 4.5 MB，multipart 邊界、欄位與 metadata 都必須計入；
+未來 adapter／端點需驗證實際檔案與完整 body，不可以 Base64 編碼後仍假設 4 MiB 可以通過。
+需要調整傳輸方式時另提設計。
+參考 [Vercel Function 限制](https://vercel.com/docs/functions/limitations)。
+
 ## Windows 驗證（不需公司密鑰）
 
-在 ADMIN 根目錄使用 Python 3.12。首次準備環境：
-
-```powershell
-Set-Location 'C:\InvoiceGuard_project\InvoiceGuard-AI-ADMIN'
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-```
-
-若電腦沒有註冊 `py -3.12`，以已安裝 Python 3.12 的完整執行檔路徑取代。
-不要執行 vercel env pull，也不要下載或建立含公司機密的 .env。
+初次設定與日常啟動使用同層 `InvoiceGuard-STARTUP` 的 `SETUP.cmd`／`START.cmd`（手機 HTTPS 已包含在日常啟動），詳見 [README](../README.md)。
+以下在 ADMIN 根目錄使用已建立的 Python 3.12 `.venv`，不必手動 activate 或每日重建。
+不要執行 vercel env pull，也不要建立含公司機密的 .env。
 
 ```powershell
 # 預設不讀 .env；此檢查不連線，也不回傳任何設定值。
 .\.venv\Scripts\python.exe -m app.integrations.vercel --check local
 $LASTEXITCODE
 
-# 測試程序會清除已知設定的繼承值，使用假值，封鎖網路與真實 DB 連線。
+# 測試程序會清除已知設定的繼承值（S3_* 目前不在清除清單），使用假值，封鎖網路與真實 DB 連線。
+.\.venv\Scripts\python.exe -B scripts/check_project.py
 .\.venv\Scripts\python.exe -m pytest -q --basetemp=tmp/pytest
-.\.venv\Scripts\python.exe -m ruff check app tests
-.\.venv\Scripts\python.exe -m ruff format --check app tests
+.\.venv\Scripts\python.exe -m ruff check app tests scripts
+.\.venv\Scripts\python.exe -m ruff format --check app tests scripts
 ```
 
 local 檢查有效時回傳 0，設定錯誤回傳 2。未設定遠端網址的警告屬預期結果。
@@ -121,7 +141,7 @@ Windows asyncio 需要程序內 socketpair；測試只放行 socketpair 自己�
 仍阻擋一般 loopback 連線、外部連線以及 SQLAlchemy / psycopg 連線。
 Windows AppContainer 沙箱可能阻擋 socketpair；此時請在一般 PowerShell 執行，勿放寬測試的外部連線限制。
 
-現有頁面驗證另開 PowerShell：
+日常頁面入口為 <http://invoiceguard-ai-admin.localhost:8080/login> 與 `/health`；以下只供單站診斷，先關閉統一啟動器以免埠衝突：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
@@ -129,14 +149,13 @@ Windows AppContainer 沙箱可能阻擋 socketpair；此時請在一般 PowerShe
 
 可檢查 http://127.0.0.1:8002/health（status=ok）、/login 與 /static/css/main.css。
 未登入開 /dashboard 應轉往 /login。這些 URL 只驗證既有頁面與程序，不能證明 DB / Storage 可用。
-不要在尚未接線遠端登入時，以雲端公司帳密嘗試本機登入。
+本機無法登入（SESSION_SECRET_KEY 不在本機）；不要以公司帳密嘗試本機登入：本機連正式 DB，登入流程會先寫入 last_login_at 再失敗。
 
-## 後續驗收
+## 待完成
 
-真實 DB / Storage 測試只能在管理者控制、具有測試環境機密的雲端執行器進行。
-依序處理真實登入與部門授權、API schema、Repository / service、Storage adapter、
-受控 ADMIN JSON 端點、localhost 遠端傳輸。需測版本衝突、跨使用者拒絕、檔案內容、
-冪等性、失敗補償及稽核，不能以本階段 Protocol 或單元測試代替。
+依序處理真實登入與部門授權、API schema、Repository / service、第一階段契約（DataService／FileService）接線與受控 ADMIN JSON 端點。
+需測版本衝突、跨使用者拒絕、檔案內容、冪等性、失敗補償及稽核，不能以 Protocol 或單元測試代替。
+本機連正式 DB／Storage，寫入測試需使用者明確授權。
 
 ## 技術依據
 

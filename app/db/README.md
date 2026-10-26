@@ -1,5 +1,11 @@
 # DB 模組（`app/db`）— 後台
 
+AI 先讀根目錄 [AGENTS.md](../../AGENTS.md)／[CLAUDE.md](../../CLAUDE.md)，
+目前實作狀態見 [DEVELOPMENT_STATUS.md](../../docs/DEVELOPMENT_STATUS.md)，
+契約／ORM 同步及 Repository 分層檢查見 [PROJECT_CHECKS.md](../../docs/PROJECT_CHECKS.md)。
+此文件的部署與 migration 流程只是管理者維運參考，並非當前任務授權。
+不下載、輸出或寫入實際連線字串；DB 模組使用程序已取得的 DATABASE_URL（本機由 START 注入，連正式 DB）。
+
 > 後台以本模組**直接存取**與 InvoiceGuard-AI-API **同一個 PostgreSQL 資料庫**。
 > **資料表結構（migration）只由 API 專案管理**；本模組的 Model 是對應定義，必須與 API 專案保持一致。
 > 每張資料表的完整 Schema 寫在 `models/*.py` 的**檔案開頭備註**，格式與 API 專案相同。
@@ -19,8 +25,9 @@
 本專案**沒有** `migrations/`，也不安裝 Alembic。
 
 第一階段新增 `contracts.py` 定義 Repository 介面，未實作通用 CRUD，也未改動 ORM 模型或 Schema。
-`session.py` 先驗證雲端執行限制、TLS 與設定，再延遲建立 Engine；本機直接連線會被阻擋。
-transaction pooler 模式停用 psycopg prepared statements；實際連線模式仍須由管理者確認。
+`session.py` 驗證 PostgreSQL 連線設定與 TLS 後延遲建立 Engine；本機與雲端均可使用，不再要求 Vercel 執行位置。
+transaction pooler 模式停用 psycopg prepared statements；2026-10-25 本機已實測唯讀 SELECT 1。
+`repositories/user_account_repository.py` 存取 v1.3 草案的 `invoiceguard_identity.user_accounts`：本站沒有對應 ORM Model（Model 只能自 API 同步），因此以固定 SQL＋綁定參數存取，交易仍由 service 控制。
 完整驗證及未完成項目見 [模組契約](../../docs/MODULE_CONTRACT.md)。
 
 ---
@@ -34,6 +41,12 @@ transaction pooler 模式停用 psycopg prepared statements；實際連線模式
 | `invoice_items` | 發票明細 | [models/invoice.py](models/invoice.py) | 審核詳情 | 讀 |
 | `audit_logs` | 操作稽核紀錄（append-only） | [models/audit_log.py](models/audit_log.py) | 記錄管理者操作、稽核查詢 | 新增 / 讀 |
 | `job_runs` | 排程執行紀錄 | [models/job_run.py](models/job_run.py) | 排程紀錄頁 | 讀（由 API 寫入） |
+| `invoiceguard_identity.user_accounts` | 登入帳號（v1.3，UUID 主鍵） | 無 ORM，見 [user_account_repository.py](repositories/user_account_repository.py) | `/dev/accounts`、db-inspection | 讀 / 新增 / 修改 |
+| `public.user_profiles` | 帳號顯示資料（v1.3） | 同上 | 新增帳號時建立 | 新增 |
+| `public.departments` | 部門（v1.3） | 同上 | 確保預設部門 `UNASSIGNED` | 讀 / 新增 |
+| `public.user_departments` | 帳號所屬部門（v1.3） | 同上 | 新增帳號時建立 | 新增 |
+
+上方 ORM 表（`users` 等）是舊草案，與 v1.3 身分表互不引用；管理者登入（`auth_service`）目前查的是 ORM `users`。兩者結構都屬 API 專案管理。
 
 ---
 
@@ -68,12 +81,12 @@ users ──1:N──> invoices ──1:N──> invoice_items
 
 ## 5. 同步流程（資料表結構異動時）
 
-1. **API 專案**修改 Model 並產生 migration，PR 合併後執行 `alembic upgrade head`
+1. **API 專案**修改 Model 並建立 migration 檔；執行須另取授權，正式環境依核定流程處理
 2. **本專案**同步修改 `models/` 對應檔案：
    - 從 API 專案複製 ORM 定義與 Schema 備註（保留本專案的「定義來源」一行）
    - 異動紀錄加一行，註明 API revision id
    - 若是新資料表，在 `models/__init__.py` 匯入並更新本文件「資料表索引」
-3. 部署順序：**migration → API → 後台**
+3. 相依順序：**migration → API → 後台**；執行 migration 與部署需使用者明確授權
 
 **禁止事項：**
 

@@ -5,20 +5,28 @@
     - 禁止在其他模組直接使用 os.environ / os.getenv。
     - 新增設定時，必須同步更新根目錄 .env.example。
     - 預設不讀取 .env / secrets 目錄；Vercel 由平台注入程序環境變數。
-    - 本機預設 remote 模式，不能以本模組建立公司資料庫連線。
+    - DB 連線不限制執行位置；本機已有合法 DATABASE_URL 時可直接使用。
 """
 
 import re
+from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
-from urllib.parse import urlsplit
+from typing import Any, Literal
 
+from psycopg import pq
 from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from app.core.constants import PRODUCTION
+from app.core.environment import (
+    EnvironmentConfigurationError,
+    environment_report,
+    settings_sources,
+    valid_service_url,
+)
 from app.core.module_errors import (
     ConfigurationIssue,
     ConfigurationReport,
@@ -28,6 +36,13 @@ from app.core.module_errors import (
 
 # 專案根目錄（InvoiceGuard-AI-ADMIN/）
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+# psycopg 將 URL 查詢參數原樣交給 libpq；不在此清單的參數只會在連線時才失敗
+LIBPQ_OPTIONS = frozenset(option.keyword.decode() for option in pq.Conninfo.get_defaults())
+
+# 保留的 remote_admin_client 預設 ADMIN 公開網址（目前無呼叫端）；網址集中在 app/core/constants.py，
+# dev-urls.local.json 有指定時以其為準
+DEFAULT_REMOTE_ADMIN_BASE_URL = PRODUCTION["ADMIN_URL"]
 
 
 class Settings(BaseSettings):
@@ -41,10 +56,23 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[Any, ...]:
+        """程序環境優先；只有本機可載入核定公開 URL，永不載入 dotenv/secrets。"""
+        return settings_sources(init_settings, env_settings, repo_root=BASE_DIR, platform="admin")
+
     # ---- 基本 ----
     APP_NAME: str = "InvoiceGuard-AI-ADMIN"
     APP_ENV: Literal["local", "preview", "production"] = "local"
     DEBUG: bool = False
+    LOCAL_SECRET_FIELDS: tuple[str, ...] = Field(default=(), exclude=True, repr=False)
     MODULE_BACKEND: Literal["auto", "remote", "cloud"] = "auto"
     REMOTE_ADMIN_BASE_URL: str = Field(default="", repr=False)
 
@@ -54,10 +82,15 @@ class Settings(BaseSettings):
     DB_SSL_MODE: Literal["require", "verify-full"] = "require"
     DB_CONNECT_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
 
-    # ---- 雲端 Storage 與預留模型設定（本階段不呼叫外部服務）----
+    # ---- 第一階段設定檢查、S3 檔案存取與預留模型設定 ----
     SUPABASE_URL: str = Field(default="", repr=False)
     SUPABASE_STORAGE_BUCKET: str = ""
     SUPABASE_SECRET_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    # Supabase Storage 的 S3 相容端點；本機由 START 經 Vercel CLI 注入（Bucket 沿用 SUPABASE_STORAGE_BUCKET）
+    S3_ENDPOINT_URL: str = Field(default="", repr=False)
+    S3_REGION: str = ""
+    S3_ACCESS_KEY_ID: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    S3_SECRET_ACCESS_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
     GEMINI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
     OPENAI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
 
@@ -67,6 +100,7 @@ class Settings(BaseSettings):
 
     # ---- Vercel 系統變數（由 Vercel 自動注入，不需手動設定）----
     VERCEL: str = ""
+    VERCEL_ENV: str = ""
     VERCEL_GIT_COMMIT_SHA: str = ""
 
     @property
@@ -85,6 +119,18 @@ class Settings(BaseSettings):
         if self.MODULE_BACKEND == "auto":
             return "cloud" if self.is_vercel else "remote"
         return self.MODULE_BACKEND
+
+    @property
+    def remote_admin_base_url(self) -> str:
+        """保留的 ADMIN 目標：解析後為 remote 時取指定值或預設，其餘回空字串；目前無呼叫端。"""
+        if self.module_backend != "remote":
+            return ""
+        return self.REMOTE_ADMIN_BASE_URL or DEFAULT_REMOTE_ADMIN_BASE_URL
+
+    @property
+    def dev_pages_enabled(self) -> bool:
+        """只在 APP_ENV=local、VERCEL 不為 1 且解析後 module_backend=remote 時開放 /dev 示範。"""
+        return self.APP_ENV == "local" and not self.is_vercel and self.module_backend == "remote"
 
     @property
     def static_version(self) -> str:
@@ -111,14 +157,16 @@ class Settings(BaseSettings):
         """驗證指定能力需要的設定；不連網、不建立 Engine、不輸出值。"""
         if scope not in {"local", "database", "storage", "session", "cloud"}:
             raise ValueError("不支援的設定檢查範圍")
-        issues: list[ConfigurationIssue] = []
-        if scope == "local":
+        issues = [ConfigurationIssue(**issue) for issue in self.check_environment()["issues"]]
+        if scope == "database":
+            # DB 能力只要求合法連線設定，不要求 Vercel 標記或雲端部署。
+            issues.extend(self._database_issues())
+        elif scope == "local":
             if self.is_vercel or self.module_backend != "remote":
                 issues.append(
                     ConfigurationIssue("MODULE_BACKEND", "remote_required", "本機應使用遠端模式")
                 )
             for name in (
-                "DATABASE_URL",
                 "SESSION_SECRET_KEY",
                 "SUPABASE_SECRET_KEY",
                 "GEMINI_API_KEY",
@@ -128,7 +176,7 @@ class Settings(BaseSettings):
                     issues.append(
                         ConfigurationIssue(name, "cloud_secret_in_local", "本機不應載入公司機密")
                     )
-            if not self.REMOTE_ADMIN_BASE_URL:
+            if not self.REMOTE_ADMIN_BASE_URL and not self.DATABASE_URL.get_secret_value():
                 issues.append(
                     ConfigurationIssue(
                         "REMOTE_ADMIN_BASE_URL",
@@ -137,7 +185,7 @@ class Settings(BaseSettings):
                         "warning",
                     )
                 )
-            elif not _is_https_base_url(self.REMOTE_ADMIN_BASE_URL):
+            elif self.REMOTE_ADMIN_BASE_URL and not _is_https_base_url(self.REMOTE_ADMIN_BASE_URL):
                 issues.append(
                     ConfigurationIssue(
                         "REMOTE_ADMIN_BASE_URL",
@@ -212,7 +260,41 @@ class Settings(BaseSettings):
                 "warning",
             )
         )
-        return ConfigurationReport(scope, tuple(issues))
+        unique_issues: dict[tuple[str, str], ConfigurationIssue] = {}
+        for issue in issues:
+            unique_issues.setdefault((issue.field, issue.code), issue)
+        return ConfigurationReport(scope, tuple(unique_issues.values()))
+
+    def check_environment(self) -> dict[str, Any]:
+        """驗證本站邊界；依核定允許本機 DATABASE_URL，其他機密規則不變。"""
+        report = environment_report(self, "admin")
+        report["issues"] = [
+            issue
+            for issue in report["issues"]
+            if not (issue["field"] == "DATABASE_URL" and issue["code"] == "cloud_secret_in_local")
+        ]
+        if (
+            self.APP_ENV == "local"
+            and not self.VERCEL
+            and not self.VERCEL_ENV
+            and self.DATABASE_URL.get_secret_value()
+        ):
+            report["issues"].extend(asdict(issue) for issue in self._database_issues())
+        report["configuration_valid"] = not any(
+            issue["severity"] == "error" for issue in report["issues"]
+        )
+        return report
+
+    def require_environment(self) -> None:
+        """使用本站環境報告，允許已核定的本機 DB 設定並保留其他啟動檢查。"""
+        report = self.check_environment()
+        if not report["configuration_valid"]:
+            codes = ", ".join(
+                f"{issue['field']}:{issue['code']}"
+                for issue in report["issues"]
+                if issue["severity"] == "error"
+            )
+            raise EnvironmentConfigurationError("環境設定驗證失敗：" + codes)
 
     def require_configuration(self, scope: ConfigurationScope) -> None:
         """設定不符合能力時阻擋操作，訊息不含設定值。"""
@@ -221,6 +303,8 @@ class Settings(BaseSettings):
             raise ModuleConfigurationError(report)
 
     def _database_issues(self) -> list[ConfigurationIssue]:
+        if not self.DATABASE_URL.get_secret_value().strip():
+            return [ConfigurationIssue("DATABASE_URL", "required", "需設定 DATABASE_URL")]
         try:
             url = make_url(self.sqlalchemy_database_url)
             if (
@@ -235,30 +319,26 @@ class Settings(BaseSettings):
                     "DATABASE_URL", "invalid_postgres_url", "需設定完整 PostgreSQL 連線字串"
                 )
             ]
+        issues: list[ConfigurationIssue] = []
         ssl_mode = url.query.get("sslmode")
         if ssl_mode is not None and ssl_mode not in {"require", "verify-ca", "verify-full"}:
-            return [
+            issues.append(
                 ConfigurationIssue("DATABASE_URL", "unsafe_ssl_mode", "雲端資料庫連線必須使用 TLS")
-            ]
-        return []
+            )
+        # 例如 Supabase 整合的 supa、Prisma 的 pgbouncer；不提早擋下會被誤判成 DB 連線失敗
+        if not set(url.query) <= LIBPQ_OPTIONS:
+            issues.append(
+                ConfigurationIssue(
+                    "DATABASE_URL",
+                    "unsupported_url_option",
+                    "連線字串含 PostgreSQL 驅動不支援的參數（例如 supa、pgbouncer），需移除",
+                )
+            )
+        return issues
 
 
 def _is_https_base_url(value: str) -> bool:
-    try:
-        url = urlsplit(value)
-        return bool(
-            url.scheme == "https"
-            and url.hostname
-            and url.port in {None, 443}
-            and not url.username
-            and not url.password
-            and not url.query
-            and not url.fragment
-            and not any(character.isspace() for character in value)
-            and "\\" not in value
-        )
-    except ValueError:
-        return False
+    return valid_service_url(value)
 
 
 @lru_cache

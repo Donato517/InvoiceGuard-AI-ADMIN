@@ -9,6 +9,7 @@ import logging
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -67,6 +68,13 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(NotFoundError)
     async def handle_not_found(request: Request, exc: NotFoundError) -> HTMLResponse:
         return templates.TemplateResponse(request, "pages/errors/404.html", status_code=404)
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> HTMLResponse:
+        # 不使用 FastAPI 預設 JSON：errors() 的 input / ctx 可能含密碼或使用者輸入，不可回顯
+        return _error_page(request, 400, "送出的資料格式不正確，請確認後再試")
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> HTMLResponse:

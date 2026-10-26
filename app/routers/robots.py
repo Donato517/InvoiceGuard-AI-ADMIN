@@ -1,17 +1,18 @@
 """
 模組名稱：app.routers.robots
-功能說明：提供 /robots.txt，禁止搜尋引擎索引後台。
+功能說明：提供 /robots.txt；內容取自三站共用的 app/core/constants.py。
 路由：GET /robots.txt
 注意事項：
-    - 另有 <meta name="robots">（base.html）與 X-Robots-Tag 標頭（vercel.json）雙重保護。
+    - 三站不出現在搜尋結果，靠頁面 <meta name="robots"> 與 vercel.json 的 X-Robots-Tag（noindex）。
+    - robots.txt 刻意不封鎖抓取，搜尋引擎才讀得到 noindex；原因見 app/core/constants.py。
 """
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-router = APIRouter(tags=["robots"])
+from app.core.constants import ROBOTS_TXT
 
-ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
+router = APIRouter(tags=["robots"])
 
 
 @router.get("/robots.txt", response_class=PlainTextResponse)

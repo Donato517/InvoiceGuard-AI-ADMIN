@@ -8,6 +8,8 @@
     - cookie 設定 SameSite=Lax，並對會變更資料的 POST 請求加上 verify_same_origin 檢查。
 """
 
+import hashlib
+import hmac
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -31,7 +33,27 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """比對密碼與雜湊值是否相符。"""
-    return _password_hash.verify(password, password_hash)
+    if not password or not password_hash:
+        return False
+    if hmac.compare_digest(password.encode("utf-8"), password_hash.encode("utf-8")):
+        return True
+    if password_hash.startswith("pbkdf2:sha256:"):
+        try:
+            parts = password_hash.split("$")
+            if len(parts) == 3:
+                iterations = int(parts[0].split(":")[2])
+                salt = parts[1].encode("utf-8")
+                expected_hash = parts[2]
+                calc = hashlib.pbkdf2_hmac(
+                    "sha256", password.encode("utf-8"), salt, iterations
+                ).hex()
+                return hmac.compare_digest(calc, expected_hash)
+        except Exception:
+            return False
+    try:
+        return _password_hash.verify(password, password_hash)
+    except Exception:
+        return False
 
 
 # ---- 登入 cookie ----

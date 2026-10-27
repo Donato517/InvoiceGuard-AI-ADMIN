@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.deps import DbSession
+from app.core.deps import OptionalDbSession
 from app.core.security import (
     clear_session_cookie,
     safe_next_path,
@@ -35,7 +35,7 @@ def login_page(
 @router.post("/login", dependencies=[Depends(verify_same_origin)], response_model=None)
 def login(
     request: Request,
-    db: DbSession,
+    db: OptionalDbSession,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
     next_path: Annotated[str, Form(alias="next")] = "/dashboard",

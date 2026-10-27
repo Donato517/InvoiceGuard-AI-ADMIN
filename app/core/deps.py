@@ -13,7 +13,7 @@
 
 import contextlib
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -53,7 +53,7 @@ def get_optional_db() -> Iterator[Session | None]:
 OptionalDbSession = Annotated[Session | None, Depends(get_optional_db)]
 
 
-def get_session_user_id(request: Request) -> int:
+def get_session_user_id(request: Request) -> str | int:
     """從登入 cookie 取出管理者 ID；未登入、遭竄改或過期時拋出 LoginRequiredError。"""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     user_id = _read_user_id(token) if token else None
@@ -62,7 +62,7 @@ def get_session_user_id(request: Request) -> int:
     return user_id
 
 
-def _read_user_id(token: str) -> int | None:
+def _read_user_id(token: str) -> str | int | None:
     """驗證登入 cookie；本機沒有簽署金鑰時，殘留的 cookie 視為未登入。"""
     try:
         return read_session_token(token)
@@ -76,9 +76,9 @@ def _read_user_id(token: str) -> int | None:
 def require_admin(
     request: Request,
     # NOTE: 必須排在 db 之前——未登入時先拋出例外，不必建立資料庫連線
-    user_id: Annotated[int, Depends(get_session_user_id)],
+    user_id: Annotated[str | int, Depends(get_session_user_id)],
     db: OptionalDbSession,
-) -> User:
+) -> User | Any:
     """確認目前使用者是啟用中的管理者，並放入 request.state.admin 供樣板使用。
 
     Raises:
@@ -97,7 +97,7 @@ def require_admin(
 
 
 # 需要管理者資料的路由：在參數宣告 `admin: CurrentAdmin`
-CurrentAdmin = Annotated[User, Depends(require_admin)]
+CurrentAdmin = Annotated[User | Any, Depends(require_admin)]
 
 
 def require_dev_pages() -> None:

@@ -6,16 +6,16 @@
     - 帳號不存在、密碼錯誤、帳號停用、不是管理者，一律回傳 None（畫面顯示同一個訊息），避免帳號被列舉。
 """
 
-from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
-from app.db.models.user import User, UserRole
+from app.db.models.user import UserRole
 from app.db.repositories import user_repository
 
 
-def authenticate(db: Session | None, email: str, password: str) -> User | None:
+def authenticate(db: Session | None, email: str, password: str) -> Any:
     """驗證管理者帳號密碼；成功時更新最後登入時間並 commit。
 
     Args:
@@ -35,7 +35,7 @@ def authenticate(db: Session | None, email: str, password: str) -> User | None:
     if not user.is_active or user.role != UserRole.ADMIN:
         return None
 
-    user.last_login_at = datetime.now(UTC)
+    user_repository.update_last_login(db, user)
     try:
         db.commit()
     except Exception:

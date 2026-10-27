@@ -1,27 +1,122 @@
 """
 模組名稱：app.db.repositories.user_repository
-功能說明：users 資料表的資料存取（登入查詢、使用者列表、帳號狀態更新）。
+功能說明：使用者資料存取（優先支援雲端 invoiceguard_identity.user_accounts，若無則支援 ORM users 表）。
 注意事項：
-    - 只負責 ORM 操作，不含商業邏輯，不自行 commit（交易由 service 控制）。
-    - 查詢預設排除軟刪除資料（deleted_at IS NULL）。
+    - 只負責資料存取，不含商業邏輯，不自行 commit（交易由 service 控制）。
+    - 查詢預設排除停用或軟刪除資料。
     - email 查詢前一律轉小寫，與寫入規則一致。
 """
 
-from sqlalchemy import select
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.db.models.user import User
 
 
-def get_by_id(db: Session, user_id: int) -> User | None:
+@dataclass
+class UserRecord:
+    """統一封裝雲端帳號結構之使用者物件。"""
+
+    id: str | int
+    email: str
+    password_hash: str
+    display_name: str
+    role: str
+    is_active: bool
+    last_login_at: datetime | None = None
+    _is_identity: bool = True
+
+
+_IDENTITY_SELECT = """
+    SELECT
+        a.user_id,
+        a.email,
+        a.password_hash,
+        COALESCE(p.display_name, split_part(a.email, '@', 1)) AS display_name,
+        CASE
+            WHEN EXISTS (
+                SELECT 1 FROM public.user_departments ud
+                JOIN public.departments d ON ud.department_id = d.department_id
+                WHERE ud.user_id = a.user_id AND d.department_code IN ('administration_d', 'technology_d')
+            ) THEN 'admin'
+            ELSE 'user'
+        END AS role,
+        (a.account_status = 'active' AND COALESCE(p.is_active, true)) AS is_active,
+        a.last_login_at
+    FROM invoiceguard_identity.user_accounts a
+    LEFT JOIN public.user_profiles p ON a.user_id = p.user_id
+"""
+
+
+def _from_row(row: Any) -> UserRecord:
+    return UserRecord(
+        id=str(row[0]),
+        email=str(row[1]),
+        password_hash=str(row[2]),
+        display_name=str(row[3]),
+        role=str(row[4]),
+        is_active=bool(row[5]),
+        last_login_at=row[6],
+        _is_identity=True,
+    )
+
+
+def get_by_id(db: Session | None, user_id: str | int | UUID) -> User | UserRecord | None:
     """依主鍵取得使用者；不存在或已軟刪除時回傳 None。"""
-    return db.scalar(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
+    if db is None:
+        return None
+    try:
+        uuid_str = str(user_id)
+        UUID(uuid_str)
+        sql = text(f"{_IDENTITY_SELECT} WHERE a.user_id = :user_id")
+        row = db.execute(sql, {"user_id": uuid_str}).fetchone()
+        if row is not None:
+            return _from_row(row)
+    except Exception:
+        pass
+
+    try:
+        int_id = int(user_id)
+        return db.scalar(select(User).where(User.id == int_id, User.deleted_at.is_(None)))
+    except Exception:
+        return None
 
 
-def get_by_email(db: Session, email: str) -> User | None:
+def get_by_email(db: Session | None, email: str) -> User | UserRecord | None:
     """依 email 取得使用者（不分大小寫）；不存在或已軟刪除時回傳 None。"""
+    if db is None:
+        return None
     normalized = email.strip().lower()
-    return db.scalar(select(User).where(User.email == normalized, User.deleted_at.is_(None)))
+    try:
+        sql = text(f"{_IDENTITY_SELECT} WHERE LOWER(a.email) = :email")
+        row = db.execute(sql, {"email": normalized}).fetchone()
+        if row is not None:
+            return _from_row(row)
+    except Exception:
+        pass
+
+    try:
+        return db.scalar(select(User).where(User.email == normalized, User.deleted_at.is_(None)))
+    except Exception:
+        return None
 
 
-# TODO(JerryChien): list_page(db, *, keyword=None, page, page_size) -> tuple[list[User], int]
+def update_last_login(db: Session, user: Any) -> None:
+    """更新最後登入時間（不自行 commit）。"""
+    now = datetime.now(UTC)
+    user.last_login_at = now
+    if getattr(user, "_is_identity", False) or isinstance(getattr(user, "id", None), (str, UUID)):
+        try:
+            sql = text("""
+                UPDATE invoiceguard_identity.user_accounts
+                SET last_login_at = :now, failed_login_count = 0
+                WHERE user_id = :user_id
+            """)
+            db.execute(sql, {"now": now, "user_id": str(user.id)})
+        except Exception:
+            pass

@@ -69,12 +69,17 @@ def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret_key, salt=_SESSION_SALT)
 
 
-def create_session_token(user_id: int) -> str:
+def create_session_token(user_id: int | str) -> str:
     """產生已簽署的登入資料（寫入 cookie 用）。"""
-    return _serializer().dumps({"uid": user_id})
+    uid_val = (
+        int(user_id)
+        if isinstance(user_id, int) or (isinstance(user_id, str) and user_id.isdigit())
+        else str(user_id)
+    )
+    return _serializer().dumps({"uid": uid_val})
 
 
-def read_session_token(token: str) -> int | None:
+def read_session_token(token: str) -> str | int | None:
     """驗證登入資料並取出管理者 ID。
 
     Returns:
@@ -85,10 +90,10 @@ def read_session_token(token: str) -> int | None:
     except BadSignature:  # 已過期（SignatureExpired）也是 BadSignature 的子類別
         return None
     user_id = data.get("uid") if isinstance(data, dict) else None
-    return user_id if isinstance(user_id, int) else None
+    return user_id if isinstance(user_id, (int, str)) else None
 
 
-def set_session_cookie(response: Response, user_id: int) -> None:
+def set_session_cookie(response: Response, user_id: int | str) -> None:
     """登入成功後寫入登入 cookie。"""
     response.set_cookie(
         SESSION_COOKIE_NAME,

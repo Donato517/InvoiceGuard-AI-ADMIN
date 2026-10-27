@@ -1,0 +1,93 @@
+{#
+  @template pages/e_function_settings/detail.html
+  @description 功能新增／內容編輯；停用可恢復，保留既有授權。
+  @route GET /functions/new、GET /functions/{function_id}/edit；同源 POST 新增／修改／狀態
+  @context function_id: UUID | None；values: dict 安全欄位；revision: str 原表單內容指紋
+  @context query: FunctionListQuery；back_url, reload_url: 固定站內網址
+  @context registry: tuple 已核定能力；error: str；blocked: bool 過期或結果待確認時阻擋重送
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}{{ '功能內容' if function_id else '新增功能' }}{% endblock %}
+{% block content %}
+  <p><a class="btn" href="{{ back_url }}">返回列表</a></p>
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  {% if blocked %}
+    <p>請先重新載入確認目前資料，再進行修改。下方保留這次填寫內容供你核對。</p>
+    <a class="btn" href="{{ reload_url }}">重新載入目前資料</a>
+  {% endif %}
+  <form class="form"
+        method="post"
+        action="{{ '/functions/' ~ function_id if function_id else '/functions' }}">
+    {% include "pages/e_function_settings/_return_fields.html" %}
+    {% if function_id %}<input type="hidden" name="expected_revision" value="{{ revision }}">{% endif %}
+    <div class="form-field">
+      <label for="function_code">功能代碼</label>
+      <input id="function_code"
+             name="function_code"
+             value="{{ values.function_code }}"
+             maxlength="100"
+             required
+             {% if function_id %}readonly{% else %}list="function-codes"{% endif %}>
+      {% if function_id %}<p>建立後代碼固定，避免影響其他模組的對接。</p>{% endif %}
+    </div>
+    {% if not function_id %}
+      <datalist id="function-codes">
+        {% for entry in registry %}<option value="{{ entry.code }}">{{ entry.name }}</option>{% endfor %}
+      </datalist>
+    {% endif %}
+    <div class="form-field">
+      <label for="function_name">功能名稱</label>
+      <input id="function_name"
+             name="function_name"
+             value="{{ values.function_name }}"
+             maxlength="200"
+             required>
+    </div>
+    <div class="form-field">
+      <label for="app_scope">適用平台</label>
+      <select id="app_scope" name="app_scope" required>
+        {% for value, label in [('admin', '管理站'), ('frontend', '前台'), ('both', '前台與管理站')] %}
+          <option value="{{ value }}"
+                  {% if values.app_scope == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if function_id %}
+      <input type="hidden"
+             name="is_active"
+             value="{{ 'true' if values.is_active else 'false' }}">
+      <p>目前狀態：<span class="badge">{{ '啟用' if values.is_active else '停用' }}</span></p>
+    {% else %}
+      <div class="form-field">
+        <label><input type="checkbox"
+       name="is_active"
+       value="true"
+       {% if values.is_active %}checked{% endif %}> 建立時啟用</label>
+      </div>
+    {% endif %}
+    <p>新功能預設停用。尚未登錄程式能力的代碼可儲存為停用草稿；建立功能不會自動授予部門權限。</p>
+    <div class="filter-bar">
+      <button class="btn btn--primary"
+              type="submit"
+              {% if blocked %}disabled{% endif %}>{{ '儲存修改' if function_id else '新增功能' }}</button>
+      <a class="btn" href="{{ back_url }}">取消</a>
+    </div>
+  </form>
+  {% if function_id %}
+    <hr>
+    <h2>功能狀態</h2>
+    <p>停用不會實體刪除功能或原有授權關聯。重新啟用後，保留的授權可能恢復生效，請先確認設定。</p>
+    <form method="post"
+          action="/functions/{{ function_id }}/status"
+          data-confirm="{{ '確定停用此功能？原有授權關聯會保留。' if values.is_active else '確定重新啟用？原有授權可能恢復生效。' }}">
+      {% include "pages/e_function_settings/_return_fields.html" %}
+      <input type="hidden" name="expected_revision" value="{{ revision }}">
+      <input type="hidden"
+             name="is_active"
+             value="{{ 'false' if values.is_active else 'true' }}">
+      <button class="btn"
+              type="submit"
+              {% if blocked %}disabled{% endif %}>{{ '停用功能' if values.is_active else '重新啟用功能' }}</button>
+    </form>
+  {% endif %}
+{% endblock content %}

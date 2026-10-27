@@ -1,7 +1,7 @@
 """模組名稱：app.routers.departments
 功能說明：沿用 ADMIN 版型提供部門管理，本階段只限本機開發。
 路由：GET/POST /department、POST /department/{department_id}/name、/code、/status
-注意事項：本分支本機亦由 E 待接線閘門封閉；正式授權完成前不開放業務操作。
+注意事項：本機也必須經 E 身分／授權接點；資料與交易接線未完成時拒絕，雲端關閉。
 """
 
 from ipaddress import ip_address
@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.security import verify_same_origin
 from app.core.templating import templates
-from app.routers.e_admin import require_pending_admin_integration
+from app.routers.e_admin import require_configuration_access
 from app.services import department_service as service
 
 
@@ -45,7 +45,7 @@ def require_department_origin(request: Request) -> None:
 router = APIRouter(
     prefix="/department",
     tags=["departments"],
-    dependencies=[Depends(require_local_departments), Depends(require_pending_admin_integration)],
+    dependencies=[Depends(require_local_departments), Depends(require_configuration_access)],
 )
 WRITE_CHECKS = [Depends(verify_same_origin), Depends(require_department_origin)]
 
@@ -129,4 +129,5 @@ def _render(
             "code": code,
             "name": name,
         },
+        headers={"Cache-Control": "no-store"},
     )

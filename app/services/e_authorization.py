@@ -73,7 +73,7 @@ def require_permission(
         raise DeniedError
     if identity.expires_at.tzinfo is None or identity.expires_at <= datetime.now(UTC):
         raise UnauthenticatedError
-    if registered.management and not identity.system_management:
+    if registered.management and registered.system_only and not identity.system_management:
         raise DeniedError
     decision = call_adapter(access.decide, identity, code, action)
     if (
@@ -94,10 +94,16 @@ def require_permission(
         raise UnavailableError
     if decision.valid_until <= datetime.now(UTC):
         raise DeniedError
-    # 職務必須明確允許；部門 can_edit=True 不能補足 unset／衝突。
-    if decision.role_effect != "allow" or not decision.function_active:
+    # 新政策：一般能力依目前選取部門；管理資格另外要求明確職務許可。
+    if decision.department_effect == "unresolved":
+        raise UnavailableError
+    if decision.department_effect != "allow" or not decision.function_active:
         raise DeniedError
-    if decision.scope.kind == "none":
+    if registered.management and decision.role_effect != "allow":
+        raise DeniedError
+    if decision.scope.kind not in {"own", "departments", "company"} or (
+        decision.scope.kind == "departments" and not decision.scope.department_ids
+    ):
         raise DeniedError
     if target is not None and not decision.scope.covers(identity.user_id, target):
         raise DeniedError

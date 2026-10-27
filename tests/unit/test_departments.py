@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.config import settings
 from app.db.repositories import department_repository as repository
 from app.main import app
-from app.routers.e_admin import require_pending_admin_integration
+from app.routers.e_admin import require_configuration_access
 from app.schemas.department import Department
 from app.services import department_service as service
 
@@ -30,9 +30,10 @@ ROW = Department(
 
 @pytest.fixture
 def local_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """業務測試限定放行待接線閘門，仍測真正 loopback 與同源保護。"""
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "search", lambda q="": [ROW])
-    monkeypatch.setitem(app.dependency_overrides, require_pending_admin_integration, lambda: None)
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
     with TestClient(
         app, base_url="http://invoiceguard-ai-admin.localhost:8080", client=("127.0.0.1", 50000)
     ) as browser:

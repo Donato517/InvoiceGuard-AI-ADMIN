@@ -65,6 +65,7 @@ class Access:
     def __init__(self) -> None:
         self.user: Identity | None = identity()
         self.effects: dict[tuple[str, Action], str] = {}
+        self.role_effect = "allow"
         self.scope = DataScope("company")
         self.active = True
         self.mismatch = False
@@ -80,11 +81,12 @@ class Access:
             user.selected_department_id,
             code,
             action,
-            self.effects.get((code, action), "allow"),
+            self.role_effect,
             self.active,
             "test-policy-1",
             datetime.now(UTC) + timedelta(minutes=2),
             self.scope,
+            department_effect=self.effects.get((code, action), "allow"),
         )
 
     def effective_access(self, user: Identity) -> AccessSnapshot:
@@ -286,11 +288,12 @@ def e_client(module: EModule) -> Iterator[TestClient]:
 
 
 @pytest.mark.parametrize("effect", ["deny", "unset", "unresolved"])
-def test_role_must_explicitly_allow_even_when_department_would_allow(
+def test_selected_department_must_allow_even_when_management_role_allows(
     module: EModule, effect: str
 ) -> None:
     module.access.effects[(DEPARTMENTS, Action.EDIT)] = effect
-    with pytest.raises(DeniedError):
+    expected = UnavailableError if effect == "unresolved" else DeniedError
+    with pytest.raises(expected):
         module.save_department(
             identity(),
             DepartmentInput(department_code="SYS", department_name="修改"),
@@ -1218,3 +1221,77 @@ def test_feature_invalid_input_does_not_create_capability(
     assert response.status_code == 400
     assert module.unit_of_work().state.features == {}
     assert module.unit_of_work().state.events == []
+
+
+def test_department_basic_permission_does_not_need_a_job_role(module: EModule) -> None:
+    definition = Capability(
+        "finance.review", "財務查看", "財務", "/finance/reviews", frozenset({Action.VIEW}), False
+    )
+    module.registry = REGISTRY + (definition,)
+    module.access.role_effect = "unset"
+    user = replace(identity(), system_management=False)
+    assert module.check(user, definition.code, Action.VIEW).department_effect == "allow"
+    module.access.effects[(definition.code, Action.VIEW)] = "deny"
+    with pytest.raises(DeniedError):
+        module.check(user, definition.code, Action.VIEW)
+
+
+def test_department_basic_permission_cannot_replace_management_role(module: EModule) -> None:
+    module.access.role_effect = "unset"
+    with pytest.raises(DeniedError):
+        module.check(identity(), DEPARTMENTS, Action.EDIT)
+
+
+def test_selected_department_binding_prevents_using_another_departments_grant(
+    module: EModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decision = module.access.decide(identity(), DEPARTMENTS, Action.EDIT)
+    monkeypatch.setattr(module.access, "decide", lambda user, code, action: decision)
+    with pytest.raises(DeniedError):
+        module.check(
+            replace(identity(), selected_department_id=OTHER_DEPT), DEPARTMENTS, Action.EDIT
+        )
+
+
+def test_legacy_decision_without_department_basis_is_unavailable(
+    module: EModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decision = replace(
+        module.access.decide(identity(), DEPARTMENTS, Action.VIEW), department_effect="unresolved"
+    )
+    monkeypatch.setattr(module.access, "decide", lambda user, code, action: decision)
+    with pytest.raises(UnavailableError):
+        module.check(identity(), DEPARTMENTS, Action.VIEW)
+
+
+def test_delegated_department_manager_is_not_a_system_administrator(module: EModule) -> None:
+    user = replace(identity(), system_management=False)
+    matrix = module.read_matrix(user, DEPT)
+    assert matrix.revision == "g-1"
+    module.save_matrix(
+        user,
+        DEPT,
+        MatrixChange(
+            expected_revision="g-1",
+            rows=(GrantRow(function_code=DEPARTMENTS, actions=frozenset({Action.VIEW})),),
+        ),
+    )
+    assert module.grants.calls == 1
+    with pytest.raises(DeniedError):
+        module.list_departments(user)
+    with pytest.raises(DeniedError):
+        module.list_features(user)
+
+
+def test_department_manager_cannot_exceed_owned_or_delegated_ceiling(module: EModule) -> None:
+    user = replace(identity(), system_management=False)
+    with pytest.raises(DeniedError):
+        module.save_matrix(
+            user,
+            DEPT,
+            MatrixChange(
+                expected_revision="g-1",
+                rows=(GrantRow(function_code=FEATURES, actions=frozenset({Action.EDIT})),),
+            ),
+        )
+    assert module.grants.calls == 0

@@ -116,7 +116,7 @@ class Target:
 
 @dataclass(frozen=True)
 class Decision:
-    """G 解析多職務後的最終結果；未設定／衝突不允許沿用部門授權。"""
+    """G 解析目前部門基本許可、管理職務及獨立資料範圍後的綁定決策。"""
 
     user_id: UUID
     session_id: UUID
@@ -128,6 +128,7 @@ class Decision:
     policy_version: str
     valid_until: datetime
     scope: DataScope = field(default_factory=DataScope)
+    department_effect: Literal["allow", "deny", "unset", "unresolved"] = "unresolved"
 
 
 class InputModel(BaseModel):

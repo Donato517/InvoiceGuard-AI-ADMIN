@@ -10,7 +10,7 @@
 {% extends "layouts/e_admin.html" %}
 {% block title %}部門功能設定{% endblock %}
 {% block content %}
-  <p>本表設定部門基礎功能。使用者仍須具備職務明確許可，並符合資料範圍。</p>
+  <p>本表設定部門基礎功能。有效成員依目前選取部門取得基本功能，資料範圍與主管管理資格另行驗證。</p>
   <form method="post"
         action="/system/departments/{{ department_id }}/permissions">
     <input type="hidden" name="expected_revision" value="{{ matrix.revision }}">

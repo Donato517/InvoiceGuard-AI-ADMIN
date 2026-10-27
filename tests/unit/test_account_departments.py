@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.repositories import user_account_repository as repository
 from app.main import app
-from app.routers.e_admin import require_pending_admin_integration
+from app.routers.e_admin import require_configuration_access
 from app.schemas.account import AccountSummary
 from app.schemas.account_management import AccountDepartmentSettings
 from app.schemas.department import Department
@@ -51,7 +51,7 @@ def db(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.fixture
 def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """業務測試限定放行待接線閘門，不覆寫本機／同源保護。"""
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "get_account", lambda user: ACCOUNT)
     monkeypatch.setattr(
         service,
@@ -60,7 +60,8 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
             departments=OPTIONS, selected_ids=[FIRST, SECOND], primary_department_id=FIRST
         ),
     )
-    monkeypatch.setitem(app.dependency_overrides, require_pending_admin_integration, lambda: None)
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
     with TestClient(
         app,
         base_url="http://invoiceguard-ai-admin.localhost:8080",

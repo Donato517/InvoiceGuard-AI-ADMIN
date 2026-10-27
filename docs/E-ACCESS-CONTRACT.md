@@ -1,4 +1,8 @@
-# E01／E02 本人有效權限契約：第二批
+# E01／E02 本人有效權限契約：部門模式（第三批）
+
+> 2026-10-27 最新核定：四個配置入口的本機匿名例外已取消，必須登入及驗操作權限；正式資料／交易授權未完成時仍拒絕。本文先前匿名開放及操作紀錄屬歷史，最新入口狀態、驗證與交接待辦以 [E-LOGIN-ACCESS.md](E-LOGIN-ACCESS.md) 為準。部門基本功能／主管委派／scope 規則不變。
+
+> 2026-10-27 第三批最新規則：使用者改採「部門基本功能＋主管授權管理」，主管可管理本部門及外部部門，但僅限負責／明確受委派功能；一般功能不要求額外職務許可，權限以目前選取的有效部門為準。指定本機配置頁暫時免登入、由使用者操作共用正式 DB，代理只做離線測試；這取代本文前期的一般功能角色優先及新入口全部封閉條款。正式 B／G／journal 與主管身分尚待接線，雲端仍關閉。操作、版本及限制見 [E-FUNCTION-PAGES.md](E-FUNCTION-PAGES.md)。
 
 日期：2026-10-27。實作基準為目前 D:\2026102001\InvoiceGuard-AI-ADMIN，分支 codex/06e-admin-v13，開始點 dcad25e。此文件是提供 B／G／整合者審查的 E 端契約擴充，並非宣稱其他組已實作；未更動共用 schema／快照／migration。
 
@@ -28,9 +32,9 @@ E 會移除非現行有效部門，不把跨部門 scope 當成成員關係；�
 
 ## 有效操作與工作台資格
 
-E 不合併職務與部門規則；G 提供已依使用者核定政策解析的 Decision：職務必須明確 allow，未設定拒絕，部門許可不能補足 unset。多職務衝突由 G／PM 核定，來源未解析完成回 unavailable。
+G 依目前選取的有效部門提供 Decision.department_effect，必須明確 allow；一般功能不要求另外有職務許可，也不聯集其他部門。管理功能另要求 role_effect=allow 與目標 scope；主管的負責／委派來源由 G／帳號組提供，E 不自建角色引擎。department_effect 預設 unresolved，不允許舊 adapter 只回角色結果就相容。
 
-有效項目需同時符合：明確 allow、功能啟用、適用管理站、有效身分／部門、可表達且非空的資料 scope。固定 `Capability.management=True` 的 E 管理功能另需可信來源驗證的 system_management 資格；該資格不是請求欄位，也不是僅加入系統管理部門就取得。功能目錄是公司級資源，還需 company scope。
+有效項目需同時符合：明確 department_effect=allow、功能啟用、適用管理站、有效身分／部門、可表達且非空的資料 scope。`Capability.management=True` 的能力另驗明確 role_effect。部門／字典維護的 system_only=True 再要求可信 system_management 資格；部門功能授權為 system_only=False，可提供受委派主管，但仍受 G 的可授功能／操作上限、目標部門與獨立資料 scope 限制。功能目錄是公司級資源，還需 company scope。
 
 每個 action 各保留自己的 scope，不把「全公司查看」合併成「全公司修改」。`SelfAccess.functions[].grants[]` 包含 action、顯示名稱、scope 及 scope_label。可用功能投影不取代目標資源驗權：各路由仍需驗 action／Target、列表 SQL scope，寫入仍在同交易重驗權限、版本與稽核。
 
@@ -66,3 +70,15 @@ HTML 自動跳脫部門／功能名稱，回應 no-store，沒有 Token、角色
 分類、route、action 留在靜態 registry／manifest；v1.3 app_functions 未有的欄位不自行建表。其他組依其實作提供穩定 code、名稱、分類、路由、action、管理站適用性及 scope；核定後登錄、重產清單並驗收，由負責組處理正式 seed／啟用。不能用 E 的小清單宣稱全專案 E07 seed 已完成。
 
 整體交接仍見 [E-TEAM-HANDOFF.md](E-TEAM-HANDOFF.md)；本批測試及限制見 [E-PHASE2-RESULTS.md](E-PHASE2-RESULTS.md)。
+
+
+## 2026-10-27｜E 本機功能頁與部門模式（第三批）
+
+- 使用基準：目前 D:\2026102001 的 codex/06e-admin-v13、0ddca22（已含 main）。保留目前分支；本批不 Commit／Push／Merge，不操作正式資料。
+- 使用者新核定：目前指定頁暫免登入；限本機 loopback／Host／模式，雲端 404。使用正式 DB，由使用者點擊操作；代理只用封網替身。有效部門成員繼承所選部門基本功能，不聯集多部門。主管可管理本部門與外部部門，但限負責或明確委派功能，操作及資料 scope 分開。
+- 新增 /functions 與 /department-functions 的 schema、固定 SQL repository、交易服務、SSR／表單；重開 main 的 /accounts、/department 本機入口，保留原 Host／peer／同源限制；部門列表加入功能設定連結。不是 /dev 串接，沒有另建會員或角色核心。
+- 字典新增不授權；未知能力只存停用草稿。矩陣只更新提交列、保留其他列；撤銷保存 false 不硬刪除。短交易檢內容指紋、完整可見性與鎖定；任何失敗 rollback，機密例外固定化。指紋不冒充正式 audit／journal CAS。
+- Decision 增 department_effect，預設 unresolved 拒絕。一般功能依所選部門，管理能力另驗明確 role_effect／scope；系統部門／字典維護仍須 system_management。部門功能授權的固定 Capability.system_only=False，讓受委派主管無須系統管理資格，但仍受 G delegable 上限及目標限制。
+- 實測：相關 249 passed、1 warning，6.84s；主管邊界補測 E／新頁／registry 159 passed、1 warning，9.81s。最終完整回歸：936 passed、9 skipped、1 warning，126.10s，exit 0。跨三站 checker PASS（0 issues）、Ruff lint／118 檔格式、djLint 30 樣板（0 errors）、environment configuration_valid=true、connectivity_checked=false。
+- 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
+- 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。

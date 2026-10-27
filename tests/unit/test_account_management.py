@@ -11,7 +11,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import settings
 from app.db.repositories import user_account_repository as repository
 from app.main import app
-from app.routers.e_admin import require_pending_admin_integration
+from app.routers.e_admin import require_configuration_access
 from app.schemas.account import AccountSummary
 from app.schemas.account_management import AccountDepartmentSettings
 from app.services import account_management_service as service
@@ -23,7 +23,7 @@ HEADERS = {"Origin": "http://invoiceguard-ai-admin.localhost:8080"}
 
 @pytest.fixture
 def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """只在此業務測試放行待整合閘門，保留本機及同源檢查；預設封閉另測。"""
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "list_accounts", lambda q="", page=1: ([ACCOUNT], 1))
     monkeypatch.setattr(service, "get_account", lambda user_id: ACCOUNT)
     monkeypatch.setattr(
@@ -33,7 +33,8 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
             departments=[], selected_ids=[], primary_department_id=None
         ),
     )
-    monkeypatch.setitem(app.dependency_overrides, require_pending_admin_integration, lambda: None)
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
     with TestClient(
         app,
         base_url="http://invoiceguard-ai-admin.localhost:8080",

@@ -16,6 +16,7 @@ class Capability:
     route: str
     actions: frozenset[Action]
     management: bool = True
+    system_only: bool = True
 
 
 REGISTRY = (
@@ -39,6 +40,7 @@ REGISTRY = (
         "系統管理",
         "/system/departments/{department_id}/permissions",
         frozenset({Action.VIEW, Action.EDIT}),
+        system_only=False,
     ),
 )
 

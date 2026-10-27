@@ -12,6 +12,17 @@ InvoiceGuard AI 管理後台：發票審核、使用者管理、排程與稽核�
 | 部署 | Vercel Python Runtime（自動偵測 `app/main.py`），不開放搜尋引擎索引 |
 | 相關專案 | [InvoiceGuard-AI-API](https://github.com/Donato517/InvoiceGuard-AI-API)（後端 API，資料表結構管理者）、[InvoiceGuard-AI](https://github.com/Donato517/InvoiceGuard-AI)（前台） |
 
+## 06_E 本機配置入口（2026-10-27）
+
+最新核定已取消以下配置入口的本機免登入。它們及子路由均驗身分與操作；正式資料／交易授權接線未完成時保持拒絕，雲端仍關閉：
+
+- [功能管理](http://invoiceguard-ai-admin.localhost:8080/functions)
+- [部門功能](http://invoiceguard-ai-admin.localhost:8080/department-functions)
+- [新增／修改部門](http://invoiceguard-ai-admin.localhost:8080/department)
+- [新增帳號並勾選部門](http://invoiceguard-ai-admin.localhost:8080/accounts/new)
+
+操作、主管與多部門新規則、已驗證範圍及正式接點待辦見 [E-FUNCTION-PAGES.md](docs/E-FUNCTION-PAGES.md)。最新登入頁、四入口封閉狀態與接線待辦見 [E-LOGIN-ACCESS.md](docs/E-LOGIN-ACCESS.md)。本批僅做離線驗證；正式登入與主管端到端仍待接線。
+
 ## 快速開始（Windows 團隊開發）
 
 先閱讀 [AGENTS.md](AGENTS.md)；Claude 入口為 [CLAUDE.md](CLAUDE.md)。

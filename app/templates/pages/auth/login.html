@@ -1,38 +1,49 @@
 {#
   @template pages/auth/login.html
-  @description 後台登入頁：管理者 Email + 密碼登入，成功後導回 next 指定的頁面。
+  @description ADMIN 桌機／手機共用登入卡片，參考附件外觀，沿用 B 的正式驗證契約。
   @route GET /login、POST /login
-  @context next: str          登入後要回到的站內路徑
-  @context email: str | None  登入失敗時回填的 Email（不回填密碼）
-  @context error: str | None  登入失敗訊息
+  @context brand_name: str 共用品牌名稱；next: str 受控站內返回路徑
+  @context email: str 安全回填；error: str 固定錯誤訊息，絕不回填密碼
 #}
-{% extends "layouts/blank.html" %}
+{% extends "layouts/e_login.html" %}
 {% block title %}登入{% endblock %}
 {% block content %}
-  <section class="auth-card">
-    <h1 class="auth-card__title">{{ SITE_NAME }}</h1>
-    {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
-    <form method="post" action="/login" class="form">
+  <section class="e-login__card" aria-labelledby="login-title">
+    <h1 id="login-title" class="e-login__brand">{{ brand_name }} <span>AI</span></h1>
+    <p class="e-login__subtitle">{{ SITE_NAME }} · 發票辨識與財會作業平台</p>
+    {% if error %}<p id="login-error"
+   class="alert alert--danger e-login__error"
+   role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="e-login__form">
       <input type="hidden" name="next" value="{{ next }}">
-      <div class="form-field">
-        <label for="email">Email</label>
+      <div class="e-login__field">
+        <label for="email">帳號（Email）</label>
         <input id="email"
                name="email"
                type="email"
                autocomplete="username"
-               value="{{ email or '' }}"
+               value="{{ email }}"
+               maxlength="320"
+               placeholder="請輸入 Email"
+               autocapitalize="none"
+               spellcheck="false"
+               {% if error %}aria-describedby="login-error"{% endif %}
                required>
       </div>
-      <div class="form-field">
+      <div class="e-login__field">
         <label for="password">密碼</label>
         <input id="password"
                name="password"
                type="password"
                autocomplete="current-password"
+               maxlength="1024"
+               placeholder="請輸入密碼"
+               {% if error %}aria-describedby="login-error"{% endif %}
                required>
       </div>
-      <button type="submit" class="btn btn--primary btn--block">登入</button>
+      <button type="submit" class="btn btn--primary btn--block e-login__submit">登入系統</button>
     </form>
-    <p><a href="/auth/password/forgot">忘記密碼</a></p>
+    <p class="e-login__links"><a href="/auth/password/forgot">忘記密碼</a></p>
+    <p class="e-login__note">使用團隊建立的帳號登入，可用功能依目前選取部門及管理資格決定。</p>
   </section>
 {% endblock content %}

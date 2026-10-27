@@ -56,6 +56,55 @@ def current_identity(request: Request, module: Module) -> Identity:
 CurrentIdentity = Annotated[Identity, Depends(current_identity)]
 
 
+def require_configuration_access(request: Request, module: Module) -> None:
+    """取消四個配置入口的匿名例外，缺少完整資料／交易授權接線仍拒絕。
+
+    既有配置服務尚未接 SQL scope、G 可授上限與同交易 journal；通過頁面驗權
+    不足以安全放行資料操作。此相依不可作為已完成正式 CRUD 的成功入口。
+    """
+    if request.method != "GET":
+        require_e_origin(request)
+    identity = current_identity(request, module)
+    route_name = request.scope["route"].name
+    requirements = {
+        "department_list": (DEPARTMENTS, Action.VIEW),
+        "department_create": (DEPARTMENTS, Action.CREATE),
+        "department_rename": (DEPARTMENTS, Action.EDIT),
+        "department_status": (DEPARTMENTS, Action.EDIT),
+        "department_change_code": (DEPARTMENTS, Action.EDIT),
+        "function_list": (FEATURES, Action.VIEW),
+        "function_new": (FEATURES, Action.CREATE),
+        "function_edit": (FEATURES, Action.VIEW),
+        "function_create": (FEATURES, Action.CREATE),
+        "function_update": (FEATURES, Action.EDIT),
+        "function_status": (FEATURES, Action.EDIT),
+        "department_functions": (GRANTS, Action.VIEW),
+        "department_functions_preview": (GRANTS, Action.EDIT),
+        "department_functions_draft": (GRANTS, Action.EDIT),
+        "department_functions_save": (GRANTS, Action.EDIT),
+    }
+    if route_name not in requirements:
+        # 帳號組的正式能力代碼與 scope 未核定，不借用部門／功能管理許可。
+        if not identity.system_management:
+            raise DeniedError
+        raise UnavailableError
+    code, action = requirements[route_name]
+    target = Target(global_resource=True)
+    department_id = request.path_params.get("department_id")
+    if code == GRANTS:
+        department_id = department_id or request.query_params.get("department_id")
+    if department_id is not None:
+        try:
+            target = Target(UUID(str(department_id)))
+        except ValueError:
+            raise EError from None
+    # 這些 SSR 畫面包含既有資料，寫入／新增預覽也需明確查看許可。
+    module.check(identity, code, Action.VIEW, target)
+    if action != Action.VIEW:
+        module.check(identity, code, action, target)
+    require_pending_admin_integration()
+
+
 def require_e_origin(request: Request) -> None:
     """變更只接受精確同源瀏覽器 POST；缺 Origin／Referer 亦拒絕。"""
     origin = request.headers.get("origin") or request.headers.get("referer")

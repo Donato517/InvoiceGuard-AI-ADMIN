@@ -19,6 +19,8 @@ MENU_ITEMS: list[tuple[str, str]] = [
     ("發票審核", "/invoices"),
     ("帳號管理", "/accounts"),
     ("部門管理", "/department"),
+    ("功能管理", "/functions"),
+    ("部門功能", "/department-functions"),
     ("排程紀錄", "/system/job-runs"),
     ("稽核紀錄", "/system/audit-logs"),
 ]

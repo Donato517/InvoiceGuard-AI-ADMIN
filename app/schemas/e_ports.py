@@ -35,7 +35,7 @@ class AccessPort(Protocol):
         ...
 
     def decide(self, identity: Identity, code: str, action: Action) -> Decision:
-        """每次重新解析有效職務；不使用跨部門 bool_or 當職務授權。"""
+        """解析目前選取部門的基本操作；管理能力另驗職務與可授上限，不合併其他部門。"""
         ...
 
     def effective_access(self, identity: Identity) -> AccessSnapshot:

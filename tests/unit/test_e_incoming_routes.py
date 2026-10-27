@@ -1,10 +1,11 @@
-"""整合來源分支後的預設拒絕驗證；不覆寫閘門、不連正式 DB。"""
+"""使用者核定本機免登入後，雲端入口仍拒絕；不連正式 DB。"""
 
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 from app.services import account_management_service, department_service
 
@@ -30,11 +31,12 @@ BASE = "http://invoiceguard-ai-admin.localhost:8080"
         ("POST", f"/department/{DEPARTMENT}/status"),
     ],
 )
-def test_incoming_routes_closed_even_on_approved_loopback(
+def test_incoming_routes_stay_closed_in_cloud_after_local_exception(
     monkeypatch: pytest.MonkeyPatch,
     method: str,
     path: str,
 ) -> None:
+    monkeypatch.setattr(settings, "APP_ENV", "production")
     calls = []
     for service, names in [
         (
@@ -61,8 +63,7 @@ def test_incoming_routes_closed_even_on_approved_loopback(
         response = browser.request(
             method, path, headers={"Origin": BASE, "X-Role": "admin", "X-User-ID": ACCOUNT}
         )
-    assert response.status_code == 503
-    assert response.headers["cache-control"] == "no-store"
+    assert response.status_code == 404
     assert "set-cookie" not in response.headers
     for spy in calls:
         spy.assert_not_called()

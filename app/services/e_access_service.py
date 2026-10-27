@@ -75,26 +75,28 @@ def validate_access_snapshot(
             identity.selected_department_id,
         ):
             raise DeniedError
+        definition = definitions[decision.function_code]
         if (
             decision.policy_version != snapshot.policy_version
             or decision.valid_until.tzinfo is None
             or decision.valid_until <= now
-            or decision.role_effect not in {"allow", "deny", "unset"}
+            or decision.department_effect not in {"allow", "deny", "unset"}
+            or (definition.management and decision.role_effect not in {"allow", "deny", "unset"})
             or not isinstance(decision.function_active, bool)
         ):
             raise UnavailableError
-        definition = definitions[decision.function_code]
         scope = decision.scope
         if scope.kind not in {"none", "own", "departments", "company"} or any(
             not isinstance(value, UUID) for value in scope.department_ids
         ):
             raise UnavailableError
         if (
-            decision.role_effect != "allow"
+            decision.department_effect != "allow"
+            or (definition.management and decision.role_effect != "allow")
             or not decision.function_active
             or scope.kind == "none"
             or (scope.kind == "departments" and not scope.department_ids)
-            or (definition.management and not identity.system_management)
+            or (definition.management and definition.system_only and not identity.system_management)
         ):
             continue
         if definition.code == "sys.features" and not scope.covers(

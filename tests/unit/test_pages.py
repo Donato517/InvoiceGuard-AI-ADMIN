@@ -36,11 +36,12 @@ def test_static_css_is_served(client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def test_robots_txt_blocks_indexing(client: TestClient) -> None:
+def test_robots_txt_does_not_block_crawling_so_noindex_is_read(client: TestClient) -> None:
+    # 不收錄由頁面 noindex 與 X-Robots-Tag 負責；robots.txt 不封鎖，搜尋引擎才讀得到 noindex。
     response = client.get("/robots.txt")
 
     assert response.status_code == 200
-    assert "Disallow: /" in response.text
+    assert "Allow: /" in response.text
 
 
 def test_dashboard_redirects_to_login_without_session(client: TestClient) -> None:
@@ -113,6 +114,43 @@ def test_unknown_page_shows_custom_404(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert "找不到頁面" in response.text
+
+
+def test_invalid_form_shows_error_page_without_echoing_input(admin_client: TestClient) -> None:
+    response = admin_client.post("/login", data={"password": "synthetic-pass-marker"})
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "synthetic-pass-marker" not in response.text
+
+
+def test_invalid_path_parameter_is_not_echoed(admin_client: TestClient) -> None:
+    response = admin_client.get("/invoices/synthetic-path-marker")
+
+    assert response.status_code == 400
+    assert "synthetic-path-marker" not in response.text
+
+
+def test_stale_cookie_without_local_session_key_redirects_to_login(client: TestClient) -> None:
+    client.cookies.set(SESSION_COOKIE_NAME, "stale-synthetic-cookie")
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?next=%2Fdashboard"
+
+
+def test_cloud_session_misconfiguration_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Vercel 上 APP_ENV 保持預設 local → session 設定不合格，不可改為導向登入頁
+    monkeypatch.setattr(settings, "VERCEL", "1")
+    cloud_client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
+    cloud_client.cookies.set(SESSION_COOKIE_NAME, "stale-synthetic-cookie")
+
+    response = cloud_client.get("/dashboard")
+
+    assert response.status_code == 500
 
 
 def test_login_rejects_cross_site_post(client: TestClient) -> None:

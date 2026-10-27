@@ -1,5 +1,42 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-10-27 部門代碼修改
+
+- 依使用者本次明確授權，擴充部門 Repository、Service、Router 與編輯表單，允許獨立修改代碼；保護 UNASSIGNED 並檢查代碼外鍵與唯一性。
+- 真實 DB 指定修改 Finance Department → finance_d 成功，重新讀取確認 UUID 與名稱不變；未修改帳號關聯或權限。
+- 33 項部門測試通過；check_project、Ruff check／format --check、djLint 通過。未因本次變更執行其他正式資料寫入。
+
+## 2026-10-27 帳號多部門設定
+
+- 新增／修改內容頁加入部門多選、主要部門與獨立儲存；新增帳號與所有成員關聯同交易。
+- 真實驗收發現主要部門外鍵包含第三欄 primary_department_active → is_current，初版保守檢查拒絕移除；進一步核對確認 is_current 為生成欄位，改為設定／清除 unassigned_at，由 DB 自動計算目前所屬，保留原關聯資料。
+- 僅變更此次正式帳號功能及既有 Repository 的擴充方法，未更動 /dev、登入、部門權限或資料庫 Schema。
+- 測試帳號為本次唯一虛構帳號，已停用；沒有修改既有使用者資料。最終驗證補記於 ACCOUNTS.md。
+- 真實 DB 複驗：多部門新增、切換主要部門、以 unassigned_at 移除／恢復關聯、拒絕未勾選主要部門及拒絕後資料未變均通過；測試帳號保持 disabled。
+- 最終回歸 745 passed、9 skipped；check_project、Ruff check／format --check、djLint 通過。最後僅格式化一行測試斷言，未變更行為。
+
+## 2026-10-27 正式帳號列表及內容頁
+
+- 依使用者最新決定，管理者可直接修改與重設密碼，刪除採停用保留資料。
+- 新增 accounts Router、account_management_service、兩份模板與測試；既有帳號 Repository 僅擴充方法，重用新增／修改與雜湊機制；主程式及主導覽掛載正式 /accounts。
+- 新增前發現 `/users` 仍為舊版 ORM 預留頁，故保留原程式，在獨立正式入口使用 v1.3 user_accounts，不依賴 dev 模組。
+- 驗證：相關 110 passed，全套 721 passed、9 skipped；check_project、Ruff、djLint、environment 檢查通過。
+- 本機平台回傳 HTTP 502，真實帳號 DB 寫入、停用狀態及 Session 端到端效果未驗證；沒有成功建立測試帳號。詳細範圍與限制見 ACCOUNTS.md。
+
+## 2026-10-27 部門網址拼字更正
+
+- 依使用者要求將部門入口更正為 `/department`，同步 Router、導覽、表單、HTMX、測試及文件。
+- 驗證：部門測試 27 passed；check_project 與 Ruff check 通過。未變更資料庫或業務規則。
+
+## 2026-10-27 部門管理
+
+- 新增正式 `/department`，不放 `/dev`，沿用 ADMIN 分層、Session、模板與元件；名稱外欄位不可任意修改。
+- 發現：Service 直接匯入 SQLAlchemy 例外不符合既有靜態分層檢查。修正為 Repository 匯出 DB 例外供 Service 交易轉換，未放寬檢查器或快照。
+- 停用時加入未知外鍵拒絕、RLS 隱藏資料拒絕及關聯表短交易鎖，避免只靠外鍵存在與一般 EXISTS 而誤判安全。
+- 初輪 27 個部門單元測試通過；首次全套 679 passed、9 failed、9 skipped，失敗皆為上述分層匯入問題，修正後重跑。最終結果見 DEPARTMENTS.md 的驗證補記。
+- 未接入舊 users／audit_logs；未變更其他站、登入、會員、權限、資料表結構或正式使用者資料。
+- 修正後全套 688 passed、9 skipped；check_project、Ruff、djLint、environment 檢查通過。真實 HTTP 與 DB 驗收發現 department_permissions 額外外鍵，停用依保護拒絕，測試部門仍啟用；詳見 DEPARTMENTS.md，未聲稱停用真實 DB 通過。
+
 ## 2026-10-23 Codex：規範入口、文件對齊與離線檢查
 
 - 範圍：三站入口／文件、版本化契約快照、標準函式庫分層檢查、無密鑰測試及單站 CI。保留既有功能與未提交工作。

@@ -14,8 +14,9 @@
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import TextClause, text
+from sqlalchemy import TextClause, bindparam, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import SQLAlchemyError as SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.module_errors import ModuleConfigurationError
@@ -69,6 +70,74 @@ UPDATE_ACCOUNT = text(f"""
 """)
 EMAIL_UNIQUE_INDEX = "ux_user_accounts_email"
 
+# 正式帳號管理使用獨立查詢，不改動 /dev/accounts 既有查詢契約。
+_MANAGEMENT_FILTER = "(strpos(email, :q) > 0 OR CAST(user_id AS text) = :q)"
+MANAGEMENT_LIST = text(f"""
+    SELECT {_COLUMNS} FROM invoiceguard_identity.user_accounts
+    WHERE {_MANAGEMENT_FILTER}
+    ORDER BY created_at DESC, user_id LIMIT :limit OFFSET :offset
+""")
+MANAGEMENT_COUNT = text(f"""
+    SELECT count(*) FROM invoiceguard_identity.user_accounts WHERE {_MANAGEMENT_FILTER}
+""")
+DISABLE_ACCOUNT = text(f"""
+    UPDATE invoiceguard_identity.user_accounts SET account_status = :status
+    WHERE user_id = :user_id RETURNING {_COLUMNS}
+""")
+STATUS_CONSTRAINTS = text("""
+    SELECT pg_catalog.pg_get_constraintdef(c.oid) AS definition
+    FROM pg_catalog.pg_constraint c
+    WHERE c.conrelid = 'invoiceguard_identity.user_accounts'::regclass
+      AND c.contype = 'c'
+      AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute a
+          WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+            AND a.attname = 'account_status'
+      )
+""")
+SELECT_PRIMARY_DEPARTMENT = text("""
+    SELECT primary_department_id FROM invoiceguard_identity.user_accounts WHERE user_id = :user_id
+""")
+LOCK_ACCOUNT_DEPARTMENTS = text("""
+    SELECT primary_department_id FROM invoiceguard_identity.user_accounts
+    WHERE user_id = :user_id FOR UPDATE
+""")
+SELECT_MEMBERSHIPS = text("""
+    SELECT department_id FROM public.user_departments WHERE user_id = :user_id AND is_current
+    ORDER BY department_id
+""")
+LOCK_SELECTED_DEPARTMENTS = text("""
+    SELECT department_id, is_active FROM public.departments
+    WHERE department_id IN :department_ids ORDER BY department_id FOR SHARE
+""").bindparams(bindparam("department_ids", expanding=True))
+SET_PRIMARY_DEPARTMENT = text("""
+    UPDATE invoiceguard_identity.user_accounts SET primary_department_id = :department_id
+    WHERE user_id = :user_id
+""")
+REMOVE_MEMBERSHIP = text("""
+    UPDATE public.user_departments SET unassigned_at = now()
+    WHERE user_id = :user_id AND department_id = :department_id AND unassigned_at IS NULL
+""")
+ACTIVATE_MEMBERSHIP = text("""
+    INSERT INTO public.user_departments (user_id, department_id)
+    VALUES (:user_id, :department_id)
+    ON CONFLICT (user_id, department_id) DO UPDATE SET unassigned_at = NULL
+""")
+MEMBERSHIP_FOREIGN_KEYS = text("""
+    SELECT ns.nspname AS schema_name, rel.relname AS table_name,
+           array_agg(src.attname::text ORDER BY keys.ord) AS source_columns,
+           array_agg(dst.attname::text ORDER BY keys.ord) AS target_columns
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class rel ON rel.oid = c.conrelid
+    JOIN pg_catalog.pg_namespace ns ON ns.oid = rel.relnamespace
+    CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY
+        AS keys(source_num, target_num, ord)
+    JOIN pg_catalog.pg_attribute src ON src.attrelid = c.conrelid AND src.attnum = keys.source_num
+    JOIN pg_catalog.pg_attribute dst ON dst.attrelid = c.confrelid AND dst.attnum = keys.target_num
+    WHERE c.contype = 'f' AND c.confrelid = 'public.user_departments'::regclass
+    GROUP BY c.oid, ns.nspname, rel.relname
+""")
+
 StoreCode = Literal[
     "database_not_configured",
     "account_table_missing",
@@ -114,10 +183,98 @@ def list_recent(db: Session, *, limit: int = 50) -> list[AccountSummary]:
     return [AccountSummary(**row) for row in _run(db, LIST_RECENT, {"limit": limit}).mappings()]
 
 
+def list_management(
+    db: Session, *, query: str, limit: int, offset: int
+) -> tuple[list[AccountSummary], int]:
+    """正式列表：Email 部分搜尋或完整 UUID 搜尋，回傳分頁及總數。"""
+    total = _run(db, MANAGEMENT_COUNT, {"q": query}).scalar_one()
+    rows = _run(db, MANAGEMENT_LIST, {"q": query, "limit": limit, "offset": offset}).mappings()
+    return [AccountSummary(**row) for row in rows], total
+
+
+def supports_disabled_status(db: Session) -> bool:
+    """唯讀核對既有 CHECK 契約是否明列 disabled，不猜測其他狀態語意。"""
+    definitions = _run(db, STATUS_CONSTRAINTS, {}).mappings()
+    return any("'disabled'" in row["definition"] for row in definitions)
+
+
+def disable_account(db: Session, user_id: UUID) -> AccountSummary | None:
+    """停用帳號，保留帳號、密碼、部門關聯與其他資料；不提交交易。"""
+    row = (
+        _run(db, DISABLE_ACCOUNT, {"user_id": user_id, "status": "disabled"})
+        .mappings()
+        .one_or_none()
+    )
+    return AccountSummary(**row) if row else None
+
+
 def get(db: Session, user_id: UUID) -> AccountSummary | None:
     """依 user_id 取得帳號；不存在時回傳 None。"""
     row = _run(db, SELECT_BY_ID, {"user_id": user_id}).mappings().one_or_none()
     return AccountSummary(**row) if row else None
+
+
+def get_department_ids(db: Session, user_id: UUID) -> tuple[UUID | None, list[UUID]]:
+    """讀取帳號主要部門及全部部門關聯，不讀取或修改權限。"""
+    primary = _run(db, SELECT_PRIMARY_DEPARTMENT, {"user_id": user_id}).scalar_one_or_none()
+    members = list(_run(db, SELECT_MEMBERSHIPS, {"user_id": user_id}).scalars())
+    return primary, members
+
+
+def lock_department_settings(db: Session, user_id: UUID) -> UUID | None:
+    """鎖定帳號以序列化部門設定，鎖逾時不繼續寫入。"""
+    _run(db, text("SET LOCAL lock_timeout = '2s'"), {})
+    # RLS 隱藏既有關聯時必須拒絕，不能誤認為沒有關聯而覆寫。
+    _run(db, text("SET LOCAL row_security = off"), {})
+    return _run(db, LOCK_ACCOUNT_DEPARTMENTS, {"user_id": user_id}).scalar_one_or_none()
+
+
+def lock_selected_departments(db: Session, department_ids: list[UUID]) -> dict[UUID, bool]:
+    """鎖定所選部門並讀取狀態，與停用交易互斥。"""
+    _run(db, text("SET LOCAL lock_timeout = '2s'"), {})
+    rows = _run(db, LOCK_SELECTED_DEPARTMENTS, {"department_ids": department_ids}).mappings()
+    return {row["department_id"]: row["is_active"] for row in rows}
+
+
+def membership_removal_blocker(db: Session) -> str | None:
+    """僅允許已知主要部門外鍵；額外外鍵可能連動權限，拒絕移除。"""
+    for row in _run(db, MEMBERSHIP_FOREIGN_KEYS, {}).mappings():
+        if not (
+            row["schema_name"] == "invoiceguard_identity"
+            and row["table_name"] == "user_accounts"
+            and list(zip(row["source_columns"], row["target_columns"], strict=True))
+            in [
+                [("user_id", "user_id"), ("primary_department_id", "department_id")],
+                [("primary_department_id", "department_id"), ("user_id", "user_id")],
+                [
+                    ("user_id", "user_id"),
+                    ("primary_department_id", "department_id"),
+                    ("primary_department_active", "is_current"),
+                ],
+            ]
+        ):
+            return (
+                "部門關聯有尚未核對的外鍵："
+                f"{row['schema_name']}.{row['table_name']}"
+                f"（{', '.join(row['source_columns'])} → {', '.join(row['target_columns'])}）；"
+                "為避免連動權限資料，未儲存變更"
+            )
+    return None
+
+
+def add_membership(db: Session, user_id: UUID, department_id: UUID) -> None:
+    """新增或恢復單筆部門關聯；不覆寫現有關聯的其他欄位。"""
+    _run(db, ACTIVATE_MEMBERSHIP, {"user_id": user_id, "department_id": department_id})
+
+
+def set_primary_department(db: Session, user_id: UUID, department_id: UUID) -> None:
+    """依管理者明確選擇變更主要部門，不提交交易。"""
+    _run(db, SET_PRIMARY_DEPARTMENT, {"user_id": user_id, "department_id": department_id})
+
+
+def remove_membership(db: Session, user_id: UUID, department_id: UUID) -> None:
+    """僅將指定帳號部門關聯設為非目前所屬；保留資料列及其他欄位。"""
+    _run(db, REMOVE_MEMBERSHIP, {"user_id": user_id, "department_id": department_id})
 
 
 def find_by_email(db: Session, email: str) -> AccountSummary | None:

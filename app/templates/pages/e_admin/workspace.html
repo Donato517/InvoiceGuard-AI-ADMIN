@@ -1,0 +1,12 @@
+{#
+  @template pages/e_admin/workspace.html
+  @description 管理站有效工作台，空集合不授予管理資格。
+  @route GET /workspace（需管理站登入）
+  @context e_menu: tuple 依有效授權過濾的功能
+#}
+{% extends "layouts/e_admin.html" %}
+{% block title %}工作台{% endblock %}
+{% block content %}
+  <p>請從選單選擇功能。</p>
+  {% if not e_menu %}<p class="empty-state">目前沒有可使用的管理功能，請聯絡授權管理者。</p>{% endif %}
+{% endblock content %}

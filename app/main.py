@@ -23,6 +23,7 @@ from app.routers import (
     dev_files,
     health,
     invoices,
+    knowledge,
     robots,
     system,
     users,
@@ -52,6 +53,7 @@ app.include_router(robots.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(invoices.router)
+app.include_router(knowledge.router)
 app.include_router(users.router)
 app.include_router(system.router)
 app.include_router(db_inspection.router)

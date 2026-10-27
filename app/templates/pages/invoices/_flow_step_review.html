@@ -1,0 +1,50 @@
+{#
+  @template pages/invoices/_flow_step_review.html
+  @description 步驟 5：財務審核（HTML 原型 flowStep 4）：填會計欄位、核准或退回。
+  @route POST /invoices/{invoice_id}/review（decision: passed / rejected + comment，對應 API 規劃的 InvoiceReviewRequest）
+  @context invoice: dict  invoice.review_status 為 pending / approved / returned；另含 purpose、account_code、deduction_code、tax_type
+#}
+<p>
+  審核狀態：
+  <span class="badge {% if invoice.review_status == 'approved' %}badge--success{% else %}badge--warning{% endif %}">
+    {{ {"pending": "待審核", "approved": "核准", "returned": "退回"}[invoice.review_status] }}
+  </span>
+</p>
+<form method="post" action="/invoices/{{ invoice.id }}/review" class="form">
+  <div class="form-grid">
+    <div class="form-field">
+      <label for="purpose">採購用途／備註</label>
+      <input id="purpose"
+             name="purpose"
+             value="{{ invoice.purpose or '' }}"
+             {% if invoice.is_completed %}readonly{% endif %}>
+    </div>
+    <div class="form-field">
+      <label for="account_code">會計科目</label>
+      <input id="account_code"
+             name="account_code"
+             value="{{ invoice.account_code or '' }}"
+             {% if invoice.is_completed %}readonly{% endif %}>
+    </div>
+    <div class="form-field">
+      <label for="deduction_code">扣抵代號</label>
+      <input id="deduction_code"
+             name="deduction_code"
+             value="{{ invoice.deduction_code or '' }}"
+             {% if invoice.is_completed %}readonly{% endif %}>
+    </div>
+    <div class="form-field">
+      <label for="tax_type">課稅別</label>
+      <input id="tax_type"
+             name="tax_type"
+             value="{{ invoice.tax_type or '' }}"
+             {% if invoice.is_completed %}readonly{% endif %}>
+    </div>
+  </div>
+  {% if not invoice.is_completed %}
+    <div class="toolbar__actions">
+      <button type="submit" name="decision" value="passed" class="btn btn--success">確認核准</button>
+      <button type="submit" name="decision" value="rejected" class="btn btn--danger">退回修正</button>
+    </div>
+  {% endif %}
+</form>

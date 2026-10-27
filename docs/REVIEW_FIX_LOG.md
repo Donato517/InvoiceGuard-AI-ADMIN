@@ -1,5 +1,42 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-10-27 部門代碼修改
+
+- 依使用者本次明確授權，擴充部門 Repository、Service、Router 與編輯表單，允許獨立修改代碼；保護 UNASSIGNED 並檢查代碼外鍵與唯一性。
+- 真實 DB 指定修改 Finance Department → finance_d 成功，重新讀取確認 UUID 與名稱不變；未修改帳號關聯或權限。
+- 33 項部門測試通過；check_project、Ruff check／format --check、djLint 通過。未因本次變更執行其他正式資料寫入。
+
+## 2026-10-27 帳號多部門設定
+
+- 新增／修改內容頁加入部門多選、主要部門與獨立儲存；新增帳號與所有成員關聯同交易。
+- 真實驗收發現主要部門外鍵包含第三欄 primary_department_active → is_current，初版保守檢查拒絕移除；進一步核對確認 is_current 為生成欄位，改為設定／清除 unassigned_at，由 DB 自動計算目前所屬，保留原關聯資料。
+- 僅變更此次正式帳號功能及既有 Repository 的擴充方法，未更動 /dev、登入、部門權限或資料庫 Schema。
+- 測試帳號為本次唯一虛構帳號，已停用；沒有修改既有使用者資料。最終驗證補記於 ACCOUNTS.md。
+- 真實 DB 複驗：多部門新增、切換主要部門、以 unassigned_at 移除／恢復關聯、拒絕未勾選主要部門及拒絕後資料未變均通過；測試帳號保持 disabled。
+- 最終回歸 745 passed、9 skipped；check_project、Ruff check／format --check、djLint 通過。最後僅格式化一行測試斷言，未變更行為。
+
+## 2026-10-27 正式帳號列表及內容頁
+
+- 依使用者最新決定，管理者可直接修改與重設密碼，刪除採停用保留資料。
+- 新增 accounts Router、account_management_service、兩份模板與測試；既有帳號 Repository 僅擴充方法，重用新增／修改與雜湊機制；主程式及主導覽掛載正式 /accounts。
+- 新增前發現 `/users` 仍為舊版 ORM 預留頁，故保留原程式，在獨立正式入口使用 v1.3 user_accounts，不依賴 dev 模組。
+- 驗證：相關 110 passed，全套 721 passed、9 skipped；check_project、Ruff、djLint、environment 檢查通過。
+- 本機平台回傳 HTTP 502，真實帳號 DB 寫入、停用狀態及 Session 端到端效果未驗證；沒有成功建立測試帳號。詳細範圍與限制見 ACCOUNTS.md。
+
+## 2026-10-27 部門網址拼字更正
+
+- 依使用者要求將部門入口更正為 `/department`，同步 Router、導覽、表單、HTMX、測試及文件。
+- 驗證：部門測試 27 passed；check_project 與 Ruff check 通過。未變更資料庫或業務規則。
+
+## 2026-10-27 部門管理
+
+- 新增正式 `/department`，不放 `/dev`，沿用 ADMIN 分層、Session、模板與元件；名稱外欄位不可任意修改。
+- 發現：Service 直接匯入 SQLAlchemy 例外不符合既有靜態分層檢查。修正為 Repository 匯出 DB 例外供 Service 交易轉換，未放寬檢查器或快照。
+- 停用時加入未知外鍵拒絕、RLS 隱藏資料拒絕及關聯表短交易鎖，避免只靠外鍵存在與一般 EXISTS 而誤判安全。
+- 初輪 27 個部門單元測試通過；首次全套 679 passed、9 failed、9 skipped，失敗皆為上述分層匯入問題，修正後重跑。最終結果見 DEPARTMENTS.md 的驗證補記。
+- 未接入舊 users／audit_logs；未變更其他站、登入、會員、權限、資料表結構或正式使用者資料。
+- 修正後全套 688 passed、9 skipped；check_project、Ruff、djLint、environment 檢查通過。真實 HTTP 與 DB 驗收發現 department_permissions 額外外鍵，停用依保護拒絕，測試部門仍啟用；詳見 DEPARTMENTS.md，未聲稱停用真實 DB 通過。
+
 ## 2026-10-23 Codex：規範入口、文件對齊與離線檢查
 
 - 範圍：三站入口／文件、版本化契約快照、標準函式庫分層檢查、無密鑰測試及單站 CI。保留既有功能與未提交工作。
@@ -530,3 +567,19 @@
 - 第一輪 E 測試 117 passed／1 failed 發現授權功能借用部門列表路徑；更正為實際 permissions 路由，模板只填已驗證部門 UUID，補獨立管理權限導航測試，未放寬授權或修改 checker。
 - 補目錄輸入／修改重複代碼／查無資料／舊版本／停用、唯一約束 rollback／去敏、G 部分更新保留其他組列；新增 E07 JSON 與 registry 一致性測試，未 seed 或變更 schema。
 - 最終 E 126 passed；全套 787 passed、9 skipped、1 warning，99.75s。跨站 checker、Ruff、djLint、環境靜態檢查通過；正式接線、PostgreSQL／RLS／競爭及寄信仍待驗。見 E-PHASE2-RESULTS.md。
+
+## 2026-10-27｜整合最新 main，保留 E 與暫停匿名入口
+
+使用者最終指定 main；fetch 後為 cee8dd8，已含帳號／部門與多部門設定。先以 b392653 保存 E 第二批，再在暫存目錄準備 main 合併；唯一狀態文件衝突保留雙方歷史。使用者另明確核定：來源 /accounts 與 /department 匿名入口暫停，核定本機亦回 503，雲端／不可信來源原 404 保留；真實身分／職務／scope／journal 接妥前不開放。
+
+E 與來源程式、模板、repository 及交易測試保留。新增 12 個未覆寫閘門的預設拒絕案例，確認不呼叫業務服務；來源業務測試 fixture 明確且僅於測試覆寫待接線閘門，仍測本機／同源限制，沒有更改共用封網 fixture。
+
+暫存 E＋來源案例 228 passed；完整離線 888 passed、10 skipped、1 warning，135.37s。Ruff 113 檔、djLint 28 樣板、靜態 checker／environment 通過；main 暫存版本與已測試版本的程式／測試／設定逐檔核對相同。D 槽最終結果另更新。
+
+沒有操作正式資料、部署或 Push。合併取得的是程式，不會自動解決登入 503，亦不代表角色來源、DB schema、RLS、正式多部門或 E-T01～T10 已驗收。後續接點及 E／來源部門規則差異見 [E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md](E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md)。
+
+### main 合併最終確認（2026-10-27）
+
+D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit 0；跨三站 checker PASS（0 issues），Ruff lint／113 個檔案格式、djLint 28 樣板及環境靜態檢查通過。所有測試使用既有封網 fixture；未執行正式 DB 操作。
+
+目前工作分支仍是 codex/06e-admin-v13，origin/main（cee8dd8）已包含在本機歷史。E 成果保留，新帳號／部門匿名入口封閉；未 Push。登入 503 仍須正式 B／G／journal 接線，不能以此次 Git 合併宣稱解除。

@@ -26,12 +26,18 @@ from app.schemas.e_admin import (
     MatrixChange,
     ProfilePatch,
     Target,
+    UnavailableError,
 )
 from app.services.e_admin_service import DEPARTMENTS, FEATURES, GRANTS, EModule, get_e_module
 from app.services.e_registry import supported_actions
 
 router = APIRouter(tags=["06_E"])
 Module = Annotated[EModule, Depends(get_e_module)]
+
+
+def require_pending_admin_integration() -> None:
+    """使用者核定暫停來源帳號／部門入口；正式職務與 scope 接妥前一律拒絕。"""
+    raise UnavailableError
 
 
 def session_evidence(request: Request) -> SecretStr | None:

@@ -1,6 +1,41 @@
 # 開發狀態與工作邊界
 
+## 2026-10-27 最新整合狀態
+
+使用者最終指定將最新 main（cee8dd8，已含帳號／部門功能）整合進 E 分支，並暫時封閉其本機匿名入口。帳號／多部門與 /department 原始程式保留，但 /accounts、/department 的全部路由新增待整合相依檢查，核定本機仍回 503、雲端／不可信來源維持 404；沒有環境開關放行。下文來源作者的匿名測試及正式 DB 實測屬歷史證據，不是本分支當前授權。
+
+E 的正式 /system/departments、/system/features、本人／工作台保留；來源 /department 與 E 尚未合併成單一部門服務。來源帳號建立／多部門管理不等於 B 登入／Session 或 G 職務／scope 已接妥。整合結果及待辦見 [E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md](E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md)。未 Push、部署或操作正式 DB。
+
+
 更新：2026-10-27。本文是目前狀態摘要，歷史聊天、檔名或 TODO 不代表功能完成；修改能力時必須同步本表、實作與測試。
+
+### 來源分支歷史紀錄（下列匿名規則已由本次整合取消）
+
+## 2026-10-27 部門代碼修改增補
+
+依使用者明確要求，部門頁新增代碼修改（POST `/department/{department_id}/code`）；檢查唯一性、保留 UNASSIGNED、拒絕有代碼外鍵的變更。
+真實 DB 已將 Finance Department 改為 finance_d，確認 UUID 與名稱不變；33 項部門測試及架構、Ruff、模板檢查通過。
+
+## 2026-10-27 帳號多部門設定增補
+
+正式帳號新增／修改內容頁新增所屬部門複選及主要部門設定。以既有 user_departments.unassigned_at 停用／恢復關聯，is_current 由 DB 自動計算，與主要部門同交易儲存，保留關聯資料列。
+真實 DB 已確認主要部門三欄外鍵，未新增 Schema 或修改 department_permissions；詳細驗證及限制見 [帳號管理](ACCOUNTS.md)。
+
+## 2026-10-27 正式帳號管理增補
+
+新增 `/accounts` 列表頁及共用新增／修改內容頁（`/accounts/new`、`/accounts/{user_id}/edit`），沿用既有 v1.3 帳號 Repository、Session 與新增帳號流程，不在 `/dev` 也不依賴其模組。
+依使用者最新授權，管理者直接修改 Email／重設密碼，刪除採 disabled 停用並保留資料；先核對 DB 停用狀態契約。
+本機匿名操作採與此次部門功能相同邊界；雲端在正式授權與稽核接線前保持拒絕。原 `/users` 與 `/dev/accounts` 邏輯不變。
+全套離線測試 721 passed、9 skipped；本機平台回傳 502，真實 DB 帳號操作未驗收。完整檔案及限制見 [帳號管理](ACCOUNTS.md)。
+
+## 2026-10-27 部門管理增補
+
+正式功能 `/department` 已實作列表、代碼／名稱搜尋、新增、名稱修改、啟用／停用與關聯保護，採既有 SQLAlchemy Session 與固定參數 SQL，未放在 `/dev` 或依賴其模組。
+依本次使用者授權，僅此功能允許本機匿名測試；雲端完整關閉，登入與權限原程式保留。正式授權及 v1.3 稽核仍待整合。
+舊文「唯一匿名例外為 /dev」對本功能由本次明確授權取代，其他功能維持原限制。
+詳細範圍、外鍵保護及驗證限制見 [部門管理](DEPARTMENTS.md)。
+
+更新：2026-10-26。本文是目前狀態摘要，歷史聊天、檔名或 TODO 不代表功能完成；修改能力時必須同步本表、實作與測試。
 
 ## 本站角色
 
@@ -86,3 +121,9 @@ E 專屬 126 passed（新增 56）；完整回歸 787 passed、9 skipped、1 war
 本人仍只改顯示名稱；職務必須明確允許、系統管理資格與 scope 分開驗。財務專用 Capability 只在測試提供，未新增正式財務權限。目錄負例涵蓋修改重複代碼、查無資料、輸入、停用、版本、回滾與去敏；完整 E-T01～T10 正式整合及其他組初始功能仍待共同接點，未將離線通過改列正式驗收。
 
 本批以目前 D:\2026102001 的 codex/06e-admin-v13／dcad25e 為起點。使用者隨後授權本機 Commit 保存成果並整合 feature/admin-accounts-departments，且先封閉該分支的本機匿名入口；不 Push、不操作正式資料。後續整合狀態另記，不覆蓋前述歷史證據。
+
+### main 合併最終確認（2026-10-27）
+
+D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit 0；跨三站 checker PASS（0 issues），Ruff lint／113 個檔案格式、djLint 28 樣板及環境靜態檢查通過。所有測試使用既有封網 fixture；未執行正式 DB 操作。
+
+目前工作分支仍是 codex/06e-admin-v13，origin/main（cee8dd8）已包含在本機歷史。E 成果保留，新帳號／部門匿名入口封閉；未 Push。登入 503 仍須正式 B／G／journal 接線，不能以此次 Git 合併宣稱解除。

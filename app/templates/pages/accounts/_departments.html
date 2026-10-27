@@ -1,0 +1,34 @@
+{#
+  @template pages/accounts/_departments.html
+  @description 共用所屬部門多選與主要部門選單；停用部門僅保留既有選擇。
+  @context department_settings: AccountDepartmentSettings 部門選項與目前選擇
+#}
+<fieldset class="form">
+  <legend>所屬部門（可複選）</legend>
+  {% for department in department_settings.departments %}
+    {% if department.is_active or department.department_id in department_settings.selected_ids %}
+      <div>
+        <input id="department-{{ department.department_id }}"
+               name="department_ids"
+               type="checkbox"
+               value="{{ department.department_id }}"
+               {% if department.department_id in department_settings.selected_ids %}checked{% endif %}>
+        <label for="department-{{ department.department_id }}">{{ department.department_code }}－{{ department.department_name }}{% if not department.is_active %}（已停用，僅保留既有關聯）{% endif %}</label>
+      </div>
+    {% endif %}
+  {% endfor %}
+  <div class="form-field">
+    <label for="primary-department">主要部門</label>
+    <select id="primary-department" name="primary_department_id" required>
+      <option value="">請選擇主要部門</option>
+      {% for department in department_settings.departments %}
+        {% if department.is_active or department.department_id == department_settings.primary_department_id %}
+          <option value="{{ department.department_id }}"
+                  {% if department.department_id == department_settings.primary_department_id %}selected{% endif %}>{{ department.department_code }}－{{ department.department_name }}{% if not department.is_active %}（已停用）{% endif %}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+  </div>
+  <p>至少勾選一個所屬部門，主要部門必須包含在勾選項目中。</p>
+  <p>取消勾選會停用此帳號的部門關聯，保留原有資料。</p>
+</fieldset>

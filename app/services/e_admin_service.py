@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
+from app.schemas.e_access import SelfAccess, SelfProfile
 from app.schemas.e_admin import (
     Action,
     ChangeEvent,
@@ -21,13 +22,13 @@ from app.schemas.e_admin import (
     IssuedSession,
     Matrix,
     MatrixChange,
-    Profile,
     ProfilePatch,
     Target,
     UnauthenticatedError,
     UnavailableError,
 )
 from app.schemas.e_ports import AccessPort, AuthPort, GrantPort, UnitOfWorkFactory
+from app.services.e_access_service import read_self_access
 from app.services.e_adapter import call_adapter
 from app.services.e_authorization import require_permission, verified_identity
 from app.services.e_registry import REGISTRY, Capability, capability, supported_actions
@@ -45,6 +46,7 @@ class EModule:
     auth: AuthPort | None = None
     grants: GrantPort | None = None
     unit_of_work: UnitOfWorkFactory | None = None
+    registry: tuple[Capability, ...] = REGISTRY
 
     def identity(self, token: SecretStr | None) -> Identity:
         """每次請求向權威來源驗證身分，不接受角色／UUID Header。"""
@@ -64,19 +66,15 @@ class EModule:
         """方便其他服務使用相同 guard，回傳綁定當次請求的有效決策。"""
         if self.access is None:
             raise UnavailableError
-        return require_permission(self.access, identity, code, action, target)
+        return require_permission(
+            self.access, identity, code, action, target, definition=capability(code, self.registry)
+        )
 
-    def menu(self, identity: Identity) -> tuple[Capability, ...]:
-        """選單與 HTTP 操作共用權威決策；不把舊固定側欄當成有效工作台。"""
-        allowed = []
-        for item in REGISTRY:
-            try:
-                target = Target(global_resource=True) if item.code == FEATURES else None
-                self.check(identity, item.code, Action.VIEW, target)
-            except DeniedError:
-                continue
-            allowed.append(item)
-        return tuple(allowed)
+    def workspace_access(self, identity: Identity) -> SelfAccess:
+        """取得完整登錄清單的有效功能；無管理功能回 403，缺來源回 503。"""
+        if self.access is None:
+            raise UnavailableError
+        return read_self_access(self.access, identity, self.registry)
 
     def list_departments(self, identity: Identity) -> list[Department]:
         """只查詢核定部門範圍。"""
@@ -156,7 +154,7 @@ class EModule:
         action = Action.CREATE if function_id is None else Action.EDIT
         decision = self._decision(identity, FEATURES, action, Target(global_resource=True))
         if data.is_active:
-            capability(data.function_code)
+            capability(data.function_code, self.registry)
             if data.app_scope not in {"admin", "both"}:
                 raise EError
         with self._factory()() as work:
@@ -218,7 +216,7 @@ class EModule:
             seen.add(row.function_code)
             # 未註冊能力不能新增操作；既有非本組授權不得被無聲移除。
             existing = previous.get(row.function_code, frozenset())
-            if not (row.actions - existing) <= supported_actions(row.function_code):
+            if not (row.actions - existing) <= supported_actions(row.function_code, self.registry):
                 raise DeniedError
             if not (row.actions ^ existing) <= ceiling.get(row.function_code, frozenset()):
                 raise DeniedError
@@ -234,6 +232,7 @@ class EModule:
             identity = verified_identity(self.access, issued.token)
             if identity.user_id != issued.user_id:
                 raise DeniedError
+            self.workspace_access(identity)
         except EError:
             call_adapter(auth.logout, issued.token)
             raise
@@ -244,12 +243,13 @@ class EModule:
         if token is not None:
             call_adapter(self._auth().logout, token)
 
-    def profile(self, identity: Identity) -> Profile:
+    def profile(self, identity: Identity) -> SelfProfile:
         """本人查詢不接受 URL user_id，並檢查 adapter 回傳識別。"""
+        access = self.workspace_access(identity)
         profile = call_adapter(self._auth().profile, identity)
         if profile.user_id != identity.user_id:
             raise DeniedError
-        return profile
+        return SelfProfile(profile, access)
 
     def update_profile(self, identity: Identity, patch: ProfilePatch) -> None:
         """白名單更新本人；實際寫入及核定欄位由共用認證 adapter 保護。"""
@@ -272,7 +272,7 @@ class EModule:
     ) -> Decision:
         if self.access is None:
             raise UnavailableError
-        return require_permission(self.access, identity, code, action, target)
+        return self.check(identity, code, action, target)
 
     def _factory(self) -> UnitOfWorkFactory:
         if self.unit_of_work is None:

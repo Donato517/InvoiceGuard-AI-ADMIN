@@ -28,7 +28,7 @@ from app.schemas.e_admin import (
     Target,
 )
 from app.services.e_admin_service import DEPARTMENTS, FEATURES, GRANTS, EModule, get_e_module
-from app.services.e_registry import REGISTRY, supported_actions
+from app.services.e_registry import supported_actions
 
 router = APIRouter(tags=["06_E"])
 Module = Annotated[EModule, Depends(get_e_module)]
@@ -42,7 +42,9 @@ def session_evidence(request: Request) -> SecretStr | None:
 
 def current_identity(request: Request, module: Module) -> Identity:
     """不經舊 int Cookie 驗證器；所有 E 頁每次重新向共用 adapter 驗證。"""
-    return module.identity(session_evidence(request))
+    identity = module.identity(session_evidence(request))
+    request.state.e_access = module.workspace_access(identity)
+    return identity
 
 
 CurrentIdentity = Annotated[Identity, Depends(current_identity)]
@@ -97,7 +99,8 @@ def _render(
         "pages/e_admin/" + template,
         {
             "identity": identity,
-            "e_menu": module.menu(identity),
+            "e_menu": tuple(item for item in request.state.e_access.functions if item.can_open),
+            "effective_access": request.state.e_access,
             **(values or {}),
         },
     )
@@ -138,7 +141,7 @@ async def _input[InputType: InputModel](
 
 @router.get("/workspace", response_class=HTMLResponse)
 def workspace(request: Request, module: Module, identity: CurrentIdentity) -> HTMLResponse:
-    """顯示本次權限可用的 E 工作台；空集合不自動成為管理者。"""
+    """僅顯示有效管理功能；無可執行功能由共同相依檢查拒絕。"""
     return _render(request, module, identity, "workspace.html")
 
 
@@ -222,7 +225,7 @@ def feature_list(request: Request, module: Module, identity: CurrentIdentity) ->
         "features.html",
         {
             "items": items,
-            "registry": REGISTRY,
+            "registry": module.registry,
             "selected": None,
             "can_save": _allowed(
                 module, identity, FEATURES, Action.CREATE, Target(global_resource=True)
@@ -244,7 +247,7 @@ def feature_detail(
         "features.html",
         {
             "items": (),
-            "registry": REGISTRY,
+            "registry": module.registry,
             "selected": selected,
             "can_save": _allowed(
                 module, identity, FEATURES, Action.EDIT, Target(global_resource=True)
@@ -301,7 +304,7 @@ def matrix_page(
                 if action in item.actions
             ],
         }
-        for item in REGISTRY
+        for item in module.registry
     ]
     return _render(
         request,
@@ -327,7 +330,7 @@ async def matrix_update(
     form = await request.form()
     if set(form) - {"grant", "expected_revision"} or len(form.getlist("expected_revision")) != 1:
         raise EError
-    selected: dict[str, set[Action]] = {item.code: set() for item in REGISTRY}
+    selected: dict[str, set[Action]] = {item.code: set() for item in module.registry}
     try:
         values = form.getlist("grant")
         if len(set(values)) != len(values):
@@ -335,7 +338,7 @@ async def matrix_update(
         for value in values:
             code, name = str(value).rsplit(":", 1)
             action = Action(name)
-            if code not in selected or action not in supported_actions(code):
+            if code not in selected or action not in supported_actions(code, module.registry):
                 raise ValueError
             selected[code].add(action)
         change = MatrixChange(
@@ -358,7 +361,9 @@ async def matrix_update(
 @router.get("/account", response_class=HTMLResponse)
 def profile_page(request: Request, module: Module, identity: CurrentIdentity) -> HTMLResponse:
     """本人基本資訊，絕不接受另一位使用者 UUID。"""
-    return _render(request, module, identity, "profile.html", {"profile": module.profile(identity)})
+    page = module.profile(identity)
+    request.state.e_access = page.access
+    return _render(request, module, identity, "profile.html", {"profile": page.profile})
 
 
 @router.post("/account", dependencies=[Depends(require_e_origin)])

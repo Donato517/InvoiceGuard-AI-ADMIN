@@ -8,7 +8,14 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.db.repositories.e_repository import DepartmentRepository
-from app.schemas.e_admin import ConflictError, DataScope, UnavailableError
+from app.schemas.e_admin import (
+    ConflictError,
+    DataScope,
+    DepartmentInput,
+    FeatureInput,
+    MissingError,
+    UnavailableError,
+)
 from app.services import e_sql_uow
 
 ACTOR = UUID("00000000-0000-4000-8000-000000000001")
@@ -114,3 +121,45 @@ def test_owner_scope_requires_server_loaded_owner() -> None:
     assert DataScope("own").covers(ACTOR, Target(owner_id=ACTOR))
     assert not DataScope("own").covers(ACTOR, Target(owner_id=OTHER_DEPT))
     assert not DataScope("own").covers(ACTOR, Target(global_resource=True))
+
+
+@pytest.mark.parametrize("resource", ["departments", "features"])
+def test_missing_sql_resource_returns_404_and_closes_without_commit(
+    sql_work: tuple,
+    resource: str,
+) -> None:
+    work, session, _ = sql_work
+    session.execute.return_value.mappings.return_value.one_or_none.return_value = None
+    with pytest.raises(MissingError), work:
+        if resource == "departments":
+            work.departments.get(DEPT, DataScope("company"), lock=True)
+        else:
+            work.features.get(DEPT, lock=True)
+    assert "FOR UPDATE" in str(session.execute.call_args.args[0])
+    session.commit.assert_not_called()
+    session.rollback.assert_called_once()
+    session.close.assert_called_once()
+
+
+@pytest.mark.parametrize("operation", ["department_update", "feature_insert"])
+def test_unique_constraint_failure_is_sanitized_and_rolled_back(
+    sql_work: tuple,
+    operation: str,
+) -> None:
+    work, session, _ = sql_work
+    session.execute.side_effect = IntegrityError(
+        "synthetic-private-statement", {}, Exception("synthetic-private-value")
+    )
+    with pytest.raises(ConflictError) as caught, work:
+        if operation == "department_update":
+            work.departments.update(
+                DEPT, DepartmentInput(department_code="SYS", department_name="重複代碼")
+            )
+        else:
+            work.features.insert(
+                FeatureInput(function_code="sys.features", function_name="重複功能")
+            )
+    assert "synthetic-" not in str(caught.value)
+    session.commit.assert_not_called()
+    session.rollback.assert_called_once()
+    session.close.assert_called_once()

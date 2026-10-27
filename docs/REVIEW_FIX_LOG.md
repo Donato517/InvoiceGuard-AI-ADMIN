@@ -522,3 +522,11 @@
 ### 本批最終補驗
 
 補上 Origin 格式錯誤與公司級目錄選單範圍反例；移除登入路由對舊寬鬆來源檢查的依賴，統一使用 E 嚴格同源驗證。最終全套 731 passed、9 skipped、1 warning，98.00s、exit 0；本批共新增 70 個離線案例。最後跨站靜態檢查 PASS、0 issues，Ruff lint／format 通過。本機未登入 GET：/health、/login、/auth/password/forgot 為 200，/system/departments 為 303；不代表認證或 DB 串接完成。
+
+## 2026-10-27｜06_E 第二批權限投影與導覽修正
+
+- 原工作台只檢 E 三項且允許零功能進入。新增完整管理 registry 的 AccessSnapshot 必要契約；缺項／版本不同／未解析回 503，完整但零有效操作回 403，不發 Cookie 並撤銷已發行 Session。財務專用合成定義證明不需 E 管理資格也能取得核定業務入口；不新增正式財務功能。
+- 本人頁缺有效部門與 scope。新增逐操作投影與 UUID 核對；查看與修改各自保留資料範圍，唯一可改欄位仍為顯示名稱。
+- 第一輪 E 測試 117 passed／1 failed 發現授權功能借用部門列表路徑；更正為實際 permissions 路由，模板只填已驗證部門 UUID，補獨立管理權限導航測試，未放寬授權或修改 checker。
+- 補目錄輸入／修改重複代碼／查無資料／舊版本／停用、唯一約束 rollback／去敏、G 部分更新保留其他組列；新增 E07 JSON 與 registry 一致性測試，未 seed 或變更 schema。
+- 最終 E 126 passed；全套 787 passed、9 skipped、1 warning，99.75s。跨站 checker、Ruff、djLint、環境靜態檢查通過；正式接線、PostgreSQL／RLS／競爭及寄信仍待驗。見 E-PHASE2-RESULTS.md。

@@ -16,28 +16,34 @@ from app.core.security import clear_session_cookie
 from app.core.templating import templates
 from app.routers.e_admin import require_e_origin, session_evidence
 from app.services.e_admin_service import EModule, get_e_module
-from app.services.e_registry import REGISTRY
+from app.services.e_registry import REGISTRY, Capability, validate_registry
 
 router = APIRouter(tags=["auth"])
 Module = Annotated[EModule, Depends(get_e_module)]
 LOGIN_TEMPLATE = "pages/auth/login.html"
 
 
-def _next_path(value: str) -> str:
-    allowed = {"/workspace", "/account", *(item.route for item in REGISTRY)}
+def _next_path(value: str, registry: tuple[Capability, ...] = REGISTRY) -> str:
+    validate_registry(registry)
+    allowed = {
+        "/workspace",
+        "/account",
+        *(item.route for item in registry if "{" not in item.route),
+    }
     return value if value in allowed else "/workspace"
 
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(
     request: Request,
+    module: Module,
     next_path: Annotated[str, Query(alias="next")] = "/workspace",
 ) -> HTMLResponse:
     """顯示登入表單；只允許固定 E 入口作為登入後跳轉。"""
     return templates.TemplateResponse(
         request,
         LOGIN_TEMPLATE,
-        {"next": _next_path(next_path)},
+        {"next": _next_path(next_path, module.registry)},
         headers={"Cache-Control": "no-store"},
     )
 
@@ -54,7 +60,9 @@ def login(
     require_e_origin(request)
     issued = module.login(email, SecretStr(password))
     response = RedirectResponse(
-        _next_path(next_path), status_code=303, headers={"Cache-Control": "no-store"}
+        _next_path(next_path, module.registry),
+        status_code=303,
+        headers={"Cache-Control": "no-store"},
     )
     response.set_cookie(
         SESSION_COOKIE_NAME,

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
+from app.schemas.e_access import AccessSnapshot
 from app.schemas.e_admin import (
     Action,
     ChangeEvent,
@@ -35,6 +36,10 @@ class AccessPort(Protocol):
 
     def decide(self, identity: Identity, code: str, action: Action) -> Decision:
         """每次重新解析有效職務；不使用跨部門 bool_or 當職務授權。"""
+        ...
+
+    def effective_access(self, identity: Identity) -> AccessSnapshot:
+        """回傳本人現行部門及完整已登錄管理功能的逐操作決策，缺資料不可宣稱 complete。"""
         ...
 
 

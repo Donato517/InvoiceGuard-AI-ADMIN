@@ -14,6 +14,7 @@ from pydantic import SecretStr, ValidationError
 
 from app.constants import SESSION_COOKIE_NAME
 from app.main import app
+from app.schemas.e_access import AccessSnapshot, EffectiveDepartment
 from app.schemas.e_admin import (
     Action,
     ChangeEvent,
@@ -42,7 +43,7 @@ from app.schemas.e_admin import (
 )
 from app.services.e_admin_service import DEPARTMENTS, FEATURES, EModule, get_e_module
 from app.services.e_authorization import require_permission, verified_identity
-from app.services.e_registry import Capability, capability
+from app.services.e_registry import REGISTRY, Capability, capability
 
 ACTOR = UUID("00000000-0000-4000-8000-000000000001")
 DEPT = UUID("00000000-0000-4000-8000-000000000002")
@@ -67,6 +68,7 @@ class Access:
         self.scope = DataScope("company")
         self.active = True
         self.mismatch = False
+        self.registry = REGISTRY
 
     def authenticate(self, token: SecretStr) -> Identity | None:
         return self.user if token.get_secret_value() == TOKEN else None
@@ -83,6 +85,22 @@ class Access:
             "test-policy-1",
             datetime.now(UTC) + timedelta(minutes=2),
             self.scope,
+        )
+
+    def effective_access(self, user: Identity) -> AccessSnapshot:
+        return AccessSnapshot(
+            user.user_id,
+            user.session_id,
+            user.selected_department_id,
+            "test-policy-1",
+            datetime.now(UTC) + timedelta(minutes=2),
+            (EffectiveDepartment(DEPT, "SYS", "系統管理"),),
+            tuple(
+                self.decide(user, item.code, action)
+                for item in self.registry
+                for action in item.actions
+            ),
+            complete=True,
         )
 
 
@@ -125,7 +143,9 @@ class Grants:
 
     def replace(self, user: Identity, department_id: UUID, change: MatrixChange) -> None:
         self.calls += 1
-        self.matrix = Matrix("g-2", change.rows, self.matrix.delegable)
+        rows = {row.function_code: row for row in self.matrix.rows}
+        rows.update({row.function_code: row for row in change.rows})
+        self.matrix = Matrix("g-2", tuple(rows.values()), self.matrix.delegable)
 
 
 @dataclass
@@ -164,6 +184,11 @@ class Departments:
         return row
 
     def update(self, department_id: UUID, data: DepartmentInput) -> Department:
+        if any(
+            row.department_id != department_id and row.department_code == data.department_code
+            for row in self.state.departments.values()
+        ):
+            raise ConflictError
         old = self.state.departments[department_id]
         row = replace(old, **data.model_dump())
         self.state.departments[department_id] = row
@@ -181,9 +206,13 @@ class Features:
         return list(self.state.features.values())
 
     def get(self, function_id: UUID, *, lock: bool = False) -> Feature:
+        if function_id not in self.state.features:
+            raise MissingError
         return self.state.features[function_id]
 
     def insert(self, data: FeatureInput) -> Feature:
+        if any(row.function_code == data.function_code for row in self.state.features.values()):
+            raise ConflictError
         row = Feature(uuid4(), **data.model_dump(), revision="new")
         self.state.features[row.function_id] = row
         return row
@@ -761,3 +790,431 @@ def test_company_catalog_menu_matches_actual_scope(e_client: TestClient, module:
     assert page.status_code == 200
     assert 'href="/system/features"' not in page.text
     assert e_client.get("/system/features").status_code == 403
+
+
+def test_profile_exposes_effective_access_but_only_name_is_editable(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    page = e_client.get("/account")
+    assert page.status_code == 200
+    for value in [
+        str(ACTOR),
+        "synthetic@example.invalid",
+        "SYS",
+        "系統管理",
+        DEPARTMENTS,
+        "全公司",
+        "查看",
+        "修改",
+    ]:
+        assert value in page.text
+    for forbidden in ["role", "department_id", "scope", "admin_access", "email", "user_id"]:
+        assert f'name="{forbidden}"' not in page.text
+    result = e_client.post("/account", data={"display_name": "本人新名稱"}, headers=ORIGIN)
+    assert result.status_code == 303
+    assert module.auth.patch == ProfilePatch(display_name="本人新名稱")
+
+
+def test_profile_retains_different_scopes_for_each_operation(
+    e_client: TestClient,
+    module: EModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = module.access.decide
+
+    def decide(user: Identity, code: str, action: Action) -> Decision:
+        scope = (
+            DataScope("company")
+            if action == Action.VIEW
+            else DataScope("departments", frozenset({DEPT}))
+        )
+        return replace(original(user, code, action), scope=scope)
+
+    monkeypatch.setattr(module.access, "decide", decide)
+    result = module.profile(identity())
+    grants = {
+        grant.action: grant.scope
+        for item in result.access.functions
+        if item.code == DEPARTMENTS
+        for grant in item.grants
+    }
+    assert grants[Action.VIEW].kind == "company"
+    assert grants[Action.EDIT] == DataScope("departments", frozenset({DEPT}))
+    page = e_client.get("/account")
+    assert page.status_code == 200
+    assert "全公司" in page.text and "指定部門：系統管理" in page.text
+
+
+def test_finance_only_user_can_login_without_e_management_permissions(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    finance = Capability(
+        "finance.review",
+        "財務審閱",
+        "財務",
+        "/finance/reviews",
+        frozenset({Action.VIEW, Action.EDIT}),
+        False,
+    )
+    module.registry = REGISTRY + (finance,)
+    module.access.registry = module.registry
+    module.access.user = replace(identity(), system_management=False)
+    module.access.effects = {
+        (item.code, action): "unset" for item in module.registry for action in item.actions
+    }
+    module.access.effects[(finance.code, Action.VIEW)] = "allow"
+    response = e_client.post(
+        "/login",
+        data={
+            "email": "synthetic@example.invalid",
+            "password": "synthetic-password",
+            "next": finance.route,
+        },
+        headers=ORIGIN,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == finance.route
+    for path in ["/workspace", "/account"]:
+        page = e_client.get(path)
+        assert page.status_code == 200
+        assert finance.code in page.text and "全公司" in page.text
+        assert 'href="/system/features"' not in page.text
+    assert e_client.get("/system/departments").status_code == 403
+    with pytest.raises(DeniedError):
+        module.check(module.access.user, finance.code, Action.EDIT)
+
+
+@pytest.mark.parametrize("effect", ["unset", "deny"])
+def test_no_admin_functions_denies_login_workspace_and_profile(
+    e_client: TestClient,
+    module: EModule,
+    effect: str,
+) -> None:
+    module.access.effects = {
+        (item.code, action): effect for item in REGISTRY for action in item.actions
+    }
+    response = e_client.post(
+        "/login",
+        data={"email": "synthetic@example.invalid", "password": "synthetic-password"},
+        headers=ORIGIN,
+    )
+    assert response.status_code == 403 and "set-cookie" not in response.headers
+    assert module.auth.revoked
+    assert e_client.get("/workspace").status_code == 403
+    assert e_client.get("/account").status_code == 403
+
+
+def test_revoked_all_grants_cannot_reuse_previous_workspace(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    assert e_client.get("/workspace").status_code == 200
+    module.access.active = False
+    response = e_client.get("/workspace")
+    assert response.status_code == 403
+    assert 'href="/system/departments"' not in response.text
+
+
+def test_create_permission_does_not_imply_view_or_navigation(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    module.access.effects = {
+        (item.code, action): "unset" for item in REGISTRY for action in item.actions
+    }
+    module.access.effects[(DEPARTMENTS, Action.CREATE)] = "allow"
+    page = e_client.get("/workspace")
+    assert page.status_code == 200 and "新增" in page.text
+    assert 'href="/system/departments"' not in page.text
+    assert e_client.get("/system/departments").status_code == 403
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "incomplete",
+        "missing",
+        "duplicate",
+        "extra",
+        "version",
+        "expired",
+        "expired_decision",
+        "unresolved",
+        "bad_scope",
+        "wrong_user",
+        "wrong_session",
+        "wrong_department",
+        "inactive_selected",
+        "duplicate_department",
+    ],
+)
+def test_invalid_access_snapshot_rejects_without_cookie_or_data(
+    e_client: TestClient,
+    module: EModule,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    snapshot = module.access.effective_access(identity())
+    changes: dict[str, object] = {}
+    first = snapshot.decisions[0]
+    if fault == "incomplete":
+        changes["complete"] = False
+    elif fault == "missing":
+        changes["decisions"] = snapshot.decisions[1:]
+    elif fault == "duplicate":
+        changes["decisions"] = (*snapshot.decisions, first)
+    elif fault == "extra":
+        changes["decisions"] = (
+            *snapshot.decisions,
+            replace(first, function_code="unknown.feature"),
+        )
+    elif fault == "version":
+        changes["decisions"] = (
+            replace(first, policy_version="stale-version"),
+            *snapshot.decisions[1:],
+        )
+    elif fault == "expired":
+        changes["valid_until"] = datetime.now(UTC) - timedelta(seconds=1)
+    elif fault == "expired_decision":
+        changes["decisions"] = (
+            replace(first, valid_until=datetime.now(UTC) - timedelta(seconds=1)),
+            *snapshot.decisions[1:],
+        )
+    elif fault == "unresolved":
+        changes["decisions"] = (replace(first, role_effect="unresolved"), *snapshot.decisions[1:])
+    elif fault == "bad_scope":
+        changes["decisions"] = (replace(first, scope=DataScope("unknown")), *snapshot.decisions[1:])
+    elif fault in {"wrong_user", "wrong_session", "wrong_department"}:
+        key = {
+            "wrong_user": "user_id",
+            "wrong_session": "session_id",
+            "wrong_department": "selected_department_id",
+        }[fault]
+        changes["decisions"] = (replace(first, **{key: uuid4()}), *snapshot.decisions[1:])
+    elif fault == "inactive_selected":
+        changes["departments"] = (replace(snapshot.departments[0], is_active=False),)
+    else:
+        changes["departments"] = (*snapshot.departments, snapshot.departments[0])
+    monkeypatch.setattr(
+        module.access, "effective_access", lambda user: replace(snapshot, **changes)
+    )
+    expected = 403 if fault.startswith("wrong_") or fault == "inactive_selected" else 503
+    page = e_client.get("/account")
+    assert page.status_code == expected
+    assert "synthetic@example.invalid" not in page.text
+    login = e_client.post(
+        "/login",
+        data={"email": "synthetic@example.invalid", "password": "synthetic-password"},
+        headers=ORIGIN,
+    )
+    assert login.status_code == expected and "set-cookie" not in login.headers
+    assert module.auth.revoked
+
+
+def test_missing_complete_access_adapter_is_unavailable(
+    e_client: TestClient,
+    module: EModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(module.access, "effective_access", None)
+    assert e_client.get("/workspace").status_code == 503
+
+
+def test_profile_rejects_other_users_basic_information(
+    e_client: TestClient,
+    module: EModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        module.auth,
+        "profile",
+        lambda user: Profile(OTHER_DEPT, "錯誤本人", "other@example.invalid"),
+    )
+    page = e_client.get("/account")
+    assert page.status_code == 403
+    assert "other@example.invalid" not in page.text
+
+
+def test_profile_filters_inactive_departments_and_escapes_names(
+    e_client: TestClient,
+    module: EModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = module.access.effective_access(identity())
+    departments = (
+        replace(snapshot.departments[0], department_name="<script>synthetic</script>"),
+        EffectiveDepartment(OTHER_DEPT, "OLD", "已停用部門", False),
+    )
+    monkeypatch.setattr(
+        module.access, "effective_access", lambda user: replace(snapshot, departments=departments)
+    )
+    page = e_client.get("/account")
+    assert page.status_code == 200
+    assert "已停用部門" not in page.text
+    assert "&lt;script&gt;synthetic&lt;/script&gt;" in page.text
+    assert "<script>synthetic</script>" not in page.text
+
+
+def test_duplicate_department_code_update_rolls_back_over_http(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    work = module.unit_of_work()
+    work.state.departments[OTHER_DEPT] = Department(OTHER_DEPT, "FIN", "財務", True, "r1")
+    response = e_client.post(
+        f"/system/departments/{DEPT}",
+        data={
+            "department_code": "FIN",
+            "department_name": "重複更新",
+            "is_active": "true",
+            "expected_revision": "r1",
+        },
+        headers=ORIGIN,
+    )
+    assert response.status_code == 409
+    assert work.state.departments[DEPT].department_code == "SYS"
+    assert work.state.events == []
+
+
+@pytest.mark.parametrize("resource", ["departments", "features"])
+def test_missing_catalog_resource_returns_404_for_read_and_update(
+    e_client: TestClient,
+    module: EModule,
+    resource: str,
+) -> None:
+    path = f"/system/{resource}/{uuid4()}"
+    data = (
+        {"department_code": "NEW", "department_name": "不存在"}
+        if resource == "departments"
+        else {"function_code": "future", "function_name": "不存在", "app_scope": "admin"}
+    )
+    assert e_client.get(path).status_code == 404
+    assert (
+        e_client.post(path, data={**data, "expected_revision": "r1"}, headers=ORIGIN).status_code
+        == 404
+    )
+    assert module.unit_of_work().state.events == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("department_code", "   "),
+        ("department_code", "x" * 101),
+        ("department_name", "x" * 201),
+        ("department_name", "bad\x01name"),
+        ("role", "admin"),
+    ],
+)
+def test_department_invalid_input_returns_400_without_mutation(
+    e_client: TestClient,
+    module: EModule,
+    field: str,
+    value: str,
+) -> None:
+    response = e_client.post(
+        "/system/departments",
+        data={"department_code": "NEW", "department_name": "新部門", field: value},
+        headers=ORIGIN,
+    )
+    assert response.status_code == 400
+    assert len(module.unit_of_work().state.departments) == 1
+    assert module.unit_of_work().state.events == []
+
+
+def test_feature_duplicate_stale_revision_and_disable_are_atomic(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    data = {
+        "function_code": DEPARTMENTS,
+        "function_name": "部門管理",
+        "app_scope": "admin",
+        "is_active": "true",
+    }
+    assert e_client.post("/system/features", data=data, headers=ORIGIN).status_code == 303
+    assert e_client.post("/system/features", data=data, headers=ORIGIN).status_code == 409
+    work = module.unit_of_work()
+    row = next(iter(work.state.features.values()))
+    path = f"/system/features/{row.function_id}"
+    assert (
+        e_client.post(path, data={**data, "expected_revision": "stale"}, headers=ORIGIN).status_code
+        == 409
+    )
+    assert work.state.features[row.function_id].is_active
+    assert len(work.state.events) == 1
+    assert (
+        e_client.post(
+            path,
+            data={**data, "is_active": "false", "expected_revision": row.revision},
+            headers=ORIGIN,
+        ).status_code
+        == 303
+    )
+    assert not work.state.features[row.function_id].is_active
+    assert work.state.events[-1].before["is_active"] is True
+    assert work.state.events[-1].after["is_active"] is False
+
+
+def test_matrix_partial_change_preserves_other_groups_rows(module: EModule) -> None:
+    external = GrantRow(function_code="other.pending", actions=frozenset({Action.VIEW}))
+    module.grants.matrix = replace(module.grants.matrix, rows=(external,))
+    module.save_matrix(
+        identity(),
+        DEPT,
+        MatrixChange(
+            expected_revision="g-1",
+            rows=(GrantRow(function_code=DEPARTMENTS, actions=frozenset({Action.VIEW})),),
+        ),
+    )
+    assert external in module.grants.matrix.rows
+
+
+def test_matrix_only_navigation_does_not_require_department_list_permission(
+    e_client: TestClient,
+    module: EModule,
+) -> None:
+    module.access.effects = {
+        (item.code, action): "unset" for item in REGISTRY for action in item.actions
+    }
+    module.access.effects[("sys.department-permissions", Action.VIEW)] = "allow"
+    page = e_client.get("/workspace")
+    path = f"/system/departments/{DEPT}/permissions"
+    assert page.status_code == 200 and f'href="{path}"' in page.text
+    assert e_client.get(path).status_code == 200
+    assert e_client.get("/system/departments").status_code == 403
+
+
+@pytest.mark.parametrize("resource", ["departments", "features"])
+def test_invalid_catalog_uuid_returns_safe_400(e_client: TestClient, resource: str) -> None:
+    page = e_client.get(f"/system/{resource}/synthetic-not-a-uuid")
+    assert page.status_code == 400
+    assert "synthetic-not-a-uuid" not in page.text
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("function_code", "   "),
+        ("function_name", "x" * 201),
+        ("app_scope", "root"),
+        ("route", "https://external.invalid"),
+        ("actions", "approve"),
+    ],
+)
+def test_feature_invalid_input_does_not_create_capability(
+    e_client: TestClient,
+    module: EModule,
+    field: str,
+    value: str,
+) -> None:
+    response = e_client.post(
+        "/system/features",
+        data={"function_code": "future", "function_name": "草稿", field: value},
+        headers=ORIGIN,
+    )
+    assert response.status_code == 400
+    assert module.unit_of_work().state.features == {}
+    assert module.unit_of_work().state.events == []

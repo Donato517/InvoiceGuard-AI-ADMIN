@@ -2,13 +2,35 @@
   @template pages/e_admin/profile.html
   @description 本人資訊白名單與委派 B 的變更密碼表單。
   @route GET /account（需管理站登入）
-  @context profile: Profile 本人安全投影
+  @context profile: Profile 本人安全投影；effective_access: SelfAccess 有效部門、逐操作功能與資料範圍
 #}
 {% extends "layouts/e_admin.html" %}
 {% block title %}本人資訊{% endblock %}
 {% block content %}
   <p>使用者識別：{{ profile.user_id }}</p>
   <p>Email：{{ profile.email }}</p>
+  <h2>有效部門</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>代碼</th>
+        <th>部門</th>
+        <th>目前情境</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for department in effective_access.departments %}
+        <tr>
+          <td>{{ department.department_code }}</td>
+          <td>{{ department.department_name }}</td>
+          <td>{{ '目前部門' if department.department_id == effective_access.selected_department_id else '' }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2>可用功能與資料範圍</h2>
+  {% include "pages/e_admin/effective_access.html" %}
+  <h2>修改顯示名稱</h2>
   <form class="form" method="post" action="/account">
     <div class="form-field">
       <label for="display-name">顯示名稱</label>

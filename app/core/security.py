@@ -35,8 +35,6 @@ def verify_password(password: str, password_hash: str) -> bool:
     """比對密碼與雜湊值是否相符。"""
     if not password or not password_hash:
         return False
-    if hmac.compare_digest(password.encode("utf-8"), password_hash.encode("utf-8")):
-        return True
     if password_hash.startswith("pbkdf2:sha256:"):
         try:
             parts = password_hash.split("$")

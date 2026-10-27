@@ -85,26 +85,10 @@ def require_admin(
         LoginRequiredError: 帳號不存在或已停用。
         ForbiddenError: 帳號不是管理者。
     """
-    user: User | None = None
-    try:
-        user = user_repository.get_by_id(db, user_id)
-    except Exception:
-        user = None
-
-    if user is None:
-        if user_id == 1 and not settings.is_vercel:
-            user = User(
-                id=1,
-                email="admin@example.com",
-                password_hash="",
-                display_name="系統管理員",
-                role=UserRole.ADMIN.value,
-                is_active=True,
-            )
-        else:
-            raise LoginRequiredError
-
-    if not user.is_active:
+    if db is None:
+        raise LoginRequiredError
+    user = user_repository.get_by_id(db, user_id)
+    if user is None or not user.is_active:
         raise LoginRequiredError
     if user.role != UserRole.ADMIN:
         raise ForbiddenError("此帳號沒有後台權限")

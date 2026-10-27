@@ -12,6 +12,11 @@
   <section class="auth-card">
     <h1 class="auth-card__title">{{ SITE_NAME }}</h1>
     {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+    {% if is_local_dev %}
+      <p class="alert alert--info" role="status">
+        <strong>本機開發模式</strong>：可使用測試帳號 <code>admin@example.com</code> / 密碼 <code>admin</code> 登入。
+      </p>
+    {% endif %}
     <form method="post" action="/login" class="form">
       <input type="hidden" name="next" value="{{ next }}">
       <div class="form-field">
@@ -29,6 +34,7 @@
                name="password"
                type="password"
                autocomplete="current-password"
+               value="{% if is_local_dev and not error %}admin{% endif %}"
                required>
       </div>
       <button type="submit" class="btn btn--primary btn--block">登入</button>

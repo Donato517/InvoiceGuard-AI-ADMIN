@@ -30,7 +30,17 @@ from app.routers import (
 )
 
 settings.require_environment()
+if (
+    settings.APP_ENV == "local"
+    and not settings.is_vercel
+    and not settings.SESSION_SECRET_KEY.get_secret_value()
+):
+    from pydantic import SecretStr
+
+    settings.SESSION_SECRET_KEY = SecretStr("invoiceguard-dev-local-session-secret-key-32chars")
+
 setup_logging()
+
 
 app = FastAPI(
     title=settings.APP_NAME,

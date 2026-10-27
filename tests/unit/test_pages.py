@@ -300,3 +300,28 @@ def test_invoice_export(admin_client: TestClient) -> None:
     res_voucher = admin_client.get("/invoices/1/export/voucher")
     assert res_voucher.status_code == 200
     assert "借方金額" in res_voucher.text
+
+
+def test_local_dev_login_and_dashboard_flow(client: TestClient) -> None:
+    # 1. 檢視登入頁，應有本機測試帳號提示
+    login_get = client.get("/login")
+    assert login_get.status_code == 200
+    assert "本機開發模式" in login_get.text
+
+    # 2. 送出登入表單
+    login_post = client.post(
+        "/login",
+        data={"email": "admin@example.com", "password": "admin"},
+        headers={"Origin": "http://testserver"},
+    )
+    assert login_post.status_code == 303
+    assert login_post.headers["location"] == "/dashboard"
+    cookie = login_post.cookies.get(SESSION_COOKIE_NAME)
+    assert cookie is not None
+
+    # 3. 攜帶已簽發之本機 Session Cookie 存取儀表板
+    client.cookies.set(SESSION_COOKIE_NAME, cookie)
+    dash = client.get("/dashboard")
+    assert dash.status_code == 200
+    assert "本機測試管理者" in dash.text
+    assert "今日上傳" in dash.text

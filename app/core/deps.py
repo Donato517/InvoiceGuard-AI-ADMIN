@@ -11,9 +11,6 @@
         ...
 """
 
-import inspect
-from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -27,38 +24,8 @@ from app.db.models.user import User, UserRole
 from app.db.repositories import user_repository
 from app.db.session import get_db
 
-
-def get_session_db(request: Request) -> Iterator[Session | None]:
-    """取得資料庫 Session；若本機離線未設定 DB，安全退回 None。"""
-    override = request.app.dependency_overrides.get(get_db)
-    if override is not None:
-        if inspect.isgeneratorfunction(override):
-            yield from override()
-        else:
-            yield override()
-        return
-
-    try:
-        yield from get_db()
-    except Exception:
-        if settings.APP_ENV == "local" and not settings.is_vercel:
-            yield None
-            return
-        raise
-
-
 # 資料庫 Session：每個請求一個，請求結束自動關閉
-DbSession = Annotated[Session | None, Depends(get_session_db)]
-
-# 本機開發測試管理者
-DEV_ADMIN_ID = 1
-DEV_ADMIN = SimpleNamespace(
-    id=DEV_ADMIN_ID,
-    email="admin@example.com",
-    display_name="本機測試管理者",
-    role=UserRole.ADMIN,
-    is_active=True,
-)
+DbSession = Annotated[Session, Depends(get_db)]
 
 
 def get_session_user_id(request: Request) -> int:
@@ -86,32 +53,24 @@ def require_admin(
     # NOTE: 必須排在 db 之前——未登入時先拋出例外，不必建立資料庫連線
     user_id: Annotated[int, Depends(get_session_user_id)],
     db: DbSession,
-) -> User | SimpleNamespace:
+) -> User:
     """確認目前使用者是啟用中的管理者，並放入 request.state.admin 供樣板使用。
 
     Raises:
         LoginRequiredError: 帳號不存在或已停用。
         ForbiddenError: 帳號不是管理者。
     """
-    user: User | SimpleNamespace | None = None
-    try:
-        user = user_repository.get_by_id(db, user_id)
-    except Exception:
-        user = None
-
-    if user is None:
-        if settings.APP_ENV == "local" and not settings.is_vercel and user_id == DEV_ADMIN_ID:
-            user = DEV_ADMIN
-        else:
-            raise LoginRequiredError
-    if user.role != UserRole.ADMIN or not user.is_active:
+    user = user_repository.get_by_id(db, user_id)
+    if user is None or not user.is_active:
+        raise LoginRequiredError
+    if user.role != UserRole.ADMIN:
         raise ForbiddenError("此帳號沒有後台權限")
     request.state.admin = user
     return user
 
 
 # 需要管理者資料的路由：在參數宣告 `admin: CurrentAdmin`
-CurrentAdmin = Annotated[User | SimpleNamespace, Depends(require_admin)]
+CurrentAdmin = Annotated[User, Depends(require_admin)]
 
 
 def require_dev_pages() -> None:

@@ -17,7 +17,8 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from app.constants import SESSION_COOKIE_NAME
-from app.core.exceptions import ForbiddenError, LoginRequiredError
+from app.core.config import settings
+from app.core.exceptions import ForbiddenError, LoginRequiredError, NotFoundError
 from app.core.security import read_session_token
 from app.db.models.user import User, UserRole
 from app.db.repositories import user_repository
@@ -30,10 +31,21 @@ DbSession = Annotated[Session, Depends(get_db)]
 def get_session_user_id(request: Request) -> int:
     """從登入 cookie 取出管理者 ID；未登入、遭竄改或過期時拋出 LoginRequiredError。"""
     token = request.cookies.get(SESSION_COOKIE_NAME)
-    user_id = read_session_token(token) if token else None
+    user_id = _read_user_id(token) if token else None
     if user_id is None:
         raise LoginRequiredError
     return user_id
+
+
+def _read_user_id(token: str) -> int | None:
+    """驗證登入 cookie；本機沒有簽署金鑰時，殘留的 cookie 視為未登入。"""
+    try:
+        return read_session_token(token)
+    except RuntimeError:
+        # 雲端設定不合格（ModuleConfigurationError 亦屬 RuntimeError）維持拒絕並記錄，不改導向登入頁
+        if settings.is_vercel:
+            raise
+        return None
 
 
 def require_admin(
@@ -59,3 +71,23 @@ def require_admin(
 
 # 需要管理者資料的路由：在參數宣告 `admin: CurrentAdmin`
 CurrentAdmin = Annotated[User, Depends(require_admin)]
+
+
+def require_dev_pages() -> None:
+    """保護本機 /dev 示範；帳號與檔案分別使用既有 DB 與 Vercel 模組。
+
+    Raises:
+        NotFoundError: APP_ENV 非 local、VERCEL=1，或解析後 module_backend 非 remote。
+    """
+    if not settings.dev_pages_enabled:
+        raise NotFoundError
+
+
+def require_cloud_db() -> None:
+    """帳號 JSON router 的模式檢查；只檢查解析後 module_backend，不檢查 DB 設定或身分。
+
+    Raises:
+        NotFoundError: 解析後 module_backend 不是 cloud。
+    """
+    if settings.module_backend != "cloud":
+        raise NotFoundError

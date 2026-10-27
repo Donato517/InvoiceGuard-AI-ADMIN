@@ -5,7 +5,10 @@
     - 狀態顯示文字的鍵必須涵蓋 app/db/models/ 中對應 StrEnum 的所有值。
 """
 
-SITE_NAME = "InvoiceGuard 後台"
+from app.core.constants import SITE_NAMES
+
+# 網站名稱集中在三站共用的 app/core/constants.py
+SITE_NAME = SITE_NAMES["ADMIN"]
 
 # 存放已簽署登入資料的 cookie（httpOnly）；與前台的 ig_session 分開
 SESSION_COOKIE_NAME = "ig_admin_session"
@@ -14,7 +17,8 @@ SESSION_COOKIE_NAME = "ig_admin_session"
 MENU_ITEMS: list[tuple[str, str]] = [
     ("儀表板", "/dashboard"),
     ("發票審核", "/invoices"),
-    ("使用者管理", "/users"),
+    ("帳號管理", "/accounts"),
+    ("部門管理", "/department"),
     ("排程紀錄", "/system/job-runs"),
     ("稽核紀錄", "/system/audit-logs"),
 ]

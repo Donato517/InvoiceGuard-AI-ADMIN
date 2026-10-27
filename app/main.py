@@ -15,8 +15,22 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import BASE_DIR, settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import setup_logging
-from app.routers import auth, dashboard, health, invoices, robots, system, users
+from app.routers import (
+    accounts,
+    auth,
+    dashboard,
+    db_inspection,
+    departments,
+    dev_accounts,
+    dev_files,
+    health,
+    invoices,
+    robots,
+    system,
+    users,
+)
 
+settings.require_environment()
 setup_logging()
 
 app = FastAPI(
@@ -41,4 +55,11 @@ app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(invoices.router)
 app.include_router(users.router)
+app.include_router(accounts.router)
 app.include_router(system.router)
+app.include_router(db_inspection.router)
+app.include_router(departments.router)
+# 開發示範：本機頁面與雲端帳號 API（各自只在 remote／cloud 模式提供）
+app.include_router(dev_accounts.page)
+app.include_router(dev_accounts.api)
+app.include_router(dev_files.page)

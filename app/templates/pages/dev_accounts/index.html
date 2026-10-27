@@ -1,0 +1,130 @@
+{#
+  @template pages/dev_accounts/index.html
+  @description 開發者帳號（示範 DB 模組）：查詢、新增、修改自己的帳密（user_accounts），供後續登入功能串接；本機以 DB 模組直接讀寫雲端 PostgreSQL。
+  @route GET /dev/accounts、POST /dev/accounts、POST /dev/accounts/{user_id}（只在本機開放）
+  @context q: str                          查詢字串（UUID 或 Email）
+  @context accounts: list[AccountSummary]  查詢結果（不含密碼雜湊）
+  @context edit: UUID | None               修改中的帳號 ID
+  @context selected: AccountSummary | None 修改中的帳號（重新讀取的雲端資料）
+  @context message: str | None             儲存成功訊息（由 POST 回應帶入，不經網址參數）
+  @context error: str | None               查詢失敗訊息
+  @context create_email: str | None        新增失敗時回填的 Email（不回填密碼）
+  @context create_error: str | None        新增失敗訊息
+  @context edit_email: str | None          修改失敗時回填的 Email
+  @context edit_error: str | None          修改失敗訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}開發者帳號{% endblock %}
+{% block content %}
+  {# 查詢、選取與送出都由 HTMX 發出：回應整頁後只取出 #dev-accounts 替換，不換頁 #}
+  <div id="dev-accounts"
+       hx-target="#dev-accounts"
+       hx-select="#dev-accounts"
+       hx-swap="outerHTML">
+    {% if message %}<p class="alert" role="status">{{ message }}</p>{% endif %}
+    <h2>帳號列表</h2>
+    <form class="filter-bar"
+          method="get"
+          action="/dev/accounts"
+          hx-get="/dev/accounts">
+      <label for="q">UUID 或 Email</label>
+      <input id="q" name="q" type="search" value="{{ q }}">
+      <button type="submit" class="btn">查詢</button>
+    </form>
+    {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+    {% if accounts %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">UUID</th>
+            <th scope="col">Email</th>
+            <th scope="col">狀態</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in accounts %}
+            <tr>
+              <td>
+                <code>{{ account.user_id }}</code>
+              </td>
+              <td>{{ account.email }}</td>
+              <td>{{ account.account_status }}</td>
+              <td>
+                <a href="/dev/accounts?edit={{ account.user_id }}"
+                   hx-get="/dev/accounts?edit={{ account.user_id }}">修改</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% elif not error %}
+      <p class="empty-state">沒有符合的帳號</p>
+    {% endif %}
+    <h2>新增帳號</h2>
+    {% if create_error %}<p class="alert alert--danger" role="alert">{{ create_error }}</p>{% endif %}
+    <form method="post"
+          action="/dev/accounts"
+          hx-post="/dev/accounts"
+          class="form">
+      <div class="form-field">
+        <label for="create_email">Email</label>
+        <input id="create_email"
+               name="email"
+               type="email"
+               autocomplete="off"
+               value="{{ create_email or '' }}"
+               required>
+      </div>
+      <div class="form-field">
+        <label for="create_password">初始密碼</label>
+        <input id="create_password"
+               name="password"
+               type="password"
+               autocomplete="new-password"
+               required>
+      </div>
+      <button type="submit" class="btn btn--primary">新增</button>
+    </form>
+    {% if selected or edit_error %}
+      <h2>修改帳號</h2>
+      {% if edit_error %}<p class="alert alert--danger" role="alert">{{ edit_error }}</p>{% endif %}
+      <form method="post"
+            action="/dev/accounts/{{ selected.user_id if selected else edit }}"
+            hx-post="/dev/accounts/{{ selected.user_id if selected else edit }}"
+            class="form">
+        <p>
+          UUID：<code>{{ selected.user_id if selected else edit }}</code>
+          {% if selected %}（狀態：{{ selected.account_status }}）{% endif %}
+        </p>
+        <div class="form-field">
+          <label for="edit_email">Email</label>
+          <input id="edit_email"
+                 name="email"
+                 type="email"
+                 autocomplete="off"
+                 value="{{ edit_email or (selected.email if selected else '') }}"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="edit_current_password">目前密碼</label>
+          <input id="edit_current_password"
+                 name="current_password"
+                 type="password"
+                 autocomplete="current-password"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="edit_new_password">新密碼（留空表示不變更）</label>
+          <input id="edit_new_password"
+                 name="new_password"
+                 type="password"
+                 autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn--primary">儲存</button>
+      </form>
+    {% elif edit %}
+      <p class="empty-state">找不到要修改的帳號</p>
+    {% endif %}
+  </div>
+{% endblock content %}

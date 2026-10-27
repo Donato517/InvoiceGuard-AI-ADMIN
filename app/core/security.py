@@ -41,9 +41,12 @@ def _serializer() -> URLSafeTimedSerializer:
     Raises:
         RuntimeError: 未設定 SESSION_SECRET_KEY（避免以空金鑰簽署）。
     """
-    if not settings.SESSION_SECRET_KEY:
+    if settings.is_vercel:
+        settings.require_configuration("session")
+    secret_key = settings.SESSION_SECRET_KEY.get_secret_value()
+    if not secret_key:
         raise RuntimeError("未設定 SESSION_SECRET_KEY")
-    return URLSafeTimedSerializer(settings.SESSION_SECRET_KEY, salt=_SESSION_SALT)
+    return URLSafeTimedSerializer(secret_key, salt=_SESSION_SALT)
 
 
 def create_session_token(user_id: int) -> str:

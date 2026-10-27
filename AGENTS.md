@@ -11,7 +11,7 @@
 - DB：程序有合法 `DATABASE_URL` 即可使用（本機與雲端皆可，仍驗證 PostgreSQL 格式與 TLS）；本機值由 START 注入，連的是正式 DB。
 - Vercel 模組（檔案存取）：`app/integrations/supabase_storage.py`，與 API 相同；本機值由 START 注入，連的是正式 Storage。
 - 示範檔案 `/dev/accounts`（DB 模組：帳號查詢／新增／修改）與 `/dev/files`（Vercel 模組：圖片／RAG 檔案）只在 `dev_pages_enabled` 為真（`APP_ENV=local`、非 Vercel、解析後 `module_backend=remote`，含本機 auto）時開放、不需登入，直接讀寫正式 DB／Storage。
-- 本機無法登入後台：`SESSION_SECRET_KEY` 在本機屬禁用機密，需要 `require_admin` 的頁面只能在雲端使用，或以測試替身（`admin_client`）驗證。
+- 舊 `require_admin` 路由仍受本機禁用 `SESSION_SECRET_KEY` 限制。06_E 的 `/login` 已改委派 B 共用 PortableAuth；B／G adapter 尚未接線時回 503，不開本機繞過。E 測試以 `get_e_module` 的 dependency override 提供合成替身，正式程式沒有測試模式開關；見 `docs/E-TEAM-HANDOFF.md`。
 - `remote_admin_client` 目前沒有呼叫端；`MODULE_BACKEND=remote` 實際代表「本機開發」並開放 `/dev` 示範檔案。
 
 <!-- shared-rules:start -->

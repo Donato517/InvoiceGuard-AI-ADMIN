@@ -170,6 +170,8 @@ InvoiceGuard-AI-ADMIN/
 
 ## 5. 登入與安全
 
+2026-10-27：06_E 的正式 `/login`／`/logout` 已改委派共用認證，新增部門／功能／本人頁使用 UUID、有效職務及 scope guard。正式 adapters 尚未提供時拒絕操作。詳見 [E 交接](E-TEAM-HANDOFF.md)。**以下表格描述保留給其他組待移轉的舊登入守衛及共通防護；其中 users／已簽署 int Cookie 並非新 E 的登入路徑。**
+
 | 項目 | 做法 | 位置 |
 |---|---|---|
 | 管理者帳號 | `users` 表中 `role = admin` 且 `is_active = true` | `services/auth_service.py` |

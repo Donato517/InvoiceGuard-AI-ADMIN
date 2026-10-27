@@ -509,3 +509,16 @@
 - 原因：`app/services/db_health_service.py` 依 diag 分支當時的設定，把 `DATABASE_URL` 當字串呼叫 `.strip()`；feature/python-web 已將 `DATABASE_URL` 改為 `SecretStr`。兩個分支各自測試通過，合併後才出錯；測試替身也直接塞字串，沒有抓到型別不符。正式站的 `GET /health/db` 也會因此回 500。
 - 處理：`db_health_service.py` 改用 `settings.DATABASE_URL.get_secret_value().strip()`；`tests/unit/test_db_health.py` 改以 `SecretStr` 設定替身，與實際型別一致。
 - 驗證：以 main（9596149）為基礎先重現 4 項失敗，修正後完整 pytest 660 passed／10 skipped，check_project、ruff check／format、`app.core.environment --check`、djlint 通過。
+
+## 2026-10-27 06_E 實作檢驗
+
+- 舊登入路由會在 Cookie 發行前更新舊 users.last_login_at，且與已核定 v1.3 UUID 身分不同。改委派 B 共用 AuthPort；缺少 adapter 回 503，離線測試確保不觸發舊 DB 流程。未在正式 DB 測試或修改帳號。
+- 新 SQL 交易適配器初稿引用 service 層不允許的 SQL 例外／session factory；改由 repository 提供 open_session／安全錯誤映射，service 只管理交易。沒有修改 checker、快照或例外允許清單。
+- 第三方／共同 adapter 例外可能含連線資訊；新增 e_adapter.call_adapter 及 SQL 錯誤映射，回固定訊息、不帶 cause 進 HTTP／日誌；測試合成私密 marker 不出現在回應或 log。
+- 矩陣可授範圍需包含撤銷，且完整替換可能誤刪其他組功能；改成提交列原子更新、保留未提交列，E 同時驗新增與撤銷上限，G 提交時仍需再次驗證。真實 G 寫入尚待接線。
+- 實際驗證：728 passed／9 skipped／1 warning；Ruff、djLint、environment 及跨站 checker 通過。正式 audit／CAS／RLS／認證仍待共同 adapters，詳見 [E 交接](E-TEAM-HANDOFF.md)。
+
+
+### 本批最終補驗
+
+補上 Origin 格式錯誤與公司級目錄選單範圍反例；移除登入路由對舊寬鬆來源檢查的依賴，統一使用 E 嚴格同源驗證。最終全套 731 passed、9 skipped、1 warning，98.00s、exit 0；本批共新增 70 個離線案例。最後跨站靜態檢查 PASS、0 issues，Ruff lint／format 通過。本機未登入 GET：/health、/login、/auth/password/forgot 為 200，/system/departments 為 303；不代表認證或 DB 串接完成。

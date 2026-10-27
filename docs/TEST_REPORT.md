@@ -1045,3 +1045,9 @@ STARTUP 42 筆清單只在讀取時處理 CRLF 並核對路徑與雜湊，原檔
 
 - `tests/unit/test_dev_files.py` 40 個：AWS SigV4 get-vanilla 參考向量、path-style 簽章與 payload hash、列表分頁與 XML、下載／移動（複製失敗不刪原檔）／刪除、403／404／415／500 與網路錯誤代碼、缺設定；service 兩類別不同路徑、各種拒絕、名稱與資料夾不可越界；路由 404（雲端）、兩個上傳表單、上傳→下載→移動→刪除、錯誤重繪、跨站寫入 403。
 - 完整 pytest 629 passed／9 skipped（含先前受 Smart App Control 影響的 3 個測試）；check_project 單站／跨站 PASS；Ruff check／format 83 檔、djLint 16 檔 0 錯誤。真 START 實測見 STARTUP TEST_REPORT。
+
+## 2026-10-27 06_E 第一批程式
+
+ADMIN 基準 2b69083，本機 codex/06e-admin-v13。全套 pytest：731 passed、9 skipped、1 warning，98.00s；相較基準新增 70 個 E 離線案例。另通過跨站 check_project（0 issues）、Ruff lint／format（99 檔）、djLint（23 檔、0 errors）、環境靜態驗證（connectivity_checked=false）。
+
+原始 E-T01～T10 的本批替身證據與正式未驗範圍見 [E-IMPLEMENTATION-RESULTS.md](E-IMPLEMENTATION-RESULTS.md)。沒有正式 DB／網路連線、寄信或部署驗證；既有 TestClient／httpx 警告保留，不把 9 skipped 算通過。

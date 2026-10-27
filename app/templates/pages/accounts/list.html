@@ -1,0 +1,58 @@
+{#
+  @template pages/accounts/list.html
+  @description 正式帳號列表：搜尋、分頁，新增與修改導向獨立內容頁。
+  @route GET /accounts（目前限本機）
+  @context accounts: list[AccountSummary] 當頁帳號資料，不含密碼
+  @context q: str 搜尋文字
+  @context page: int 目前頁碼
+  @context pages: int 總頁數
+  @context total: int 符合總筆數
+  @context message: str 操作成功提示
+  @context error: str 操作失敗提示
+  @context previous_url: str 上一頁網址
+  @context next_url: str 下一頁網址
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}帳號管理{% endblock %}
+{% block content %}
+  {% if message %}<p class="alert" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <div class="filter-bar">
+    <a class="btn btn--primary" href="/accounts/new">新增帳號</a>
+  </div>
+  <form class="filter-bar" method="get" action="/accounts">
+    <label for="q">Email 或完整 UUID</label>
+    <input id="q" name="q" type="search" value="{{ q }}" maxlength="320">
+    <button class="btn" type="submit">搜尋</button>
+    <a class="btn" href="/accounts">清除</a>
+  </form>
+  {% if accounts %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">UUID</th>
+          <th scope="col">Email</th>
+          <th scope="col">狀態</th>
+          <th scope="col">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in accounts %}
+          <tr>
+            <td><code>{{ account.user_id }}</code></td>
+            <td>{{ account.email }}</td>
+            <td><span class="badge">{{ '啟用' if account.account_status == 'active' else ('停用' if account.account_status == 'disabled' else account.account_status) }}</span></td>
+            <td><a class="btn" href="/accounts/{{ account.user_id }}/edit">檢視／修改</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <nav class="pagination" aria-label="帳號列表分頁">
+      {% if page > 1 %}<a class="pagination__item" href="{{ previous_url }}">上一頁</a>{% endif %}
+      <span>第 {{ page }}／{{ pages }} 頁，共 {{ total }} 筆</span>
+      {% if page < pages %}<a class="pagination__item" href="{{ next_url }}">下一頁</a>{% endif %}
+    </nav>
+  {% elif not error %}
+    <p class="empty-state">沒有符合的帳號</p>
+  {% endif %}
+{% endblock content %}

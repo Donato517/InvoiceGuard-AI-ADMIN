@@ -17,7 +17,8 @@ SESSION_COOKIE_NAME = "ig_admin_session"
 MENU_ITEMS: list[tuple[str, str]] = [
     ("儀表板", "/dashboard"),
     ("發票審核", "/invoices"),
-    ("使用者管理", "/users"),
+    ("帳號管理", "/accounts"),
+    ("部門管理", "/department"),
     ("排程紀錄", "/system/job-runs"),
     ("稽核紀錄", "/system/audit-logs"),
 ]

@@ -12,7 +12,7 @@ class LoginInput(InputModel):
 
     email: str = Field(min_length=1, max_length=320)
     password: SecretStr = Field(min_length=1, max_length=1024)
-    next_path: str = Field(default="/workspace", alias="next", max_length=200)
+    next_path: str = Field(default="/welcome", alias="next", max_length=200)
 
     @field_validator("email")
     @classmethod

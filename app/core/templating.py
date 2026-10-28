@@ -7,6 +7,7 @@
     - 已登入頁面可在樣板中以 request.state.admin 取得目前管理者（由 core/deps.py 設定）。
 """
 
+from contextlib import suppress
 from datetime import datetime
 
 from fastapi.templating import Jinja2Templates
@@ -36,9 +37,12 @@ def static_url(path: str) -> str:
         例如 "/static/css/main.css?v=a1b2c3d"。
     """
     version = settings.static_version
-    static_file = BASE_DIR / "app" / "static" / path
-    if version == "dev" and static_file.is_file():
-        version = f"dev-{int(static_file.stat().st_mtime)}"
+    if settings.APP_ENV == "local" and not settings.is_vercel:
+        static_root = (BASE_DIR / "app" / "static").resolve()
+        asset = (static_root / path).resolve()
+        if asset.is_relative_to(static_root):
+            with suppress(OSError):
+                version = f"{version}-{asset.stat().st_mtime_ns}"
     return f"/static/{path}?v={version}"
 
 

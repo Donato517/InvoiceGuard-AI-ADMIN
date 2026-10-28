@@ -1,0 +1,26 @@
+{# @template partials/sidebar_entry.html；部門功能選單；item 為已驗證的側欄項目。 #}
+{% set entry_icons = {
+  "/welcome": "🏠",
+  "/dashboard": "📊",
+  "/invoices": "🧾",
+  "/knowledge": "📚",
+  "/accounts": "👤",
+  "/department": "🏢",
+  "/functions": "⚙️",
+  "/system/departments": "🏢",
+  "/system/features": "⚙️",
+  "/system/audit-logs": "🛡️",
+  "/system/job-runs": "⏱️"
+} %}
+{% if item.route %}
+  <a class="app-sidebar__link{% if request.url.path == item.route or request.url.path.startswith(item.route + '/') %} app-sidebar__link--active{% endif %}"
+     href="{{ item.route }}">
+    <span class="app-sidebar__emoji" aria-hidden="true">{{ entry_icons.get(item.route, "⚙️") }}</span>
+    <span>{{ item.name }}</span>
+  </a>
+{% else %}
+  <span class="app-sidebar__link app-sidebar__link--pending" aria-disabled="true">
+    <span>{{ item.name }}</span>
+    <small class="app-sidebar__status">{{ item.status }}</small>
+  </span>
+{% endif %}

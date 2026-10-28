@@ -14,6 +14,12 @@
       </div>
       <nav aria-label="後台選單">
         <div class="app-sidebar__caption">管理站工作台</div>
+        {% set logout_entry = namespace(rendered=false) %}
+        <a class="app-sidebar__link {% if request.url.path == '/welcome' %}app-sidebar__link--active{% endif %}"
+           href="/welcome">
+          <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
+          <span>歡迎頁</span>
+        </a>
         <a class="app-sidebar__link {% if request.url.path == '/workspace' %}app-sidebar__link--active{% endif %}"
            href="/workspace">
           <span class="app-sidebar__emoji" aria-hidden="true">📊</span>
@@ -26,13 +32,14 @@
         </a>
         {% for item in e_menu %}
           {% if item.code != "sys.department-permissions" %}
-            <a class="app-sidebar__link {% if request.url.path.startswith(item.route) %}app-sidebar__link--active{% endif %}"
-               href="{{ item.route }}">
-              <span class="app-sidebar__emoji" aria-hidden="true">⚙️</span>
-              <span>{{ item.name }}</span>
-            </a>
+            {% include "partials/sidebar_entry.html" %}
+          {% endif %}
+          {% if item.code == "sys.accounts" %}
+            {% include "partials/sidebar_logout.html" %}
+            {% set logout_entry.rendered = true %}
           {% endif %}
         {% endfor %}
+        {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
       </nav>
     </aside>
     <div class="admin-layout__main">

@@ -1,0 +1,25 @@
+{#
+  @template pages/e_function_settings/welcome.html
+  @description 簡單溫馨的歡迎頁，不查資料、不顯示技術或設定說明。
+  @route GET /welcome
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}歡迎{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/e-welcome.css') }}">
+{% endblock %}
+{% block setup_notice %}{% endblock %}
+{% block content %}
+  <section class="e-welcome" aria-labelledby="welcome-heading">
+    <div class="e-welcome__card">
+      <svg class="e-welcome__sun" width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <circle cx="48" cy="48" r="33" fill="#fff3d4" />
+        <circle cx="48" cy="48" r="17" fill="#eebd70" />
+        <path d="M48 16v5M48 75v5M16 48h5M75 48h5M25 25l4 4M67 67l4 4M25 71l4-4M67 29l4-4" stroke="#e2ad5a" stroke-width="3" stroke-linecap="round" />
+      </svg>
+      <h2 id="welcome-heading">歡迎回來</h2>
+      <p class="e-welcome__greeting">很高興見到你，願今天的工作一切順心。</p>
+      <p class="e-welcome__note">慢慢來，從容開始新的一天。</p>
+    </div>
+  </section>
+{% endblock %}

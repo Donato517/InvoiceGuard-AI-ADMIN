@@ -3,6 +3,7 @@
   @description 後台左側選單；項目來自 app.constants.MENU_ITEMS，目前所在頁面加上 --active。
 #}
 {% set menu_icons = {
+  "/welcome": "🏠",
   "/dashboard": "📊",
   "/invoices": "🧾",
   "/knowledge": "📚",
@@ -19,17 +20,50 @@
     InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
   </div>
   <nav aria-label="後台選單">
-    {% for label, path in MENU_ITEMS %}
-      {% if path == "/invoices" %}
-        <div class="app-sidebar__caption">發票與知識庫作業</div>
-      {% elif path == "/accounts" %}
-        <div class="app-sidebar__caption">系統與權限設定</div>
-      {% endif %}
-      <a href="{{ path }}"
-         class="app-sidebar__link {% if request.url.path == path or (path != '/department' and request.url.path.startswith(path ~ '/')) %}app-sidebar__link--active{% endif %}">
-        <span class="app-sidebar__emoji" aria-hidden="true">{{ menu_icons.get(path, "•") }}</span>
-        <span>{{ label }}</span>
+    {% set logout_entry = namespace(rendered=false) %}
+    {% if request.state.e_configuration_authenticated is defined %}
+      <a class="app-sidebar__link" href="/welcome">
+        <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
+        <span>歡迎頁</span>
       </a>
-    {% endfor %}
+      {% for item in request.state.e_configuration_menu %}
+        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code == "sys.accounts" %}
+          {% include "partials/sidebar_logout.html" %}
+          {% set logout_entry.rendered = true %}
+        {% endif %}
+      {% endfor %}
+    {% elif request.state.e_welcome_authenticated is defined %}
+      <a class="app-sidebar__link app-sidebar__link--active" href="/welcome">
+        <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
+        <span>歡迎頁</span>
+      </a>
+      {% for item in request.state.e_welcome_menu %}
+        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code == "sys.accounts" %}
+          {% include "partials/sidebar_logout.html" %}
+          {% set logout_entry.rendered = true %}
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      {% set navigation = [("歡迎頁", "/welcome"), ("帳號管理", "/accounts"), ("部門管理", "/department"), ("功能管理", "/functions")] if request.state.e_local_setup is defined and request.state.e_local_setup else MENU_ITEMS %}
+      {% for label, path in navigation %}
+        {% if path == "/invoices" %}
+          <div class="app-sidebar__caption">發票與知識庫作業</div>
+        {% elif path == "/accounts" %}
+          <div class="app-sidebar__caption">系統與權限設定</div>
+        {% endif %}
+        <a href="{{ path }}"
+           class="app-sidebar__link {% if request.url.path == path or (path != '/department' and request.url.path.startswith(path + '/')) %}app-sidebar__link--active{% endif %}">
+          <span class="app-sidebar__emoji" aria-hidden="true">{{ menu_icons.get(path, "•") }}</span>
+          <span>{{ label }}</span>
+        </a>
+        {% if path == "/accounts" %}
+          {% include "partials/sidebar_logout.html" %}
+          {% set logout_entry.rendered = true %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
   </nav>
 </aside>

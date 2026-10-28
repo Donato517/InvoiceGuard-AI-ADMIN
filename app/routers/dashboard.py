@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.deps import require_admin
 from app.core.templating import templates
+from app.routers.invoices import _INVOICE_STORE
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(require_admin)])
 
@@ -21,6 +22,24 @@ def index() -> RedirectResponse:
 
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request) -> HTMLResponse:
-    """儀表板：今日上傳數、待複核數、高風險發票數、最近排程狀態。"""
-    # TODO(JerryChien): 新增 dashboard_service.get_summary(db) 提供統計數字
-    return templates.TemplateResponse(request, "pages/dashboard/index.html")
+    """儀表板：今日上傳數、待複核數、高風險發票數、最近待處理發票。"""
+    pending = [i for i in _INVOICE_STORE if not i["is_completed"]]
+    completed = [i for i in _INVOICE_STORE if i["is_completed"]]
+    flagged = [i for i in _INVOICE_STORE if i["status"] == "flagged"]
+
+    summary = {
+        "today_uploaded": len(_INVOICE_STORE),
+        "pending_review": len(pending),
+        "high_risk": len(flagged),
+        "completed": len(completed),
+    }
+
+    return templates.TemplateResponse(
+        request,
+        "pages/dashboard/index.html",
+        {
+            "summary": summary,
+            "pending_invoices": pending,
+            "completed_invoices": completed,
+        },
+    )

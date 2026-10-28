@@ -1,0 +1,15 @@
+{#
+  @template pages/invoices/_flow_step_import.html
+  @description 步驟 7：匯入國稅局軟體（HTML 原型 flowStep 6）。
+  @route POST /invoices/{invoice_id}/import-confirm
+  @context invoice: dict  invoice.import_confirmed_at 為人工確認時間，未確認為 None
+#}
+{# 原型的「模擬匯入」不搬：系統不連接國稅局軟體，改為由財務人工匯入後「確認已匯入」，留下確認時間 #}
+<p class="alert alert--info">請將申報檔手動匯入國稅局軟體，完成後在此確認。</p>
+{% if invoice.import_confirmed_at %}
+  <p class="alert alert--success">✓ 已確認匯入（{{ invoice.import_confirmed_at | taipei_datetime }}）</p>
+{% elif not invoice.is_completed %}
+  <form method="post" action="/invoices/{{ invoice.id }}/import-confirm">
+    <button type="submit" class="btn btn--primary">我已完成匯入</button>
+  </form>
+{% endif %}

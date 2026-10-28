@@ -1,13 +1,102 @@
 {#
   @template pages/invoices/detail.html
-  @description 發票審核詳情：原始檔、辨識結果、AI 判斷理由，並提供核准 / 駁回。
+  @description 發票審核詳情：發票基本資料、金額、會計欄位與直接審核操作。
   @route GET /invoices/{invoice_id}（需管理者登入）
-  @context invoice_id: int 發票 ID
+  @context invoice_id: int   發票 ID
+  @context invoice: dict     發票詳細資料
 #}
 {% extends "layouts/admin.html" %}
-{% block title %}發票審核詳情{% endblock %}
+{% block title %}發票審核詳情 — {{ invoice.invoice_number }}{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
 {% block content %}
-  <p>發票 #{{ invoice_id }}</p>
-  {# TODO(JerryChien): 核准 / 駁回使用 POST 表單送到 /invoices/{invoice_id}/review #}
-  <p class="empty-state">內容建置中</p>
+  <div class="toolbar">
+    <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票審核列表</a>
+    <a href="/invoices/{{ invoice.id }}/flow?step=4"
+       class="btn btn--primary btn--small">前往作業流程（步驟 4～9）→</a>
+  </div>
+  <section class="card">
+    <div class="toolbar">
+      <h2 class="card__title">{{ invoice.invoice_number }} 統一發票</h2>
+      <span class="badge badge--{{ invoice.status }}">{{ INVOICE_STATUS_LABEL.get(invoice.status, invoice.status) }}</span>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label>開立日期</label>
+        <input value="{{ invoice.invoice_date }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>買受人統一編號</label>
+        <input value="{{ invoice.buyer_tax_id }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>銷售人統一編號</label>
+        <input value="{{ invoice.seller_tax_id }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>品名項目</label>
+        <input value="{{ invoice.item_description }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>銷售額（未稅）</label>
+        <input value="{{ invoice.net_amount | currency }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>營業稅額</label>
+        <input value="{{ invoice.tax_amount | currency }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>含稅總計</label>
+        <input value="{{ invoice.total_amount | currency }}" readonly>
+      </div>
+      <div class="form-field">
+        <label>課稅別</label>
+        <input value="{{ invoice.tax_type }}" readonly>
+      </div>
+    </div>
+  </section>
+  <section class="card">
+    <h2 class="card__title">財務審核設定</h2>
+    <form method="post" action="/invoices/{{ invoice.id }}/review" class="form">
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="purpose">採購用途／備註</label>
+          <input id="purpose"
+                 name="purpose"
+                 value="{{ invoice.purpose or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="form-field">
+          <label for="account_code">會計科目</label>
+          <input id="account_code"
+                 name="account_code"
+                 value="{{ invoice.account_code or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="form-field">
+          <label for="deduction_code">扣抵代號</label>
+          <input id="deduction_code"
+                 name="deduction_code"
+                 value="{{ invoice.deduction_code or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="form-field">
+          <label for="tax_type">課稅別</label>
+          <input id="tax_type"
+                 name="tax_type"
+                 value="{{ invoice.tax_type or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+      </div>
+      {% if not invoice.is_completed %}
+        <div class="toolbar__actions">
+          <button type="submit" name="decision" value="passed" class="btn btn--success">確認核准</button>
+          <button type="submit" name="decision" value="rejected" class="btn btn--danger">退回修正</button>
+        </div>
+      {% else %}
+        <p class="alert alert--success">此發票作業已完成（唯讀模式）。</p>
+      {% endif %}
+    </form>
+  </section>
 {% endblock content %}

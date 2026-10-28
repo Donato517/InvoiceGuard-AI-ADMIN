@@ -1,0 +1,33 @@
+{#
+  @template pages/invoices/_flow_step_filing.html
+  @description 步驟 6：產生申報檔（HTML 原型 flowStep 5）。
+  @route POST /invoices/{invoice_id}/filing（由 service 產生並存到 Storage）
+  @context invoice: dict          發票資料（含 tax_amount、net_amount）
+  @context filing: dict | None    已產生的申報檔 {file_name, preview_text}，尚未產生為 None
+#}
+{# TODO: 原型的申報檔只是「DEMO ONLY」文字；正式「格式 21」需依國稅局規格實作後才能開放 #}
+<p class="alert alert--warning">目前為展示格式，尚非可正式申報的格式 21 檔案。</p>
+<table class="table">
+  <thead>
+    <tr>
+      <th scope="col">統編</th>
+      <th scope="col">發票號碼</th>
+      <th scope="col">未稅金額</th>
+      <th scope="col">稅額</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>{{ invoice.buyer_tax_id }}</td>
+      <td>{{ invoice.invoice_number }}</td>
+      <td>{{ invoice.net_amount | currency }}</td>
+      <td>{{ invoice.tax_amount | currency }}</td>
+    </tr>
+  </tbody>
+</table>
+{% if not invoice.is_completed %}
+  <form method="post" action="/invoices/{{ invoice.id }}/filing">
+    <button type="submit" class="btn btn--primary">產生申報檔</button>
+  </form>
+{% endif %}
+{% if filing %}<pre>{{ filing.preview_text }}</pre>{% endif %}

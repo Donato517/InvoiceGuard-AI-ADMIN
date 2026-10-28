@@ -37,8 +37,20 @@
 
   /* ---- 外觀 ---- */
   --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 5%);
   --content-max-width: 1200px;
+
+  /* ---- 軟色調與背景色（標籤、提示、步驟列）---- */
+  --color-primary-soft: #eff6ff;
+  --color-neutral-soft: #f3f4f6;
+  --color-neutral-soft-text: #374151;
+  --color-success-soft: #dcfce7;
+  --color-success-soft-text: #166534;
+  --color-warning-soft: #fef3c7;
+  --color-warning-soft-text: #92400e;
+  --color-danger-soft: #fee2e2;
+  --color-danger-soft-text: #991b1b;
 
   /* ---- 後台版面 ---- */
   --header-height: 64px;

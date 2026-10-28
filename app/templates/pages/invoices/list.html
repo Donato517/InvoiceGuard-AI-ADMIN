@@ -1,11 +1,107 @@
 {#
   @template pages/invoices/list.html
-  @description 發票審核列表：依狀態 / 風險分數篩選，預設顯示待人工複核（flagged）的發票。
+  @description 發票審核列表：依狀態與關鍵字篩選，顯示發票進度與前往作業流程（步驟 4～9）。
   @route GET /invoices（需管理者登入）
+  @context invoices: list[dict] 發票資料清單
+  @context status: str | None   篩選狀態
+  @context q: str               搜尋字串
+  @context counts: dict         統計數量 {total, pending, passed, flagged}
 #}
 {% extends "layouts/admin.html" %}
 {% block title %}發票審核{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
 {% block content %}
-  {# TODO(JerryChien): 篩選列 + 表格，寫法參考 pages/system/job_runs.html #}
-  <p class="empty-state">內容建置中</p>
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-card__label">發票總數</div>
+      <div class="stat-card__value">{{ counts.total }}</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card__label">待處理發票</div>
+      <div class="stat-card__value">{{ counts.pending }}</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card__label">已通過審核</div>
+      <div class="stat-card__value">{{ counts.passed }}</div>
+    </div>
+    <div class="stat-card stat-card--danger">
+      <div class="stat-card__label">有風險 / 待複核</div>
+      <div class="stat-card__value">{{ counts.flagged }}</div>
+    </div>
+  </div>
+  <section class="card">
+    <div class="toolbar">
+      <h2 class="card__title">發票清單</h2>
+      <form class="toolbar__actions"
+            method="get"
+            action="/invoices"
+            hx-get="/invoices"
+            hx-trigger="change, input delay:300ms from:#inv-search"
+            hx-target="#invoice-table-wrap"
+            hx-select="#invoice-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true">
+        <input id="inv-search"
+               name="q"
+               type="search"
+               value="{{ q }}"
+               placeholder="搜尋發票號碼或品名…"
+               aria-label="搜尋發票">
+        <select name="status" aria-label="發票狀態篩選">
+          <option value="">全部狀態</option>
+          {% for st, label in INVOICE_STATUS_LABEL.items() %}
+            <option value="{{ st }}" {% if st == status %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <noscript>
+          <button type="submit" class="btn">篩選</button>
+        </noscript>
+      </form>
+    </div>
+    <div id="invoice-table-wrap">
+      {% if invoices %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">發票號碼</th>
+              <th scope="col">開立日期</th>
+              <th scope="col">品名項目</th>
+              <th scope="col">未稅金額</th>
+              <th scope="col">稅額</th>
+              <th scope="col">狀態</th>
+              <th scope="col">進度</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+              <tr>
+                <td>
+                  <a href="/invoices/{{ inv.id }}">{{ inv.invoice_number }}</a>
+                </td>
+                <td>{{ inv.invoice_date }}</td>
+                <td>{{ inv.item_description }}</td>
+                <td>{{ inv.net_amount | currency }}</td>
+                <td>{{ inv.tax_amount | currency }}</td>
+                <td>
+                  <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                </td>
+                <td>
+                  <span class="muted small-text">{{ "已完成" if inv.is_completed else "步驟 " ~ inv.stage }}</span>
+                </td>
+                <td>
+                  <a href="/invoices/{{ inv.id }}/flow?step={{ 9 if inv.is_completed else 4 }}"
+                     class="btn btn--secondary btn--small">{{ "檢視流程" if inv.is_completed else "審核流程 →" }}</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty-state">目前沒有符合條件的發票</p>
+      {% endif %}
+    </div>
+  </section>
 {% endblock content %}

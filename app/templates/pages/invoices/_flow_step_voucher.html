@@ -1,0 +1,34 @@
+{#
+  @template pages/invoices/_flow_step_voucher.html
+  @description 步驟 8：自動產生會計傳票（HTML 原型 flowStep 7）。分錄由 service 計算，樣板只顯示。
+  @context voucher: dict  {lines: [{account, debit, credit}], total_debit, total_credit, balanced}
+#}
+<p class="alert alert--info">簡化分錄範例，正式分錄需依審核結果產生。</p>
+<table class="table">
+  <thead>
+    <tr>
+      <th scope="col">科目</th>
+      <th scope="col">借方</th>
+      <th scope="col">貸方</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in voucher.lines %}
+      <tr>
+        <td>{{ line.account }}</td>
+        <td>{{ line.debit | currency }}</td>
+        <td>{{ line.credit | currency }}</td>
+      </tr>
+    {% endfor %}
+    <tr>
+      <th scope="row">合計</th>
+      <th>{{ voucher.total_debit | currency }}</th>
+      <th>{{ voucher.total_credit | currency }}</th>
+    </tr>
+  </tbody>
+</table>
+{% if voucher.balanced %}
+  <p class="check-ok">✓ 借貸金額平衡</p>
+{% else %}
+  <p class="check-warn">⚠ 借貸金額不平衡，請檢查會計科目</p>
+{% endif %}

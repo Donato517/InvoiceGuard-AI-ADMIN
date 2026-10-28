@@ -11,6 +11,7 @@
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from pydantic import SecretStr
 
 from app.core.config import BASE_DIR, settings
 from app.core.exceptions import register_exception_handlers
@@ -27,12 +28,21 @@ from app.routers import (
     e_function_settings,
     health,
     invoices,
+    knowledge,
     robots,
     system,
     users,
 )
 
 settings.require_environment()
+if (
+    settings.APP_ENV == "local"
+    and not settings.is_vercel
+    and not settings.SESSION_SECRET_KEY.get_secret_value()
+):
+    settings.SESSION_SECRET_KEY = SecretStr(
+        "invoiceguard-local-dev-admin-session-secret-key-32chars"
+    )
 setup_logging()
 
 app = FastAPI(
@@ -57,6 +67,7 @@ app.include_router(robots.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(invoices.router)
+app.include_router(knowledge.router)
 app.include_router(users.router)
 app.include_router(accounts.router)
 app.include_router(system.router)

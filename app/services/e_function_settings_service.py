@@ -8,9 +8,17 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.constants import WELCOME_CODE
 from app.db.repositories import e_function_settings_repository as repository
 from app.db.repositories.e_repository import safe_store_error
-from app.schemas.e_admin import Action, ConflictError, EError, FeatureInput, UnavailableError
+from app.schemas.e_admin import (
+    Action,
+    ConflictError,
+    EError,
+    FeatureInput,
+    UnavailableError,
+    WelcomeReadOnlyError,
+)
 from app.schemas.e_function_settings import (
     DepartmentFunctionSettings,
     FunctionListPage,
@@ -19,6 +27,7 @@ from app.schemas.e_function_settings import (
     MatrixChange,
 )
 from app.services.e_adapter import call_adapter
+from app.services.e_configuration_security import authorize_transaction, finish_transaction
 from app.services.e_registry import supported_actions
 
 ACTION_LABELS = {
@@ -65,18 +74,15 @@ def get_function(function_id: UUID) -> FunctionSetting:
 
 
 def change_function_status(function_id: UUID, is_active: bool, expected_revision: str) -> None:
-    """獨立停用／啟用，保留名稱、平台及授權關聯，過期版本不可覆寫。"""
+    """獨立設定目錄停用／啟用，不以 registry 冒充目錄狀態；保留 CAS 與關聯。"""
 
     def operation(db: Session) -> None:
         repository.prepare_write(db)
         current = repository.get_function(db, function_id)
         if content_revision(current) != expected_revision:
             raise ConflictError
-        if is_active and (
-            not supported_actions(current.function_code)
-            or current.app_scope not in {"admin", "both"}
-        ):
-            raise EError
+        if current.function_code == WELCOME_CODE:
+            raise WelcomeReadOnlyError
         repository.update_function(
             db,
             function_id,
@@ -94,11 +100,9 @@ def change_function_status(function_id: UUID, is_active: bool, expected_revision
 def save_function(
     data: FeatureInput, function_id: UUID | None = None, expected_revision: str | None = None
 ) -> None:
-    """新增／修改固定欄位；未登錄能力只允許先存停用草稿。"""
-    if data.is_active and (
-        not supported_actions(data.function_code) or data.app_scope not in {"admin", "both"}
-    ):
-        raise EError
+    """維護目錄資料與啟用狀態；程式 registry 與正式權限仍另外驗證。"""
+    if data.function_code == WELCOME_CODE:
+        raise WelcomeReadOnlyError
 
     def operation(db: Session) -> None:
         repository.prepare_write(db)
@@ -257,8 +261,10 @@ def save_matrix(
 def _run[T](operation: Callable[[Session], T], *, write: bool = False) -> T:
     db = repository.open_session()
     try:
+        security_before = authorize_transaction(db)
         result = operation(db)
         if write:
+            finish_transaction(db, security_before)
             db.commit()
         else:
             call_adapter(db.rollback)

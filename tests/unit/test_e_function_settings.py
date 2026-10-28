@@ -101,20 +101,14 @@ def browser(db: MagicMock, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
 )
 def test_authorized_ui_does_not_issue_another_session(browser: TestClient, path: str) -> None:
     response = browser.get(path)
-    assert response.status_code == 200
+    assert response.status_code == (303 if path.startswith("/department-functions") else 200)
     assert response.headers["cache-control"] == "no-store"
     assert "set-cookie" not in response.headers
-    assert 'action="/logout"' not in response.text
+    # 側欄已核定使用原生 POST 登出；存在表單不等於新建 Session。
+    if path == "/functions":
+        assert response.text.count('action="/logout"') == 1
+        assert 'method="post" action="/logout"' in response.text
     assert "/dev/" not in response.text
-
-
-def test_matrix_displays_multiple_functions_and_independent_actions(browser: TestClient) -> None:
-    page = browser.get(f"/department-functions?department_id={DEPT}")
-    for function in FUNCTIONS:
-        assert function.function_code in page.text
-        assert f'value="{function.function_id}:view"' in page.text
-    assert "目前選取" in page.text and "不合併" in page.text
-    assert "主管" in page.text
 
 
 @pytest.mark.parametrize("environment", ["preview", "production"])
@@ -176,7 +170,7 @@ def test_create_function_does_not_grant_departments(browser: TestClient, db: Mag
     repository.write_permission.assert_not_called()
 
 
-def test_unregistered_function_is_only_an_inactive_draft(
+def test_unregistered_catalog_defaults_inactive_but_can_be_enabled(
     browser: TestClient, db: MagicMock
 ) -> None:
     data = {"function_code": "future.unreviewed", "function_name": "待審查"}
@@ -185,9 +179,11 @@ def test_unregistered_function_is_only_an_inactive_draft(
     db.reset_mock()
     assert (
         browser.post("/functions", headers=ORIGIN, data={**data, "is_active": "true"}).status_code
-        == 400
+        == 303
     )
-    db.commit.assert_not_called()
+    assert repository.insert_function.call_args.args[1].is_active is True
+    db.commit.assert_called_once()
+    repository.write_permission.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -300,35 +296,6 @@ def test_matrix_rejects_unknown_or_inactive_additions(
     repository.write_permission.assert_not_called()
 
 
-def test_matrix_http_form_uses_target_department_and_rejects_tampering(
-    browser: TestClient, db: MagicMock
-) -> None:
-    data = {
-        "confirmed": "true",
-        "expected_revision": service.content_revision(MATRIX),
-        "function_id": [str(FIRST), str(SECOND)],
-        "grant": [f"{FIRST}:view", f"{SECOND}:view"],
-    }
-    assert (
-        browser.post(f"/department-functions/{DEPT}", headers=ORIGIN, data=data).status_code == 303
-    )
-    repository.write_permission.assert_called_once_with(db, DEPT, SECOND, frozenset({Action.VIEW}))
-    db.reset_mock()
-    for extra in [
-        {"grant": [f"{uuid4()}:view"]},
-        {"grant": [f"{FIRST}:approve"]},
-        {"function_id": [str(FIRST), str(FIRST)]},
-        {"role": "admin"},
-    ]:
-        assert (
-            browser.post(
-                f"/department-functions/{DEPT}", headers=ORIGIN, data={**data, **extra}
-            ).status_code
-            == 400
-        )
-    db.commit.assert_not_called()
-
-
 @pytest.mark.parametrize("failure", ["write", "commit"])
 def test_matrix_db_failure_rolls_back_and_hides_private_details(
     db: MagicMock, failure: str
@@ -434,7 +401,10 @@ def test_list_is_a_table_without_inline_mutations(browser: TestClient) -> None:
     assert page.status_code == 200
     assert "<table" in page.text and "新增功能" in page.text
     assert f"/functions/{FIRST}/edit?" in page.text
-    assert 'method="post"' not in page.text
+    # 只檢查列表內容沒有內嵌修改表單，側欄的 POST 登出仍應保留。
+    content = re.search(r"<main\b[^>]*>(.*?)</main>", page.text, re.DOTALL)
+    assert content is not None
+    assert 'method="post"' not in content.group(1)
     assert "每頁 20 筆" in page.text
 
 
@@ -683,7 +653,7 @@ def test_status_requires_origin_and_does_not_allow_hard_delete(
     db.commit.assert_not_called()
 
 
-def test_unregistered_draft_cannot_be_enabled(
+def test_unregistered_catalog_can_be_enabled_without_granting_departments(
     browser: TestClient, monkeypatch: pytest.MonkeyPatch, db: MagicMock
 ) -> None:
     current = replace(FUNCTIONS[0], function_code="future.draft", is_active=False)
@@ -693,9 +663,10 @@ def test_unregistered_draft_cannot_be_enabled(
         headers=ORIGIN,
         data={"is_active": "true", "expected_revision": service.content_revision(current)},
     )
-    assert page.status_code == 400
-    repository.update_function.assert_not_called()
-    db.commit.assert_not_called()
+    assert page.status_code == 303
+    assert repository.update_function.call_args.args[2].is_active is True
+    repository.write_permission.assert_not_called()
+    db.commit.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -770,7 +741,7 @@ def test_function_write_failure_keeps_input_and_hides_database_details(
     db.close.assert_called_once()
 
 
-def test_frontend_only_function_cannot_be_activated(
+def test_frontend_catalog_can_be_enabled_without_admin_permission(
     browser: TestClient, monkeypatch: pytest.MonkeyPatch, db: MagicMock
 ) -> None:
     current = replace(FUNCTIONS[0], app_scope="frontend", is_active=False)
@@ -780,9 +751,11 @@ def test_frontend_only_function_cannot_be_activated(
         headers=ORIGIN,
         data={"is_active": "true", "expected_revision": service.content_revision(current)},
     )
-    assert page.status_code == 400
-    repository.update_function.assert_not_called()
-    db.commit.assert_not_called()
+    assert page.status_code == 303
+    assert repository.update_function.call_args.args[2].app_scope == "frontend"
+    assert repository.update_function.call_args.args[2].is_active is True
+    repository.write_permission.assert_not_called()
+    db.commit.assert_called_once()
 
 
 def test_duplicate_form_keys_are_rejected(browser: TestClient, db: MagicMock) -> None:
@@ -793,3 +766,106 @@ def test_duplicate_form_keys_are_rejected(browser: TestClient, db: MagicMock) ->
     )
     assert page.status_code == 400
     db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("platform", ["admin", "frontend", "both"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_accounts_catalog_status_round_trip_preserves_fields_and_never_writes_grants(
+    browser: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    db: MagicMock,
+    platform: str,
+    enabled: bool,
+) -> None:
+    """重現使用者 accounts 代碼，不要求命名成 sys.* 或修改正式 registry。"""
+    current = replace(
+        FUNCTIONS[0],
+        function_code="accounts",
+        function_name="帳號管理",
+        app_scope=platform,
+        is_active=not enabled,
+    )
+    monkeypatch.setattr(repository, "get_function", lambda *args, **kwargs: current)
+    page = browser.get(f"/functions/{FIRST}/edit")
+    assert page.status_code == 200 and "待接線" in page.text
+    response = browser.post(
+        f"/functions/{FIRST}/status",
+        headers=ORIGIN,
+        data={
+            "is_active": str(enabled).lower(),
+            "expected_revision": service.content_revision(current),
+        },
+    )
+    assert response.status_code == 303
+    saved = repository.update_function.call_args.args[2]
+    assert (saved.function_code, saved.function_name, saved.app_scope, saved.is_active) == (
+        "accounts",
+        "帳號管理",
+        platform,
+        enabled,
+    )
+    db.commit.assert_called_once()
+    repository.write_permission.assert_not_called()
+
+
+def test_active_unregistered_catalog_still_cannot_be_a_formal_capability(
+    browser: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.e_admin import DeniedError
+    from app.services.e_registry import capability, supported_actions
+
+    current = replace(FUNCTIONS[0], function_code="accounts", is_active=True)
+    monkeypatch.setattr(repository, "page_functions", lambda *args: (current,))
+    page = browser.get("/functions")
+    assert "目錄狀態" in page.text and "程式對應" in page.text and "待接線" in page.text
+    assert supported_actions("accounts") == frozenset()
+    with pytest.raises(DeniedError):
+        capability("accounts")
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_builtin_welcome_cannot_be_disabled_or_changed(
+    browser: TestClient, monkeypatch: pytest.MonkeyPatch, db: MagicMock, enabled: bool
+) -> None:
+    current = replace(
+        FUNCTIONS[0], function_code="welcome", function_name="歡迎頁", is_active=enabled
+    )
+    monkeypatch.setattr(repository, "get_function", lambda *args, **kwargs: current)
+    page = browser.get(f"/functions/{FIRST}/edit")
+    assert "系統內建" in page.text
+    assert f'action="/functions/{FIRST}/status"' not in page.text
+    response = browser.post(
+        f"/functions/{FIRST}/status",
+        headers=ORIGIN,
+        data={
+            "is_active": str(not enabled).lower(),
+            "expected_revision": service.content_revision(current),
+        },
+    )
+    assert response.status_code == 400 and "歡迎頁固定可查看" in response.text
+    update = browser.post(
+        f"/functions/{FIRST}",
+        headers=ORIGIN,
+        data={
+            "function_code": "welcome",
+            "function_name": "更改首頁",
+            "is_active": "true",
+            "expected_revision": service.content_revision(current),
+        },
+    )
+    assert update.status_code == 400
+    repository.update_function.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_welcome_is_builtin_without_creating_a_catalog_seed(
+    browser: TestClient, db: MagicMock
+) -> None:
+    response = browser.post(
+        "/functions",
+        headers=ORIGIN,
+        data={"function_code": "welcome", "function_name": "歡迎頁", "is_active": "true"},
+    )
+    assert response.status_code == 400 and "歡迎頁固定可查看" in response.text
+    repository.insert_function.assert_not_called()

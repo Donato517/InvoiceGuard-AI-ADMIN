@@ -1,8 +1,10 @@
-"""模組名稱：app.routers.e_admin；功能說明：E 正式管理畫面，無 /dev 或本機繞過。
+"""模組名稱：app.routers.e_admin；功能說明：E 正式管理畫面及核定的本機初始化配置例外。
 
 路由：/workspace、/system/departments、/system/features、/account、/auth/password/*。
 """
 
+from collections.abc import AsyncIterator
+from ipaddress import ip_address
 from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
@@ -12,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import SecretStr, ValidationError
 
 from app.constants import SESSION_COOKIE_NAME
+from app.core.config import settings
 from app.core.security import clear_session_cookie
 from app.core.templating import templates
 from app.schemas.e_admin import (
@@ -28,11 +31,42 @@ from app.schemas.e_admin import (
     Target,
     UnavailableError,
 )
+from app.services.admin_login_service import DepartmentLoginAdapter
 from app.services.e_admin_service import DEPARTMENTS, FEATURES, GRANTS, EModule, get_e_module
+from app.services.e_configuration_security import (
+    ConfigurationContext,
+    enter_configuration,
+    leave_configuration,
+)
 from app.services.e_registry import supported_actions
 
 router = APIRouter(tags=["06_E"])
 Module = Annotated[EModule, Depends(get_e_module)]
+
+# 2026-10-28 依使用者要求完成登入：配置入口預設驗網站 Session 與目前部門勾選。
+# 不是環境變數／HTTP 參數；雲端及非 loopback 來源永遠不適用。
+LOCAL_SETUP_ENABLED = False
+
+
+def local_setup_available(request: Request) -> bool:
+    """核定的本機配置例外，不建立身分，也不適用正式工作台或其他路由。"""
+    if (
+        not LOCAL_SETUP_ENABLED
+        or settings.APP_ENV != "local"
+        or settings.is_vercel
+        or settings.module_backend != "remote"
+    ):
+        return False
+    try:
+        peer = request.client is not None and ip_address(request.client.host).is_loopback
+    except ValueError:
+        peer = False
+    return bool(peer) and request.url.hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "invoiceguard-ai-admin.localhost",
+    }
 
 
 def require_pending_admin_integration() -> None:
@@ -56,22 +90,38 @@ def current_identity(request: Request, module: Module) -> Identity:
 CurrentIdentity = Annotated[Identity, Depends(current_identity)]
 
 
-def require_configuration_access(request: Request, module: Module) -> None:
-    """取消四個配置入口的匿名例外，缺少完整資料／交易授權接線仍拒絕。
-
-    既有配置服務尚未接 SQL scope、G 可授上限與同交易 journal；通過頁面驗權
-    不足以安全放行資料操作。此相依不可作為已完成正式 CRUD 的成功入口。
-    """
+async def require_configuration_access(request: Request, module: Module) -> AsyncIterator[None]:
+    """驗證網站 Session 及目前部門勾選，交給既有配置服務於交易內再驗一次。"""
     if request.method != "GET":
         require_e_origin(request)
+    path = request.url.path.split("/")[1]
+    if path in {
+        "accounts",
+        "department",
+        "functions",
+        "department-functions",
+        "welcome",
+    } and local_setup_available(request):
+        request.state.e_local_setup = True
+        yield
+        return
     identity = current_identity(request, module)
     route_name = request.scope["route"].name
     requirements = {
+        "account_list": ("sys.accounts", Action.VIEW),
+        "account_new": ("sys.accounts", Action.CREATE),
+        "account_create": ("sys.accounts", Action.CREATE),
+        "account_edit": ("sys.accounts", Action.VIEW),
+        "account_update": ("sys.accounts", Action.EDIT),
+        "account_disable": ("sys.accounts", Action.DELETE),
+        "account_departments_update": ("sys.accounts", Action.EDIT),
         "department_list": (DEPARTMENTS, Action.VIEW),
         "department_create": (DEPARTMENTS, Action.CREATE),
         "department_rename": (DEPARTMENTS, Action.EDIT),
         "department_status": (DEPARTMENTS, Action.EDIT),
         "department_change_code": (DEPARTMENTS, Action.EDIT),
+        "department_edit": (DEPARTMENTS, Action.VIEW),
+        "department_save_detail": (DEPARTMENTS, Action.EDIT),
         "function_list": (FEATURES, Action.VIEW),
         "function_new": (FEATURES, Action.CREATE),
         "function_edit": (FEATURES, Action.VIEW),
@@ -85,8 +135,6 @@ def require_configuration_access(request: Request, module: Module) -> None:
     }
     if route_name not in requirements:
         # 帳號組的正式能力代碼與 scope 未核定，不借用部門／功能管理許可。
-        if not identity.system_management:
-            raise DeniedError
         raise UnavailableError
     code, action = requirements[route_name]
     target = Target(global_resource=True)
@@ -98,11 +146,31 @@ def require_configuration_access(request: Request, module: Module) -> None:
             target = Target(UUID(str(department_id)))
         except ValueError:
             raise EError from None
-    # 這些 SSR 畫面包含既有資料，寫入／新增預覽也需明確查看許可。
-    module.check(identity, code, Action.VIEW, target)
-    if action != Action.VIEW:
-        module.check(identity, code, action, target)
-    require_pending_admin_integration()
+    # 依該路由的操作獨立驗證；新增／修改不再額外要求先勾選查看。
+    module.check(identity, code, action, target)
+    if route_name == "department_edit":
+        module.check(identity, GRANTS, Action.VIEW, target)
+    if route_name == "department_save_detail":
+        module.check(identity, GRANTS, Action.EDIT, target)
+    if not isinstance(module.access, DepartmentLoginAdapter):
+        raise UnavailableError
+    required = {(code, action)}
+    if route_name == "department_edit":
+        required.add((GRANTS, Action.VIEW))
+    if route_name == "department_save_detail":
+        required.add((GRANTS, Action.EDIT))
+    # 現有配置列表是全公司資料，僅明確 company scope 能開放；部分範圍不可回退成全讀。
+    for required_code, required_action in required:
+        module.check(identity, required_code, required_action, Target(global_resource=True))
+    request.state.e_configuration_authenticated = True
+    request.state.e_configuration_menu = module.sidebar_menu(identity)
+    token = enter_configuration(
+        ConfigurationContext(module.access, identity, tuple(sorted(required)))
+    )
+    try:
+        yield
+    finally:
+        leave_configuration(token)
 
 
 def require_e_origin(request: Request) -> None:
@@ -154,7 +222,7 @@ def _render(
         "pages/e_admin/" + template,
         {
             "identity": identity,
-            "e_menu": tuple(item for item in request.state.e_access.functions if item.can_open),
+            "e_menu": module.sidebar_menu(identity),
             "effective_access": request.state.e_access,
             **(values or {}),
         },

@@ -13,13 +13,18 @@
         {% if request.state.admin is defined %}
           <span class="app-header__user">{{ request.state.admin.display_name }}</span>
         {% endif %}
-        {% if request.state.admin is defined %}
+        {% if request.state.admin is defined or request.state.e_welcome_authenticated is defined or request.state.e_configuration_authenticated is defined %}
           <form method="post" action="/logout" data-confirm="確定要登出嗎？">
             <button type="submit" class="btn">登出</button>
           </form>
         {% endif %}
       </header>
       <main class="admin-layout__content">
+        {% block setup_notice %}
+        {% if request.state.e_local_setup is defined and request.state.e_local_setup %}
+          <p class="alert alert--danger" role="status">本機初始化設定：暫免登入及職務權限檢查。儲存會修改 START 連接的資料庫；目前為團隊正式 DB。這不是已完成正式登入或主管授權的狀態。</p>
+        {% endif %}
+        {% endblock setup_notice %}
         {% block content %}{% endblock %}
       </main>
     </div>

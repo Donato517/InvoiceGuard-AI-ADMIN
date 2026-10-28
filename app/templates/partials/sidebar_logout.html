@@ -1,0 +1,7 @@
+{#
+  @template partials/sidebar_logout.html
+  @description 側欄登出選項；沿用 POST /logout 清除登入 Cookie 並回到 /login。
+#}
+<form class="app-sidebar__logout" method="post" action="/logout">
+  <button class="app-sidebar__link app-sidebar__logout-button" type="submit">登出</button>
+</form>

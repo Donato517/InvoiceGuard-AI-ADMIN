@@ -9,6 +9,7 @@
 {% extends "layouts/admin.html" %}
 {% block title %}{{ '功能內容' if function_id else '新增功能' }}{% endblock %}
 {% block content %}
+  {% set builtin = values.function_code == builtin_welcome_code %}
   <p><a class="btn" href="{{ back_url }}">返回列表</a></p>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   {% if blocked %}
@@ -41,22 +42,25 @@
              name="function_name"
              value="{{ values.function_name }}"
              maxlength="200"
+             {% if builtin %}readonly{% endif %}
              required>
     </div>
     <div class="form-field">
       <label for="app_scope">適用平台</label>
+      {% if builtin %}<p>管理站（內建首頁）</p>{% else %}
       <select id="app_scope" name="app_scope" required>
         {% for value, label in [('admin', '管理站'), ('frontend', '前台'), ('both', '前台與管理站')] %}
           <option value="{{ value }}"
                   {% if values.app_scope == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
+      {% endif %}
     </div>
     {% if function_id %}
       <input type="hidden"
              name="is_active"
              value="{{ 'true' if values.is_active else 'false' }}">
-      <p>目前狀態：<span class="badge">{{ '啟用' if values.is_active else '停用' }}</span></p>
+      <p>目前狀態：<span class="badge">{{ '系統內建唯讀' if builtin else '啟用' if values.is_active else '停用' }}</span></p>
     {% else %}
       <div class="form-field">
         <label><input type="checkbox"
@@ -65,21 +69,23 @@
        {% if values.is_active %}checked{% endif %}> 建立時啟用</label>
       </div>
     {% endif %}
-    <p>新功能預設停用。尚未登錄程式能力的代碼可儲存為停用草稿；建立功能不會自動授予部門權限。</p>
+    <p>新功能預設停用，可以自行啟用目錄項目；啟用不會自動建立頁面或授予部門權限。</p>
+    <p>程式對應：{% if builtin %}系統內建，所有部門固定可查看，不需手動授權。{% elif values.function_code in registered_codes %}已有能力登錄，正式驗權仍待整合。{% else %}待接線；可先啟用目錄並設定部門對應，實際操作仍須接入驗權。{% endif %}</p>
     <div class="filter-bar">
       <button class="btn btn--primary"
               type="submit"
-              {% if blocked %}disabled{% endif %}>{{ '儲存修改' if function_id else '新增功能' }}</button>
+              {% if blocked or builtin %}disabled{% endif %}>{{ '儲存修改' if function_id else '新增功能' }}</button>
       <a class="btn" href="{{ back_url }}">取消</a>
     </div>
   </form>
-  {% if function_id %}
+  {% if builtin %}<p>歡迎頁固定為登入後首頁，不提供停用、修改內容或刪除。</p>{% endif %}
+  {% if function_id and not builtin %}
     <hr>
     <h2>功能狀態</h2>
     <p>停用不會實體刪除功能或原有授權關聯。重新啟用後，保留的授權可能恢復生效，請先確認設定。</p>
     <form method="post"
           action="/functions/{{ function_id }}/status"
-          data-confirm="{{ '確定停用此功能？原有授權關聯會保留。' if values.is_active else '確定重新啟用？原有授權可能恢復生效。' }}">
+          data-confirm="{{ '確定停用此功能？原有授權關聯會保留。' if values.is_active else '確定重新啟用目錄項目？已接線服務中的原有授權可能恢復生效。' }}">
       {% include "pages/e_function_settings/_return_fields.html" %}
       <input type="hidden" name="expected_revision" value="{{ revision }}">
       <input type="hidden"

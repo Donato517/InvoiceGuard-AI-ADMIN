@@ -14,6 +14,11 @@ from app.db.repositories import user_account_repository as repository
 from app.schemas.account import AccountSummary
 from app.schemas.account_management import AccountDepartmentSettings
 from app.services import user_service
+from app.services.e_configuration_security import (
+    authorize_transaction,
+    configuration_active,
+    finish_transaction,
+)
 
 PAGE_SIZE = 20
 
@@ -67,6 +72,20 @@ def create_account(
             return account
 
         return _run(operation, write=True)
+    if configuration_active():
+        password_hash = hash_password(password)
+
+        def default_operation(db: Session) -> AccountSummary:
+            department_id = repository.ensure_default_department(db)
+            return repository.create_active(
+                db,
+                email=email,
+                password_hash=password_hash,
+                display_name=email.partition("@")[0],
+                department_id=department_id,
+            )
+
+        return _run(default_operation, write=True)
     return _run(lambda db: user_service.create_account(db, email=email, password=password))
 
 
@@ -208,8 +227,10 @@ def _run[T](operation: Callable[[Session], T], *, write: bool = False) -> T:
             "資料庫未設定或無法連線，請使用既有 START 啟動 ADMIN"
         ) from None
     try:
+        security_before = authorize_transaction(db)
         result = operation(db)
         if write:
+            finish_transaction(db, security_before)
             db.commit()
         return result
     except (repository.DuplicateEmailError, user_service.AccountInputError) as error:

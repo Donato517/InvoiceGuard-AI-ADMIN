@@ -46,7 +46,8 @@
             <th scope="col">功能代碼</th>
             <th scope="col">功能名稱</th>
             <th scope="col">適用平台</th>
-            <th scope="col">狀態</th>
+            <th scope="col">目錄狀態</th>
+            <th scope="col">程式對應</th>
             <th scope="col">操作</th>
           </tr>
         </thead>
@@ -56,7 +57,8 @@
               <td><code>{{ item.function_code }}</code></td>
               <td>{{ item.function_name }}</td>
               <td>{{ {'admin': '管理站', 'frontend': '前台', 'both': '前台與管理站'}.get(item.app_scope, '待確認') }}</td>
-              <td><span class="badge">{{ '啟用' if item.is_active else '停用' }}</span></td>
+              <td><span class="badge">{{ '內建唯讀' if item.function_code == builtin_welcome_code else '啟用' if item.is_active else '停用' }}</span></td>
+              <td>{{ '系統內建' if item.function_code == builtin_welcome_code else '已有能力登錄／驗權待整合' if item.function_code in registered_codes else '待接線' }}</td>
               <td><a class="btn" href="{{ edit_urls[item.function_id] }}">檢視／修改</a></td>
             </tr>
           {% endfor %}

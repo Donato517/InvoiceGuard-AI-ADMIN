@@ -1,11 +1,12 @@
 """模組名稱：app.services.e_admin_service；功能說明：E 部門、目錄、矩陣及本人流程。"""
 
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from pydantic import SecretStr
 
-from app.schemas.e_access import SelfAccess, SelfProfile
+from app.schemas.e_access import NoAdminFunctionsError, SelfAccess, SelfProfile, SidebarEntry
 from app.schemas.e_admin import (
     Action,
     ChangeEvent,
@@ -75,6 +76,18 @@ class EModule:
         if self.access is None:
             raise UnavailableError
         return read_self_access(self.access, identity, self.registry)
+
+    def sidebar_menu(self, identity: Identity) -> tuple[SidebarEntry, ...]:
+        """網站登入來源使用即時部門目錄；共同 adapter 仍依完整驗證投影呈現。"""
+        from app.services.admin_login_service import DepartmentLoginAdapter
+
+        if isinstance(self.access, DepartmentLoginAdapter):
+            return self.access.sidebar_menu(identity)
+        return tuple(
+            SidebarEntry(item.code, item.name, item.route)
+            for item in self.workspace_access(identity).functions
+            if item.can_open
+        )
 
     def list_departments(self, identity: Identity) -> list[Department]:
         """只查詢核定部門範圍。"""
@@ -223,7 +236,7 @@ class EModule:
         call_adapter(self.grants.replace, identity, department_id, change)
 
     def login(self, email: str, password: SecretStr) -> IssuedSession:
-        """委派 B 建立 Session，再驗管理站資格；失敗不發送 Cookie。"""
+        """委派 B 建立 Session 並驗 ADMIN 資格；無業務功能可僅進歡迎頁。"""
         auth = self._auth()
         if self.access is None:
             raise UnavailableError
@@ -232,7 +245,10 @@ class EModule:
             identity = verified_identity(self.access, issued.token)
             if identity.user_id != issued.user_id:
                 raise DeniedError
-            self.workspace_access(identity)
+            # 只允許「完整且有效的權限來源確認沒有功能」這一種結果。
+            # 其他缺接線、失效或不一致仍撤銷 Session 並拒絕。
+            with suppress(NoAdminFunctionsError):
+                self.workspace_access(identity)
         except EError:
             call_adapter(auth.logout, issued.token)
             raise
@@ -294,5 +310,14 @@ class EModule:
 
 
 def get_e_module() -> EModule:
-    """組裝入口：正式 B／G／journal 尚未交付，保持拒絕；測試透過 DI 提供替身。"""
-    return EModule()
+    """組裝目前帳號與部門勾選的網站 Session 登入；不建立額外管理員資格。"""
+    from dataclasses import replace
+
+    from app.services.admin_login_service import DepartmentLoginAdapter
+
+    routes = {DEPARTMENTS: "/department", FEATURES: "/functions", GRANTS: "/department"}
+    registry = tuple(replace(item, route=routes[item.code]) for item in REGISTRY) + (
+        Capability("sys.accounts", "帳號管理", "系統管理", "/accounts", frozenset(Action)),
+    )
+    adapter = DepartmentLoginAdapter(registry)
+    return EModule(access=adapter, auth=adapter, registry=registry)

@@ -5,8 +5,10 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
+from app.constants import WELCOME_CODE
 from app.schemas.e_admin import (
     Action,
+    DataScope,
     Decision,
     DeniedError,
     Identity,
@@ -73,8 +75,29 @@ def require_permission(
         raise DeniedError
     if identity.expires_at.tzinfo is None or identity.expires_at <= datetime.now(UTC):
         raise UnauthenticatedError
-    if registered.management and registered.system_only and not identity.system_management:
-        raise DeniedError
+    if registered.code == WELCOME_CODE:
+        if action != Action.VIEW:
+            raise DeniedError
+        if identity.credential_version < 1 or not all(
+            isinstance(value, UUID)
+            for value in (identity.user_id, identity.session_id, identity.selected_department_id)
+        ):
+            raise DeniedError
+        if target is not None and not DataScope("own").covers(identity.user_id, target):
+            raise DeniedError
+        return Decision(
+            identity.user_id,
+            identity.session_id,
+            identity.selected_department_id,
+            WELCOME_CODE,
+            Action.VIEW,
+            "unset",
+            True,
+            "builtin-welcome/v1",
+            identity.expires_at,
+            DataScope("own"),
+            department_effect="allow",
+        )
     decision = call_adapter(access.decide, identity, code, action)
     if (
         decision.user_id,
@@ -94,12 +117,7 @@ def require_permission(
         raise UnavailableError
     if decision.valid_until <= datetime.now(UTC):
         raise DeniedError
-    # 新政策：一般能力依目前選取部門；管理資格另外要求明確職務許可。
-    if decision.department_effect == "unresolved":
-        raise UnavailableError
-    if decision.department_effect != "allow" or not decision.function_active:
-        raise DeniedError
-    if registered.management and decision.role_effect != "allow":
+    if not permission_effects_allow(identity, registered, decision):
         raise DeniedError
     if decision.scope.kind not in {"own", "departments", "company"} or (
         decision.scope.kind == "departments" and not decision.scope.department_ids
@@ -108,3 +126,12 @@ def require_permission(
     if target is not None and not decision.scope.covers(identity.user_id, target):
         raise DeniedError
     return decision
+
+
+def permission_effects_allow(
+    identity: Identity, definition: Capability, decision: Decision
+) -> bool:
+    """只依目前部門勾選；不允許額外管理員／職務指派覆蓋部門。"""
+    if decision.authorization_basis != "department" or decision.department_effect == "unresolved":
+        raise UnavailableError
+    return decision.department_effect == "allow" and decision.function_active

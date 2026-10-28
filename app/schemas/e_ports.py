@@ -28,14 +28,14 @@ from app.schemas.e_admin import (
 
 
 class AccessPort(Protocol):
-    """B／G 權威接點；驗證當前帳號、profile、Session 憑證版本及部門關係。"""
+    """網站 Session 及目前部門勾選接點；驗證當前帳號、profile、憑證版本與部門關係。"""
 
     def authenticate(self, token: SecretStr) -> Identity | None:
         """驗證管理站適用性；無效回 None，來源故障拋 UnavailableError。"""
         ...
 
     def decide(self, identity: Identity, code: str, action: Action) -> Decision:
-        """解析目前選取部門的基本操作；管理能力另驗職務與可授上限，不合併其他部門。"""
+        """只依目前有效部門功能／操作，不另指定管理者，也不合併其他部門。"""
         ...
 
     def effective_access(self, identity: Identity) -> AccessSnapshot:
@@ -44,14 +44,14 @@ class AccessPort(Protocol):
 
 
 class AuthPort(Protocol):
-    """沿用 B 的同一認證核心；ADMIN adapter 直接使用其核定模組，不走 /dev。"""
+    """ADMIN 登入接點；讀共用帳號與部門資料組合網站 Session，不走 /dev。"""
 
     def login(self, email: str, password: SecretStr) -> IssuedSession:
-        """B 負責雜湊、鎖定、限流、建立 Session；錯誤不得洩漏帳號存在性。"""
+        """驗帳密與有效員工、讀部門勾選組 Session；最多更新登入紀錄，不另建 DB 資料。"""
         ...
 
     def logout(self, token: SecretStr) -> None:
-        """撤銷 B Session；重複登出必須安全，不僅清瀏覽器 Cookie。"""
+        """結束網站登入；本版由路由清除簽章 Cookie，不寫入 DB Session。"""
         ...
 
     def profile(self, identity: Identity) -> Profile:

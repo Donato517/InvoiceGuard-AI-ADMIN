@@ -40,6 +40,12 @@ class DeniedError(EError):
     message = "沒有權限執行此操作"
 
 
+class WelcomeReadOnlyError(EError):
+    """歡迎頁是不可撤銷的基礎唯讀首頁。"""
+
+    message = "歡迎頁固定可查看，不提供新增、修改、刪除或停用"
+
+
 class MissingError(EError):
     """目標不存在；不可透過錯誤洩漏範圍外資料。"""
 
@@ -80,6 +86,7 @@ class Identity:
     expires_at: datetime
     admin_access: bool
     session_audience: Literal["admin", "frontend"]
+    # 舊 DTO 相容欄位；本版不讀取作授權，沒有初始管理員或額外身分設定。
     system_management: bool = False
 
 
@@ -129,6 +136,8 @@ class Decision:
     valid_until: datetime
     scope: DataScope = field(default_factory=DataScope)
     department_effect: Literal["allow", "deny", "unset", "unresolved"] = "unresolved"
+    # 僅目前部門；舊 role_effect 欄位不影響權限。
+    authorization_basis: Literal["department"] = "department"
 
 
 class InputModel(BaseModel):

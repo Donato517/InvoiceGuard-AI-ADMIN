@@ -11,6 +11,9 @@
   <section class="e-login__card" aria-labelledby="login-title">
     <h1 id="login-title" class="e-login__brand">{{ brand_name }} <span>AI</span></h1>
     <p class="e-login__subtitle">{{ SITE_NAME }} · 發票辨識與財會作業平台</p>
+    {% if local_setup_available %}
+      <p class="alert"><a href="/welcome">進入本機設定後台（暫免登入）</a>，先完成帳號、部門及功能權限設定。</p>
+    {% endif %}
     {% if error %}<p id="login-error"
    class="alert alert--danger e-login__error"
    role="alert">{{ error }}</p>{% endif %}

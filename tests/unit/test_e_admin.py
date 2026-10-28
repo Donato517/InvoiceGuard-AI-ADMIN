@@ -317,7 +317,6 @@ def test_role_allow_is_not_capped_by_department_flag(module: EModule) -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"system_management": False},
         {"admin_access": False},
         {"session_audience": "frontend"},
     ],
@@ -359,6 +358,7 @@ def test_company_read_does_not_imply_write_or_management(module: EModule) -> Non
             Target(OTHER_DEPT),
             definition=definition,
         )
+    module.access.effects[(DEPARTMENTS, Action.VIEW)] = "deny"
     with pytest.raises(DeniedError):
         module.list_departments(user)
 
@@ -513,7 +513,20 @@ def test_matrix_cannot_revoke_outside_delegation(module: EModule) -> None:
 def test_unconfigured_adapters_fail_closed_without_touching_db(
     client: TestClient, path: str
 ) -> None:
-    response = client.get(path, headers={"Cookie": f"{SESSION_COOKIE_NAME}={TOKEN}"})
+    from app.services.admin_login_service import _serializer
+
+    token = _serializer().dumps(
+        {
+            "v": 1,
+            "uid": str(ACTOR),
+            "sid": str(SESSION),
+            "department": str(DEPT),
+            "cv": 1,
+            "functions": {},
+            "expires": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+        }
+    )
+    response = client.get(path, headers={"Cookie": f"{SESSION_COOKIE_NAME}={token}"})
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
 
@@ -601,7 +614,7 @@ def test_login_uses_common_uuid_and_nonpersistent_httponly_cookie(
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie
     assert "Max-Age" not in cookie and "expires=" not in cookie.lower()
-    assert response.headers["location"] == "/workspace"
+    assert response.headers["location"] == "/welcome"
     assert module.identity(SecretStr(TOKEN)).user_id == ACTOR
 
 
@@ -878,7 +891,7 @@ def test_finance_only_user_can_login_without_e_management_permissions(
         headers=ORIGIN,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == finance.route
+    assert response.headers["location"] == "/welcome"
     for path in ["/workspace", "/account"]:
         page = e_client.get(path)
         assert page.status_code == 200
@@ -890,7 +903,7 @@ def test_finance_only_user_can_login_without_e_management_permissions(
 
 
 @pytest.mark.parametrize("effect", ["unset", "deny"])
-def test_no_admin_functions_denies_login_workspace_and_profile(
+def test_no_business_functions_can_login_but_workspace_and_profile_stay_denied(
     e_client: TestClient,
     module: EModule,
     effect: str,
@@ -903,8 +916,9 @@ def test_no_admin_functions_denies_login_workspace_and_profile(
         data={"email": "synthetic@example.invalid", "password": "synthetic-password"},
         headers=ORIGIN,
     )
-    assert response.status_code == 403 and "set-cookie" not in response.headers
-    assert module.auth.revoked
+    assert response.status_code == 303 and "set-cookie" in response.headers
+    assert response.headers["location"] == "/welcome"
+    assert not module.auth.revoked
     assert e_client.get("/workspace").status_code == 403
     assert e_client.get("/account").status_code == 403
 
@@ -986,7 +1000,10 @@ def test_invalid_access_snapshot_rejects_without_cookie_or_data(
             *snapshot.decisions[1:],
         )
     elif fault == "unresolved":
-        changes["decisions"] = (replace(first, role_effect="unresolved"), *snapshot.decisions[1:])
+        changes["decisions"] = (
+            replace(first, department_effect="unresolved"),
+            *snapshot.decisions[1:],
+        )
     elif fault == "bad_scope":
         changes["decisions"] = (replace(first, scope=DataScope("unknown")), *snapshot.decisions[1:])
     elif fault in {"wrong_user", "wrong_session", "wrong_department"}:
@@ -1236,10 +1253,10 @@ def test_department_basic_permission_does_not_need_a_job_role(module: EModule) -
         module.check(user, definition.code, Action.VIEW)
 
 
-def test_department_basic_permission_cannot_replace_management_role(module: EModule) -> None:
+def test_department_checkbox_needs_no_individual_management_role(module: EModule) -> None:
     module.access.role_effect = "unset"
-    with pytest.raises(DeniedError):
-        module.check(identity(), DEPARTMENTS, Action.EDIT)
+    user = replace(identity(), system_management=False)
+    assert module.check(user, DEPARTMENTS, Action.EDIT).department_effect == "allow"
 
 
 def test_selected_department_binding_prevents_using_another_departments_grant(
@@ -1264,7 +1281,9 @@ def test_legacy_decision_without_department_basis_is_unavailable(
         module.check(identity(), DEPARTMENTS, Action.VIEW)
 
 
-def test_delegated_department_manager_is_not_a_system_administrator(module: EModule) -> None:
+def test_department_grants_allow_configurations_without_individual_appointment(
+    module: EModule,
+) -> None:
     user = replace(identity(), system_management=False)
     matrix = module.read_matrix(user, DEPT)
     assert matrix.revision == "g-1"
@@ -1277,10 +1296,8 @@ def test_delegated_department_manager_is_not_a_system_administrator(module: EMod
         ),
     )
     assert module.grants.calls == 1
-    with pytest.raises(DeniedError):
-        module.list_departments(user)
-    with pytest.raises(DeniedError):
-        module.list_features(user)
+    assert module.list_departments(user)
+    assert module.list_features(user) == []
 
 
 def test_department_manager_cannot_exceed_owned_or_delegated_ceiling(module: EModule) -> None:
@@ -1295,3 +1312,46 @@ def test_department_manager_cannot_exceed_owned_or_delegated_ceiling(module: EMo
             ),
         )
     assert module.grants.calls == 0
+
+
+@pytest.mark.parametrize("legacy_role", ["allow", "deny", "unset", "unresolved"])
+def test_department_permission_is_independent_of_legacy_identity_fields(
+    module: EModule, legacy_role: str
+) -> None:
+    """沒有額外身分欄位也能依部門勾選操作；舊個人欄位不得擴權或縮權。"""
+    module.access.role_effect = legacy_role
+    user = replace(identity(), system_management=False)
+    module.check(user, DEPARTMENTS, Action.EDIT)
+    assert module.workspace_access(user).functions
+    module.access.effects[(DEPARTMENTS, Action.EDIT)] = "deny"
+    with pytest.raises(DeniedError):
+        module.check(user, DEPARTMENTS, Action.EDIT)
+
+
+@pytest.mark.parametrize("old_basis", ["system_assignment", "unknown"])
+def test_cancelled_individual_assignment_source_cannot_override_department(
+    module: EModule, monkeypatch: pytest.MonkeyPatch, old_basis: str
+) -> None:
+    original = module.access.decide
+    monkeypatch.setattr(
+        module.access,
+        "decide",
+        lambda user, code, action: replace(
+            original(user, code, action), authorization_basis=old_basis, department_effect="deny"
+        ),
+    )
+    with pytest.raises(UnavailableError):
+        module.check(identity(), DEPARTMENTS, Action.VIEW)
+    with pytest.raises(UnavailableError):
+        module.workspace_access(identity())
+
+
+def test_department_view_does_not_grant_edit_and_scope_is_preserved(module: EModule) -> None:
+    module.access.scope = DataScope("departments", frozenset({DEPT}))
+    user = replace(identity(), system_management=False)
+    module.access.effects[(DEPARTMENTS, Action.EDIT)] = "deny"
+    module.check(user, DEPARTMENTS, Action.VIEW, Target(DEPT))
+    with pytest.raises(DeniedError):
+        module.check(user, DEPARTMENTS, Action.EDIT, Target(DEPT))
+    with pytest.raises(DeniedError):
+        module.check(user, DEPARTMENTS, Action.VIEW, Target(OTHER_DEPT))

@@ -1,0 +1,85 @@
+{#
+  @template pages/departments/detail.html
+  @description 部門基本資料及完整四操作配置，單一表單儲存。
+  @route GET/POST /department/{department_id}/edit
+  @context department, values, rows, grants, revision, actions, supported_actions, error, saved, blocked
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}編輯部門{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('css/pages/e-department-detail.css') }}">{% endblock %}
+{% block content %}
+  <a class="btn" href="/department">返回部門列表</a>
+  {% if saved %}<p class="alert" role="status">部門資料與授權功能已儲存。</p>{% endif %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  {% if blocked %}<p>資料已變更或無法確認，請重新載入後再編輯，避免覆蓋其他人的設定。</p><a class="btn" href="/department/{{ department.department_id }}/edit">重新載入</a>{% endif %}
+  <form class="form e-department-detail" method="post" action="/department/{{ department.department_id }}/edit" data-permission-bulk data-bulk-locked="{{ 'true' if blocked else 'false' }}" data-confirm="確認儲存部門資料與授權功能？此操作會修改目前連接的資料庫。">
+    <input type="hidden" name="expected_revision" value="{{ revision }}">
+    <input type="hidden" name="catalog_complete" value="true">
+    <h2>基本資料</h2>
+    <div class="form-field"><label for="department_code">部門代碼</label><input id="department_code" name="department_code" value="{{ values.department_code }}" maxlength="200" {% if department.department_code == 'UNASSIGNED' %}readonly{% endif %} required></div>
+    <div class="form-field"><label for="department_name">部門名稱</label><input id="department_name" name="department_name" value="{{ values.department_name }}" maxlength="200" required></div>
+    <label><input type="checkbox" name="is_active" value="true" {% if values.is_active in [true, 'true', 'on', '1'] %}checked{% endif %}> 啟用部門</label>
+    <p>停用會先檢查帳號與其他關聯，不刪除部門或授權資料。</p>
+    <h2>授權功能區</h2>
+    <p>四項操作獨立勾選，不會因勾選查看而自動授予修改或刪除。未接線功能可先保存配置；這不是正式生效的權限驗收。</p>
+    <p>功能或部門停用時保留配置；未接線／未支援的操作顯示「待接線」，實際執行仍須由功能服務驗權。</p>
+    <div class="e-department-detail__bulk" data-bulk-controls hidden>
+      <button type="button" class="btn" data-bulk-value="true">全部勾選</button>
+      <button type="button" class="btn" data-bulk-value="false">全部取消</button>
+      <span>歡迎頁固定不變；完成後請按「儲存」。</span>
+    </div>
+    <p class="e-department-detail__bulk-status" data-bulk-status role="status" aria-live="polite"></p>
+    <noscript><p>批次勾選目前無法使用，仍可逐項勾選並儲存。</p></noscript>
+    <div class="e-department-detail__table" tabindex="0" role="region" aria-label="授權功能操作表">
+      <table class="table e-permission-table">
+        <colgroup><col class="e-permission-table__function-col"><col span="5" class="e-permission-table__action-col"></colgroup>
+        <thead>
+          <tr><th scope="col">功能／平台／狀態</th><th scope="col">全選</th>{% for action, label in actions %}<th scope="col">{{ label }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          <tr data-builtin-welcome>
+            <td>
+              <div class="e-permission-function">
+                <strong class="e-permission-function__name">歡迎頁</strong><code>welcome</code>
+                <span class="e-permission-function__meta">系統預設，適用所有部門</span>
+              </div>
+              {% for row in welcome_rows %}<input type="hidden" name="function_id" value="{{ row.function.function_id }}"><input type="hidden" name="grant" value="{{ row.function.function_id }}:view">{% endfor %}
+            </td>
+            <td><div class="e-permission-choice"><span class="e-permission-choice__fixed">固定</span><small class="e-permission-choice__note">系統預設</small></div></td>
+            <td><div class="e-permission-choice"><label><input type="checkbox" checked disabled aria-label="歡迎頁：固定可查看"> 查看</label><small class="e-permission-choice__note">固定開放</small></div></td>
+            <td><div class="e-permission-choice e-permission-choice--disabled"><label><input type="checkbox" disabled aria-label="歡迎頁：不可新增"> 新增</label><small class="e-permission-choice__note">不開放</small></div></td>
+            <td><div class="e-permission-choice e-permission-choice--disabled"><label><input type="checkbox" disabled aria-label="歡迎頁：不可修改"> 修改</label><small class="e-permission-choice__note">不開放</small></div></td>
+            <td><div class="e-permission-choice e-permission-choice--disabled"><label><input type="checkbox" disabled aria-label="歡迎頁：不可刪除"> 刪除</label><small class="e-permission-choice__note">不開放</small></div></td>
+          </tr>
+          {% for row in rows %}
+            <tr data-grant-row>
+              <td>
+                <div class="e-permission-function">
+                  <strong class="e-permission-function__name">{{ row.function.function_name }}</strong>
+                  <code>{{ row.function.function_code }}</code>
+                  <span class="e-permission-function__meta">{{ {'admin':'管理站','frontend':'前台','both':'兩站'}.get(row.function.app_scope, '待確認') }}<span class="e-permission-function__separator" aria-hidden="true">·</span><span class="e-permission-state {{ 'e-permission-state--active' if row.function.is_active else '' }}">{{ '啟用' if row.function.is_active else '停用' }}</span></span>
+                </div>
+                <input type="hidden" name="function_id" value="{{ row.function.function_id }}">
+              </td>
+              <td><div class="e-permission-choice"><label data-row-controls hidden><input type="checkbox" data-row-toggle aria-label="{{ row.function.function_name }}：全選或取消本列操作"> 全選</label><small class="e-permission-choice__note">整列操作</small></div></td>
+              {% for action, label in actions %}
+                <td>
+                  <div class="e-permission-choice">
+                    <label><input type="checkbox" name="grant" value="{{ row.function.function_id }}:{{ action.value }}" aria-label="{{ row.function.function_name }}：{{ label }}" {% if action in grants.get(row.function.function_id, []) %}checked{% endif %}> {{ label }}</label>
+                    <small class="e-permission-choice__note">{% if action not in supported_actions(row.function.function_code) %}待接線{% endif %}</small>
+                  </div>
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not rows %}<p class="empty-state">尚無其他功能資料。請先到 <a href="/functions/new">功能管理新增功能</a>，再返回此頁設定。</p>{% endif %}
+    <div class="e-department-detail__buttons"><button class="btn btn--primary" type="submit" {% if blocked %}disabled{% endif %}>儲存</button><a class="btn" href="/department">取消</a></div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ static_url('js/e-department-bulk.js') }}" defer></script>
+{% endblock %}

@@ -1,4 +1,10 @@
+> 2026-10-28 最新版本：登入已改為「驗帳密 → 讀目前部門功能／操作 → 網站 Session → 歡迎頁」。配置入口已恢復登入檢查（LOCAL_SETUP_ENABLED=False）；沒有初始管理員、個別管理職務、交接或新增 DB 表。登入唯一寫入為既有 last_login_at。以 [登入說明](docs/E-LOGIN-ACCESS.md) 為準，以下較早政策及測試為歷史記錄。
+
 # InvoiceGuard-AI-ADMIN：AI 開發入口
+
+> 2026-10-28 最新介面：部門內容頁 /department/{UUID}/edit 同頁儲存資料與四操作配置；移除獨立部門功能頁，舊 GET 只轉址、舊 POST 410。未接線功能可先存配置，不宣稱正式生效；免登入仍限本機。見 [E-DEPARTMENT-DETAIL](docs/E-DEPARTMENT-DETAIL.md)。
+
+> 2026-10-28 使用者最新核定：四個本機配置入口暫免登入以補齊設定，新增 /welcome；雲端仍關閉。這取代下文 10-27 的本機關閉規則，詳見 [E-LOCAL-SETUP](docs/E-LOCAL-SETUP.md)。正式 B／G 及主管授權未完成，代理只離線測試，正式 DB 由使用者操作。
 
 本站是部門管理後台，使用 Python 3.12、FastAPI、Jinja2 與 HTMX；ASGI 入口為 `app.main:app`。ADMIN 保有自己的 Vercel／DB 模組與管理者登入；一般資料／檔案服務尚未接線，不能將畫面入口視為 CRUD／Storage 完成。
 

@@ -64,6 +64,16 @@ class FunctionAccess:
 
 
 @dataclass(frozen=True)
+class SidebarEntry:
+    """部門授權的側欄項目；尚無固定實作路徑時只呈現名稱及狀態。"""
+
+    code: str
+    name: str
+    route: str | None
+    status: str = ""
+
+
+@dataclass(frozen=True)
 class SelfAccess:
     """E 驗證後可呈現的本人資訊，不含 Session Token／內部角色帳冊。"""
 

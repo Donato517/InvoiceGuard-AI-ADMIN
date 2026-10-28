@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass
 
+from app.constants import WELCOME_CODE, WELCOME_PATH
 from app.schemas.e_admin import Action, DeniedError, UnavailableError
 
 
@@ -18,6 +19,17 @@ class Capability:
     management: bool = True
     system_only: bool = True
 
+
+# 不納入 G 的可選功能矩陣或 DB seed；新部門不必補寫 grant。
+WELCOME_CAPABILITY = Capability(
+    WELCOME_CODE,
+    "歡迎頁",
+    "系統內建",
+    WELCOME_PATH,
+    frozenset({Action.VIEW}),
+    management=False,
+    system_only=False,
+)
 
 REGISTRY = (
     Capability(
@@ -52,6 +64,7 @@ def validate_registry(definitions: tuple[Capability, ...]) -> None:
         if (
             not re.fullmatch(r"[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*", item.code)
             or item.code in seen
+            or item.code == WELCOME_CODE
             or not item.name.strip()
             or not item.category.strip()
             or not item.actions
@@ -71,6 +84,8 @@ def validate_registry(definitions: tuple[Capability, ...]) -> None:
 
 def capability(code: str, definitions: tuple[Capability, ...] = REGISTRY) -> Capability:
     """取得已實作功能，未知代碼拒絕；不從請求載入 route／action。"""
+    if code == WELCOME_CODE:
+        return WELCOME_CAPABILITY
     for item in definitions:
         if item.code == code:
             return item

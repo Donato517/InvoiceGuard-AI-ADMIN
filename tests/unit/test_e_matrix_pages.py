@@ -1,379 +1,487 @@
-"""單一部門權限內容頁驗收；合成矩陣及 Session，禁止真實 DB／網路。"""
+"""原獨立矩陣頁已移除；以部門內容頁驗證同一表單、原子交易及舊入口退場。"""
 
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from unittest.mock import MagicMock
-from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.config import settings
-from app.db.repositories import e_function_settings_repository as repository
+from app.db.repositories import department_repository as departments
+from app.db.repositories import e_function_settings_repository as permissions
 from app.main import app
-from app.routers.e_admin import require_configuration_access
-from app.schemas.e_admin import Action, ConflictError, EError, MissingError
+from app.routers import e_admin
+from app.schemas.department import Department
+from app.schemas.department_detail import DepartmentDetail
+from app.schemas.e_admin import Action
 from app.schemas.e_function_settings import (
     DepartmentFunctionSettings,
     FunctionPermission,
     FunctionSetting,
 )
-from app.services import department_service
-from app.services import e_function_settings_service as service
+from app.services import department_detail_service as service
 
-DEPT = UUID("00000000-0000-4000-8000-000000000001")
-ONE = UUID("00000000-0000-4000-8000-000000000002")
-TWO = UUID("00000000-0000-4000-8000-000000000003")
 BASE = "http://invoiceguard-ai-admin.localhost:8080"
 ORIGIN = {"Origin": BASE}
-ROWS = (
-    FunctionPermission(
-        FunctionSetting(ONE, "sys.features", "功能管理", "admin", True), frozenset({Action.VIEW})
-    ),
-    FunctionPermission(
-        FunctionSetting(TWO, "sys.departments", "部門管理", "both", True),
-        frozenset({Action.VIEW, Action.EDIT}),
+DEPT = UUID("00000000-0000-4000-8000-000000000010")
+ONE = UUID("00000000-0000-4000-8000-000000000011")
+TWO = UUID("00000000-0000-4000-8000-000000000012")
+ROW = Department(
+    department_id=DEPT,
+    department_code="SYNTHETIC",
+    department_name="虛構部門",
+    is_active=True,
+    created_at=datetime.now(UTC),
+    updated_at=datetime.now(UTC),
+)
+MATRIX = DepartmentFunctionSettings(
+    DEPT,
+    ROW.department_code,
+    ROW.department_name,
+    True,
+    (
+        FunctionPermission(
+            FunctionSetting(ONE, "sys.features", "功能目錄", "admin", True),
+            frozenset({Action.VIEW}),
+        ),
+        FunctionPermission(
+            FunctionSetting(TWO, "future.synthetic", "待接線功能", "admin", False), frozenset()
+        ),
     ),
 )
-MATRIX = DepartmentFunctionSettings(DEPT, "SYS", "系統管理", True, ROWS)
+PATH = f"/department/{DEPT}/edit"
 
 
-class Forms(HTMLParser):
-    """從實際 HTML 取欄位，避免把模板空白或手寫提交當成流程驗證。"""
+class Form(HTMLParser):
+    """擷取實際內容表單成功控制項，模擬瀏覽器送出勾選結果。"""
 
     def __init__(self, html: str) -> None:
         super().__init__()
-        self.forms: dict[str, dict[str, list[str]]] = {}
-        self.checks: dict[str, dict[str, str | None]] = {}
-        self.current: dict[str, list[str]] | None = None
+        self.values: dict[str, list[str]] = {}
+        self.active = False
         self.feed(html)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        data = dict(attrs)
+        values = dict(attrs)
         if tag == "form":
-            self.current = self.forms.setdefault(data.get("action", ""), {})
-        if tag != "input" or self.current is None or not data.get("name"):
-            return
-        if data.get("type") == "checkbox":
-            self.checks[data.get("value", "")] = data
-            if "checked" not in data or "disabled" in data:
-                return
-        self.current.setdefault(data["name"], []).append(data.get("value", ""))
+            self.active = values.get("action") == PATH
+        if (
+            tag == "input"
+            and self.active
+            and values.get("name")
+            and "disabled" not in values
+            and (values.get("type") != "checkbox" or "checked" in values)
+        ):
+            self.values.setdefault(str(values["name"]), []).append(values.get("value") or "")
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "form":
-            self.current = None
+            self.active = False
 
 
 @pytest.fixture
 def db(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """交易與 Repository 邊界保留，連線改成可觀察替身。"""
-    db = MagicMock()
-    monkeypatch.setattr(repository, "open_session", lambda: db)
-    monkeypatch.setattr(repository, "prepare_write", MagicMock())
-    monkeypatch.setattr(repository, "read_matrix", MagicMock(return_value=MATRIX))
-    monkeypatch.setattr(repository, "write_permission", MagicMock())
-    monkeypatch.setattr(department_service, "search", lambda: [])
-    return db
+    """保留服務交易流程，所有 DB 邊界使用合成替身。"""
+    session = MagicMock()
+    monkeypatch.setattr(permissions, "open_session", lambda: session)
+    monkeypatch.setattr(permissions, "prepare_write", MagicMock())
+    monkeypatch.setattr(permissions, "read_matrix", MagicMock(return_value=MATRIX))
+    monkeypatch.setattr(permissions, "write_permission", MagicMock())
+    monkeypatch.setattr(departments, "get_department", MagicMock(return_value=ROW))
+    monkeypatch.setattr(departments, "lock_department", MagicMock(return_value=ROW))
+    monkeypatch.setattr(departments, "update_details", MagicMock())
+    monkeypatch.setattr(departments, "code_change_blocker", MagicMock(return_value=None))
+    monkeypatch.setattr(departments, "disable_blocker", MagicMock(return_value=None))
+    return session
 
 
 @pytest.fixture
 def browser(db: MagicMock, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """以合成配置授權測畫面，不覆寫 Host 或同源檢查。"""
-    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
-    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
+    """真實本機配置與同源 guard；不覆寫登入／授權相依。"""
+    monkeypatch.setattr(e_admin, "LOCAL_SETUP_ENABLED", True)
     with TestClient(
         app, base_url=BASE, client=("127.0.0.1", 50000), follow_redirects=False
     ) as client:
         yield client
 
 
-def payload(*, confirmed: bool = False) -> dict[str, str | list[str]]:
-    """只提交第一列，測試增添修改與撤銷查看並保留另一列。"""
-    values = {
-        "function_id": [str(ONE)],
-        "grant": [f"{ONE}:edit"],
-        "expected_revision": service.content_revision(MATRIX),
-        "return_q": "功能",
-        "return_platform": "admin",
-        "return_status": "active",
-        "return_page": "1",
+def payload() -> dict[str, object]:
+    """完整整頁配置；四項操作互不隱含。"""
+    return {
+        "department_code": ROW.department_code,
+        "department_name": "新名稱",
+        "is_active": "true",
+        "expected_revision": service.revision(DepartmentDetail(ROW, MATRIX)),
+        "catalog_complete": "true",
+        "function_id": [str(ONE), str(TWO)],
+        "grant": [f"{ONE}:view", f"{TWO}:create"],
     }
-    if confirmed:
-        values["confirmed"] = "true"
-    return values
 
 
-def test_content_filters_show_only_matches_without_writing(
+def test_html_round_trip_saves_metadata_and_all_four_independent_actions(
     browser: TestClient, db: MagicMock
 ) -> None:
-    page = browser.get(
-        "/department-functions",
-        params={"department_id": str(DEPT), "q": "功能", "platform": "admin", "status": "active"},
+    page = browser.get(PATH)
+    assert page.status_code == 200 and "授權功能區" in page.text
+    assert "待接線" in page.text and "尚無功能" not in page.text
+    assert 'href="/department-functions"' not in page.text
+    form = Form(page.text).values
+    assert form["grant"] == [f"{ONE}:view"]
+    assert set(form["function_id"]) == {str(ONE), str(TWO)}
+    for action in Action:
+        assert f'value="{TWO}:{action.value}"' in page.text
+    form["department_name"] = ["新名稱"]
+    form["grant"] = [f"{ONE}:view", f"{TWO}:create", f"{TWO}:delete"]
+    response = browser.post(PATH, data=form, headers=ORIGIN)
+    assert response.status_code == 303 and response.headers["location"] == PATH + "?saved=true"
+    departments.update_details.assert_called_once_with(
+        db, DEPT, ROW.department_code, "新名稱", True
     )
-    assert page.status_code == 200
-    forms = Forms(page.text)
-    assert forms.forms[f"/department-functions/{DEPT}/preview"]["function_id"] == [str(ONE)]
-    assert "資料範圍待接線" in page.text and "功能未提供此操作" in page.text
-    assert "data-permission-editor" in page.text and "e-department-permissions.js" in page.text
-    assert page.headers["cache-control"] == "no-store" and "set-cookie" not in page.headers
-    db.commit.assert_not_called()
-
-
-def test_preview_summarizes_add_and_revoke_but_never_writes(
-    browser: TestClient, db: MagicMock
-) -> None:
-    page = browser.post(f"/department-functions/{DEPT}/preview", data=payload(), headers=ORIGIN)
-    assert page.status_code == 200
-    assert "新增操作" in page.text and "撤銷操作" in page.text and "確認儲存" in page.text
-    forms = Forms(page.text).forms
-    assert forms[f"/department-functions/{DEPT}"]["confirmed"] == ["true"]
-    assert forms[f"/department-functions/{DEPT}"]["grant"] == [f"{ONE}:edit"]
-    assert "confirmed" not in forms[f"/department-functions/{DEPT}/draft"]
-    repository.write_permission.assert_not_called()
-    db.commit.assert_not_called()
-
-
-def test_actual_html_round_trip_preserves_draft_and_only_saves_submitted_rows(
-    browser: TestClient, db: MagicMock
-) -> None:
-    editor = browser.get(f"/department-functions?department_id={DEPT}&q=功能")
-    values = Forms(editor.text).forms[f"/department-functions/{DEPT}/preview"]
-    values["grant"] = [f"{ONE}:edit"]
-    preview = browser.post(f"/department-functions/{DEPT}/preview", headers=ORIGIN, data=values)
-    assert preview.status_code == 200
-    forms = Forms(preview.text).forms
-    draft = browser.post(
-        f"/department-functions/{DEPT}/draft",
-        headers=ORIGIN,
-        data=forms[f"/department-functions/{DEPT}/draft"],
+    permissions.write_permission.assert_called_once_with(
+        db, DEPT, TWO, frozenset({Action.CREATE, Action.DELETE})
     )
-    assert draft.status_code == 200
-    returned = Forms(draft.text)
-    assert "checked" in returned.checks[f"{ONE}:edit"]
-    assert returned.checks[f"{ONE}:edit"]["data-saved"] == "false"
-    assert "checked" not in returned.checks[f"{ONE}:view"]
-    assert "有尚未儲存的變更" in draft.text
-    db.commit.assert_not_called()
-    saved = browser.post(
-        f"/department-functions/{DEPT}", headers=ORIGIN, data=forms[f"/department-functions/{DEPT}"]
-    )
-    assert saved.status_code == 303
-    repository.write_permission.assert_called_once_with(db, DEPT, ONE, frozenset({Action.EDIT}))
-    location = urlsplit(saved.headers["location"])
-    assert location.path == "/department-functions" and not location.netloc
-    assert parse_qs(location.query)["q"] == ["功能"]
-    assert parse_qs(location.query)["department_id"] == [str(DEPT)]
     db.commit.assert_called_once()
 
 
-def test_all_unchecked_is_an_explicit_revoke_not_a_delete(
+def test_all_unchecked_explicitly_revokes_without_hard_delete(
     browser: TestClient, db: MagicMock
 ) -> None:
-    data = payload(confirmed=True)
-    data.pop("grant")
-    assert (
-        browser.post(f"/department-functions/{DEPT}", headers=ORIGIN, data=data).status_code == 303
-    )
-    repository.write_permission.assert_called_once_with(db, DEPT, ONE, frozenset())
-
-
-def test_unchanged_preview_has_no_save_button(browser: TestClient, db: MagicMock) -> None:
     data = payload()
-    data["grant"] = [f"{ONE}:view"]
-    page = browser.post(f"/department-functions/{DEPT}/preview", headers=ORIGIN, data=data)
-    assert page.status_code == 200 and "沒有權限變更" in page.text
-    assert f"/department-functions/{DEPT}" not in Forms(page.text).forms
-    db.commit.assert_not_called()
+    data.pop("grant")
+    assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 303
+    permissions.write_permission.assert_called_once_with(db, DEPT, ONE, frozenset())
 
 
-@pytest.mark.parametrize("stage", ["preview", "draft", "save"])
-def test_stale_content_blocks_every_stage_and_keeps_original_revision(
-    browser: TestClient, db: MagicMock, stage: str
+@pytest.mark.parametrize("change", ["department", "grant", "catalog"])
+def test_concurrent_changes_block_both_metadata_and_grants(
+    browser: TestClient, db: MagicMock, change: str
 ) -> None:
-    data = payload(confirmed=stage == "save")
-    data["expected_revision"] = "0" * 64
-    path = f"/department-functions/{DEPT}" + ("/" + stage if stage != "save" else "")
-    page = browser.post(path, headers=ORIGIN, data=data)
-    assert page.status_code == 409 and "重新載入目前設定" in page.text
-    editor = Forms(page.text)
-    assert editor.forms[f"/department-functions/{DEPT}/preview"]["expected_revision"] == ["0" * 64]
-    assert "disabled" in editor.checks[f"{ONE}:edit"]
-    repository.write_permission.assert_not_called()
-    db.commit.assert_not_called()
-
-
-def test_concurrent_revoke_after_preview_is_not_overwritten(
-    browser: TestClient, db: MagicMock
-) -> None:
-    page = browser.post(f"/department-functions/{DEPT}/preview", headers=ORIGIN, data=payload())
-    form = Forms(page.text).forms[f"/department-functions/{DEPT}"]
-    repository.read_matrix.return_value = replace(
-        MATRIX, rows=(replace(ROWS[0], actions=frozenset()), ROWS[1])
-    )
-    assert (
-        browser.post(f"/department-functions/{DEPT}", headers=ORIGIN, data=form).status_code == 409
-    )
-    db.commit.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "kind,reason",
-    [("inactive", "功能已停用"), ("frontend", "不適用管理站"), ("unknown", "程式能力尚未登錄")],
-)
-def test_blocked_features_explain_reason_allow_only_existing_revoke(
-    browser: TestClient, db: MagicMock, kind: str, reason: str
-) -> None:
-    function = ROWS[0].function
-    if kind == "inactive":
-        function = replace(function, is_active=False)
-    elif kind == "frontend":
-        function = replace(function, app_scope="frontend")
+    data = payload()
+    if change == "department":
+        departments.lock_department.return_value = ROW.model_copy(
+            update={"department_name": "其他人已更新"}
+        )
+    elif change == "grant":
+        permissions.read_matrix.return_value = replace(
+            MATRIX, rows=(replace(MATRIX.rows[0], actions=frozenset({Action.EDIT})), MATRIX.rows[1])
+        )
     else:
-        function = replace(function, function_code="future.unreviewed")
-    matrix = replace(MATRIX, rows=(replace(ROWS[0], function=function), ROWS[1]))
-    repository.read_matrix.return_value = matrix
-    page = browser.get(f"/department-functions?department_id={DEPT}")
-    checks = Forms(page.text).checks
-    assert reason in page.text and "原有設定可撤銷" in page.text
-    assert "disabled" not in checks[f"{ONE}:view"]
-    assert "disabled" in checks[f"{ONE}:edit"]
-    with pytest.raises(EError):
-        service.review_matrix(
-            DEPT, service.content_revision(matrix), {ONE: frozenset({Action.VIEW, Action.EDIT})}
-        )
-    service.save_matrix(DEPT, service.content_revision(matrix), {ONE: frozenset()})
-    repository.write_permission.assert_called_once_with(db, DEPT, ONE, frozenset())
-
-
-def test_disabled_department_is_read_only(browser: TestClient, db: MagicMock) -> None:
-    matrix = replace(MATRIX, is_active=False)
-    repository.read_matrix.return_value = matrix
-    page = browser.get(f"/department-functions?department_id={DEPT}")
-    assert page.status_code == 200 and "僅供查看" in page.text
-    assert all("disabled" in value for value in Forms(page.text).checks.values())
-    with pytest.raises(ConflictError):
-        service.review_matrix(DEPT, service.content_revision(matrix), {ONE: frozenset()})
+        permissions.read_matrix.return_value = replace(MATRIX, rows=MATRIX.rows[:1])
+    response = browser.post(PATH, data=data, headers=ORIGIN)
+    assert response.status_code == 409 and "disabled" in response.text
+    assert Form(response.text).values["expected_revision"] == [data["expected_revision"]]
+    departments.update_details.assert_not_called()
+    permissions.write_permission.assert_not_called()
     db.commit.assert_not_called()
 
 
-def test_matrix_pagination_keeps_twenty_rows_and_filter_context(browser: TestClient) -> None:
-    rows = tuple(
-        FunctionPermission(
-            replace(
-                ROWS[0].function,
-                function_id=UUID(int=index + 100),
-                function_code=f"future.f{index:02}",
-            ),
-            frozenset(),
-        )
-        for index in range(45)
-    )
-    repository.read_matrix.return_value = replace(MATRIX, rows=rows)
-    page = browser.get(
-        f"/department-functions?department_id={DEPT}&q=future&platform=admin&status=active&page=2"
-    )
-    assert page.status_code == 200 and "共 45 筆" in page.text
-    form = Forms(page.text).forms[f"/department-functions/{DEPT}/preview"]
-    assert len(form["function_id"]) == 20 and form["function_id"][0] == str(
-        rows[20].function.function_id
-    )
-    assert form["return_page"] == ["2"] and form["return_q"] == ["future"]
-    last = browser.get(f"/department-functions?department_id={DEPT}&page=99")
-    assert "第 3／3 頁" in last.text
-
-
-@pytest.mark.parametrize("query", ["q=missing", "platform=frontend", "status=inactive"])
-def test_empty_filtered_result_does_not_offer_a_save(browser: TestClient, query: str) -> None:
-    page = browser.get(f"/department-functions?department_id={DEPT}&{query}")
-    assert page.status_code == 200 and "沒有符合條件" in page.text
-    assert f"/department-functions/{DEPT}/preview" not in Forms(page.text).forms
-
-
 @pytest.mark.parametrize(
-    "field,value",
+    "fault",
     [
-        ("role", "admin"),
-        ("next", "https://example.invalid"),
-        ("return_page", "0"),
-        ("grant", [f"{TWO}:edit"]),
-        ("function_id", [str(ONE), str(ONE)]),
-        ("function_id", []),
-        ("grant", [f"{ONE}:approve"]),
-        ("expected_revision", "bad"),
+        "foreign_id",
+        "omitted_id",
+        "duplicate_id",
+        "unknown_action",
+        "duplicate_grant",
+        "extra_role",
+        "missing_catalog",
+        "duplicate_name",
+        "wrong_target",
     ],
 )
-def test_tampered_payload_cannot_write(
-    browser: TestClient, db: MagicMock, field: str, value: object
+def test_tampered_payload_never_writes(browser: TestClient, db: MagicMock, fault: str) -> None:
+    data = payload()
+    if fault == "foreign_id":
+        data["function_id"] = [str(ONE), str(DEPT)]
+    if fault == "omitted_id":
+        data["function_id"] = [str(ONE)]
+        data["grant"] = [f"{ONE}:view"]
+    if fault == "duplicate_id":
+        data["function_id"] = [str(ONE), str(ONE)]
+    if fault == "unknown_action":
+        data["grant"] = [f"{ONE}:approve"]
+    if fault == "duplicate_grant":
+        data["grant"] = [f"{ONE}:view", f"{ONE}:view"]
+    if fault == "extra_role":
+        data["role"] = "admin"
+    if fault == "missing_catalog":
+        data.pop("catalog_complete")
+    if fault == "duplicate_name":
+        data["department_name"] = ["A", "B"]
+    if fault == "wrong_target":
+        data["department_id"] = str(TWO)
+    assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 400
+    departments.update_details.assert_not_called()
+    permissions.write_permission.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Origin": "https://untrusted.invalid"}, {"Origin": BASE, "Sec-Fetch-Site": "cross-site"}],
+)
+def test_write_requires_origin_before_any_read(
+    browser: TestClient, db: MagicMock, headers: dict[str, str]
+) -> None:
+    assert browser.post(PATH, data=payload(), headers=headers).status_code == 403
+    departments.get_department.assert_not_called()
+    departments.lock_department.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["metadata", "grant", "commit", "duplicate_code"])
+def test_any_failure_rolls_back_same_transaction_and_hides_sql(
+    browser: TestClient, db: MagicMock, fault: str
+) -> None:
+    error = OperationalError("synthetic-private-sql", {}, Exception("synthetic-private-host"))
+    target = {
+        "metadata": departments.update_details,
+        "grant": permissions.write_permission,
+        "commit": db.commit,
+        "duplicate_code": departments.update_details,
+    }[fault]
+    target.side_effect = (
+        IntegrityError("synthetic-private-sql", {}, Exception("synthetic-private-value"))
+        if fault == "duplicate_code"
+        else error
+    )
+    response = browser.post(PATH, data=payload(), headers=ORIGIN)
+    assert response.status_code == (409 if fault == "duplicate_code" else 503)
+    assert "synthetic-private" not in response.text
+    assert db.rollback.called and db.close.called
+    if fault != "commit":
+        db.commit.assert_not_called()
+
+
+def test_validation_preserves_name_checks_and_original_revision(browser: TestClient) -> None:
+    data = payload()
+    data["department_name"] = " "
+    page = browser.post(PATH, data=data, headers=ORIGIN)
+    assert page.status_code == 400
+    form = Form(page.text).values
+    assert form["department_name"] == [" "]
+    assert form["grant"] == data["grant"]
+    assert form["expected_revision"] == [data["expected_revision"]]
+
+
+def test_empty_catalog_still_allows_department_metadata(browser: TestClient, db: MagicMock) -> None:
+    empty = replace(MATRIX, rows=())
+    permissions.read_matrix.return_value = empty
+    page = browser.get(PATH)
+    assert "尚無其他功能資料" in page.text
+    data = Form(page.text).values
+    data["department_name"] = ["空目錄也可修改"]
+    assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 303
+    permissions.write_permission.assert_not_called()
+    db.commit.assert_called_once()
+
+
+def test_read_uses_consistent_snapshot_without_write_locks(db: MagicMock) -> None:
+    service.read_detail(DEPT)
+    sql = str(db.execute.call_args_list[0].args[0])
+    assert "REPEATABLE READ, READ ONLY" in sql
+    departments.lock_department.assert_not_called()
+    permissions.write_permission.assert_not_called()
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["metadata", "grant", "directory"])
+def test_joint_revision_covers_all_resources(kind: str) -> None:
+    current = DepartmentDetail(ROW, MATRIX)
+    changed = current
+    if kind == "metadata":
+        changed = replace(current, department=ROW.model_copy(update={"is_active": False}))
+    if kind == "grant":
+        changed = replace(
+            current,
+            matrix=replace(
+                MATRIX, rows=(replace(MATRIX.rows[0], actions=frozenset()), MATRIX.rows[1])
+            ),
+        )
+    if kind == "directory":
+        changed = replace(
+            current,
+            matrix=replace(
+                MATRIX,
+                rows=(
+                    replace(
+                        MATRIX.rows[0],
+                        function=replace(MATRIX.rows[0].function, function_name="更名"),
+                    ),
+                    MATRIX.rows[1],
+                ),
+            ),
+        )
+    assert service.revision(current) != service.revision(changed)
+
+
+@pytest.mark.parametrize("kind", ["reserved", "code_reference", "active_members"])
+def test_existing_department_protections_also_block_permission_changes(
+    browser: TestClient, db: MagicMock, kind: str
 ) -> None:
     data = payload()
-    data[field] = value
-    assert (
-        browser.post(f"/department-functions/{DEPT}/preview", headers=ORIGIN, data=data).status_code
-        == 400
+    if kind == "reserved":
+        data["department_code"] = "UNASSIGNED"
+    if kind == "code_reference":
+        data["department_code"] = "NEW"
+        departments.code_change_blocker.return_value = "referenced"
+    if kind == "active_members":
+        data["is_active"] = "false"
+        departments.disable_blocker.return_value = "members"
+    assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 400
+    departments.update_details.assert_not_called()
+    permissions.write_permission.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_missing_department_is_404(browser: TestClient, db: MagicMock) -> None:
+    departments.get_department.return_value = None
+    departments.lock_department.return_value = None
+    assert browser.get(PATH).status_code == 404
+    assert browser.post(PATH, data=payload(), headers=ORIGIN).status_code == 404
+
+
+def test_database_text_is_escaped(browser: TestClient) -> None:
+    departments.get_department.return_value = ROW.model_copy(
+        update={"department_name": "<script>synthetic()</script>"}
     )
-    db.commit.assert_not_called()
-    repository.write_permission.assert_not_called()
-
-
-def test_final_save_requires_explicit_confirmation(browser: TestClient, db: MagicMock) -> None:
-    assert (
-        browser.post(f"/department-functions/{DEPT}", headers=ORIGIN, data=payload()).status_code
-        == 400
-    )
-    db.commit.assert_not_called()
-
-
-@pytest.mark.parametrize("stage", ["preview", "draft", "save"])
-def test_every_post_requires_origin_and_stays_closed_in_cloud(
-    browser: TestClient, db: MagicMock, monkeypatch: pytest.MonkeyPatch, stage: str
-) -> None:
-    path = f"/department-functions/{DEPT}" + ("/" + stage if stage != "save" else "")
-    data = payload(confirmed=stage == "save")
-    assert browser.post(path, data=data).status_code == 403
-    monkeypatch.setattr(settings, "APP_ENV", "production")
-    assert browser.post(path, headers=ORIGIN, data=data).status_code == 404
-    db.commit.assert_not_called()
-
-
-def test_missing_department_is_404_and_read_failure_is_not_empty(
-    browser: TestClient, db: MagicMock
-) -> None:
-    repository.read_matrix.side_effect = MissingError()
-    assert browser.get(f"/department-functions?department_id={DEPT}").status_code == 404
-    repository.read_matrix.side_effect = RuntimeError("synthetic-private-db")
-    page = browser.get(f"/department-functions?department_id={DEPT}")
-    assert page.status_code == 503 and "重新載入目前設定" in page.text
-    assert "synthetic-private" not in page.text and "目前沒有功能" not in page.text
-    db.commit.assert_not_called()
-
-
-def test_failed_commit_shows_no_success_and_does_not_rebase_revision(
-    browser: TestClient, db: MagicMock
-) -> None:
-    db.commit.side_effect = RuntimeError("synthetic-private-write")
-    page = browser.post(
-        f"/department-functions/{DEPT}", headers=ORIGIN, data=payload(confirmed=True)
-    )
-    assert page.status_code == 503 and "未確認成功" in page.text
-    assert "部門功能設定已儲存" not in page.text and "synthetic-private" not in page.text
-    assert Forms(page.text).forms[f"/department-functions/{DEPT}/preview"]["expected_revision"] == [
-        service.content_revision(MATRIX)
-    ]
-    db.rollback.assert_called()
-
-
-def test_preview_escapes_department_and_function_names(browser: TestClient) -> None:
-    matrix = replace(
+    permissions.read_matrix.return_value = replace(
         MATRIX,
-        department_name="<script>synthetic()</script>",
-        rows=(replace(ROWS[0], function=replace(ROWS[0].function, function_name="<img src=x>")),),
+        rows=(
+            replace(
+                MATRIX.rows[0],
+                function=replace(
+                    MATRIX.rows[0].function, function_name="<script>synthetic()</script>"
+                ),
+            ),
+        ),
     )
-    repository.read_matrix.return_value = matrix
-    data = payload()
-    data["expected_revision"] = service.content_revision(matrix)
-    page = browser.post(f"/department-functions/{DEPT}/preview", headers=ORIGIN, data=data)
-    assert page.status_code == 200 and "&lt;script&gt;" in page.text and "&lt;img" in page.text
-    assert "<script>synthetic()" not in page.text
+    page = browser.get(PATH)
+    assert "&lt;script&gt;synthetic()" in page.text and "<script>synthetic()" not in page.text
+
+
+@pytest.mark.parametrize("boundary", ["cloud", "host", "peer"])
+def test_new_detail_cannot_open_outside_local(
+    browser: TestClient, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    base, peer = BASE, "127.0.0.1"
+    if boundary == "cloud":
+        monkeypatch.setattr(settings, "APP_ENV", "production")
+    if boundary == "host":
+        base = "http://evil.invalid"
+    if boundary == "peer":
+        peer = "192.0.2.1"
+    with TestClient(app, base_url=base, client=(peer, 50000), follow_redirects=False) as client:
+        assert client.get(PATH).status_code == 404
+        assert client.post(PATH, data=payload(), headers=ORIGIN).status_code == 404
+    departments.get_department.assert_not_called()
+    departments.update_details.assert_not_called()
+
+
+def test_disabled_setup_requires_login_before_detail_repository(
+    browser: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(e_admin, "LOCAL_SETUP_ENABLED", False)
+    assert browser.get(PATH).status_code == 303
+    assert browser.post(PATH, data=payload(), headers=ORIGIN).status_code == 303
+    departments.get_department.assert_not_called()
+    departments.lock_department.assert_not_called()
+
+
+def test_old_get_is_only_a_fixed_redirect(browser: TestClient) -> None:
+    for suffix, target in [("", "/department"), (f"?department_id={DEPT}", PATH)]:
+        response = browser.get("/department-functions" + suffix)
+        assert response.status_code == 303 and response.headers["location"] == target
+    permissions.read_matrix.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["", "/preview", "/draft"])
+def test_old_write_forms_are_gone_and_never_replayed(
+    browser: TestClient, db: MagicMock, stage: str
+) -> None:
+    response = browser.post(f"/department-functions/{DEPT}" + stage, data=payload(), headers=ORIGIN)
+    assert response.status_code == 410
+    permissions.read_matrix.assert_not_called()
+    permissions.write_permission.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_new_department_without_welcome_catalog_record_has_fixed_view(
+    browser: TestClient, db: MagicMock
+) -> None:
+    permissions.read_matrix.return_value = replace(MATRIX, rows=())
+    page = browser.get(PATH)
+    assert page.status_code == 200
+    assert page.text.count("data-builtin-welcome") == 1
+    assert 'checked disabled aria-label="歡迎頁：固定可查看"' in page.text
+    for action in ["新增", "修改", "刪除"]:
+        assert f'disabled aria-label="歡迎頁：不可{action}"' in page.text
+    assert "grant" not in Form(page.text).values
+    permissions.write_permission.assert_not_called()
+
+
+def test_existing_welcome_row_is_normalized_only_on_user_save(
+    browser: TestClient, db: MagicMock
+) -> None:
+    welcome = replace(
+        MATRIX.rows[1],
+        function=replace(MATRIX.rows[1].function, function_code="welcome", function_name="歡迎頁"),
+        actions=frozenset({Action.EDIT, Action.DELETE}),
+    )
+    permissions.read_matrix.return_value = replace(MATRIX, rows=(MATRIX.rows[0], welcome))
+    page = browser.get(PATH)
+    assert page.text.count("data-builtin-welcome") == 1
+    values = Form(page.text).values
+    assert f"{TWO}:view" in values["grant"]
+    assert f"{TWO}:edit" not in values["grant"]
+    assert browser.post(PATH, data=values, headers=ORIGIN).status_code == 303
+    permissions.write_permission.assert_called_once_with(db, DEPT, TWO, frozenset({Action.VIEW}))
+
+
+@pytest.mark.parametrize("actions", [[], ["view", "edit"], ["create"], ["delete"]])
+def test_forged_welcome_flags_cannot_clear_view_or_add_writes(
+    browser: TestClient, db: MagicMock, actions: list[str]
+) -> None:
+    welcome = replace(
+        MATRIX.rows[1], function=replace(MATRIX.rows[1].function, function_code="welcome")
+    )
+    permissions.read_matrix.return_value = replace(MATRIX, rows=(MATRIX.rows[0], welcome))
+    data = Form(browser.get(PATH).text).values
+    data["grant"] = [f"{ONE}:view"] + [f"{TWO}:{action}" for action in actions]
+    assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 400
+    permissions.write_permission.assert_not_called()
+    departments.update_details.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_bulk_controls_are_local_only_and_not_successful_form_fields(
+    browser: TestClient, db: MagicMock
+) -> None:
+    page = browser.get(PATH)
+    assert 'data-bulk-value="true"' in page.text and 'data-bulk-value="false"' in page.text
+    assert 'type="button"' in page.text
+    assert (
+        page.text.index("功能／平台／狀態</th>")
+        < page.text.index("全選</th>")
+        < page.text.index("查看</th>")
+    )
+    assert "e-department-bulk.js" in page.text
+    assert page.text.count("data-row-toggle") == len(MATRIX.rows)
+    keys = set(Form(page.text).values)
+    assert keys == {
+        "department_code",
+        "department_name",
+        "is_active",
+        "expected_revision",
+        "catalog_complete",
+        "function_id",
+        "grant",
+    }
+    permissions.write_permission.assert_not_called()
+    departments.update_details.assert_not_called()
+    db.commit.assert_not_called()

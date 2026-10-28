@@ -81,6 +81,44 @@ a:hover {
   background-color: var(--color-primary);
 }
 
+.app-sidebar__link--pending {
+  cursor: default;
+  overflow-wrap: anywhere;
+}
+
+.app-sidebar__link--pending:hover {
+  color: inherit;
+  background-color: transparent;
+}
+
+.app-sidebar__status {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.app-sidebar__logout {
+  margin: 0;
+}
+
+.app-sidebar__logout-button {
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-sidebar__logout-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
+}
+
 /* ---- 頁首：layouts/admin.html ---- */
 .app-header {
   display: flex;
@@ -104,6 +142,7 @@ a:hover {
 /* ---- 頁面共用區塊 ---- */
 .filter-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
@@ -169,3 +208,7 @@ a:hover {
   gap: var(--space-4);
   text-align: center;
 }
+
+/* 搜尋列在較窄的後台面板換行，避免標籤被壓成直排。 */
+.filter-bar > label, .filter-bar > .btn { flex-shrink: 0; white-space: nowrap; }
+.filter-bar > input, .filter-bar > select { min-width: 0; max-width: 100%; }

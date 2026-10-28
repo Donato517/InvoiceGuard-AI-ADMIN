@@ -11,13 +11,20 @@
     <aside class="app-sidebar">
       <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
       <nav aria-label="後台選單">
+        {% set logout_entry = namespace(rendered=false) %}
+        <a class="app-sidebar__link" href="/welcome">歡迎頁</a>
         <a class="app-sidebar__link" href="/workspace">工作台</a>
         <a class="app-sidebar__link" href="/account">本人資訊</a>
         {% for item in e_menu %}
           {% if item.code != "sys.department-permissions" %}
-            <a class="app-sidebar__link" href="{{ item.route }}">{{ item.name }}</a>
+            {% include "partials/sidebar_entry.html" %}
+          {% endif %}
+          {% if item.code == "sys.accounts" %}
+            {% include "partials/sidebar_logout.html" %}
+            {% set logout_entry.rendered = true %}
           {% endif %}
         {% endfor %}
+        {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
       </nav>
     </aside>
     <div class="admin-layout__main">

@@ -5,9 +5,36 @@
 <aside class="app-sidebar">
   <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
   <nav aria-label="後台選單">
-    {% for label, path in MENU_ITEMS %}
+    {% set logout_entry = namespace(rendered=false) %}
+    {% if request.state.e_configuration_authenticated is defined %}
+      <a class="app-sidebar__link" href="/welcome">歡迎頁</a>
+      {% for item in request.state.e_configuration_menu %}
+        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code == "sys.accounts" %}
+          {% include "partials/sidebar_logout.html" %}
+          {% set logout_entry.rendered = true %}
+        {% endif %}
+      {% endfor %}
+    {% elif request.state.e_welcome_authenticated is defined %}
+      <a class="app-sidebar__link app-sidebar__link--active" href="/welcome">歡迎頁</a>
+      {% for item in request.state.e_welcome_menu %}
+        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code == "sys.accounts" %}
+          {% include "partials/sidebar_logout.html" %}
+          {% set logout_entry.rendered = true %}
+        {% endif %}
+      {% endfor %}
+    {% else %}
+    {% set navigation = [("歡迎頁", "/welcome"), ("帳號管理", "/accounts"), ("部門管理", "/department"), ("功能管理", "/functions")] if request.state.e_local_setup is defined and request.state.e_local_setup else MENU_ITEMS %}
+    {% for label, path in navigation %}
       <a href="{{ path }}"
-         class="app-sidebar__link {% if request.url.path.startswith(path) %}app-sidebar__link--active{% endif %}">{{ label }}</a>
+         class="app-sidebar__link {% if (request.url.path == path or request.url.path.startswith(path + "/")) %}app-sidebar__link--active{% endif %}">{{ label }}</a>
+      {% if path == "/accounts" %}
+        {% include "partials/sidebar_logout.html" %}
+        {% set logout_entry.rendered = true %}
+      {% endif %}
     {% endfor %}
+    {% endif %}
+    {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
   </nav>
 </aside>

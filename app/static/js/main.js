@@ -65,4 +65,3 @@ document.addEventListener('change', (event) => {
     }
   }
 })
-

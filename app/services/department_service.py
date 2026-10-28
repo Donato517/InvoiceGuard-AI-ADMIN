@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.module_errors import ModuleConfigurationError
 from app.db.repositories import department_repository as repository
 from app.schemas.department import Department
+from app.services.e_configuration_security import authorize_transaction, finish_transaction
 
 
 class DepartmentError(ValueError):
@@ -93,8 +94,10 @@ def _run[T](operation: Callable[[Session], T], *, write: bool = True) -> T:
     except (ModuleConfigurationError, ValueError, repository.SQLAlchemyError):
         raise DepartmentError("資料庫未設定或無法連線，請使用既有 START 啟動 ADMIN") from None
     try:
+        security_before = authorize_transaction(db)
         result = operation(db)
         if write:
+            finish_transaction(db, security_before)
             db.commit()
         return result
     except repository.IntegrityError as error:

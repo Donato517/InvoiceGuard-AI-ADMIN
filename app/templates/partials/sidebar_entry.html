@@ -1,0 +1,10 @@
+{# @template partials/sidebar_entry.html；部門功能選單；item 為已驗證的側欄項目。 #}
+{% if item.route %}
+  <a class="app-sidebar__link{% if request.url.path == item.route or request.url.path.startswith(item.route + "/") %} app-sidebar__link--active{% endif %}"
+     href="{{ item.route }}">{{ item.name }}</a>
+{% else %}
+  <span class="app-sidebar__link app-sidebar__link--pending" aria-disabled="true">
+    <span>{{ item.name }}</span>
+    <small class="app-sidebar__status">{{ item.status }}</small>
+  </span>
+{% endif %}

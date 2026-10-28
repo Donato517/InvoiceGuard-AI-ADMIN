@@ -25,7 +25,7 @@ from app.schemas.e_admin import (
 )
 from app.services import account_management_service, department_service, e_function_settings_service
 from app.services.e_admin_service import EModule, get_e_module
-from app.services.e_registry import REGISTRY
+from app.services.e_registry import REGISTRY, Capability
 
 BASE = "http://invoiceguard-ai-admin.localhost:8080"
 ORIGIN = {"Origin": BASE}
@@ -34,6 +34,7 @@ DEPT = UUID("00000000-0000-4000-8000-000000000002")
 SESSION = UUID("00000000-0000-4000-8000-000000000003")
 TOKEN = "synthetic-admin-session-not-a-real-token"
 POSTS = [
+    f"/department/{DEPT}/edit",
     "/accounts/new",
     f"/accounts/{ACTOR}/edit",
     f"/accounts/{ACTOR}/disable",
@@ -50,6 +51,7 @@ POSTS = [
     f"/department-functions/{DEPT}",
 ]
 GETS = [
+    f"/department/{DEPT}/edit",
     "/accounts",
     "/accounts/new",
     f"/accounts/{ACTOR}/edit",
@@ -83,6 +85,9 @@ class Access:
         self.user = Identity(
             ACTOR, SESSION, DEPT, 1, datetime.now(UTC) + timedelta(hours=1), True, "admin", True
         )
+        self.registry = REGISTRY + (
+            Capability("sys.accounts", "帳號管理", "系統管理", "/accounts", frozenset(Action)),
+        )
         self.effects: dict[tuple[str, Action], str] = {}
         self.scope = DataScope("company")
         self.calls: list[tuple[str, Action]] = []
@@ -115,15 +120,21 @@ class Access:
             datetime.now(UTC) + timedelta(minutes=2),
             (EffectiveDepartment(DEPT, "SYNTHETIC", "測試部門"),),
             tuple(
-                self.decide(user, item.code, action) for item in REGISTRY for action in item.actions
+                self.decide(user, item.code, action)
+                for item in self.registry
+                for action in item.actions
             ),
             True,
         )
 
 
 @pytest.fixture
-def browser() -> Iterator[TestClient]:
+def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """真實路由與閘門，無預設 Cookie 或授權 override。"""
+    # 明確驗證關閉初始化例外後的正式閘門；開啟模式另由 test_e_local_setup 驗證。
+    from app.routers import e_admin
+
+    monkeypatch.setattr(e_admin, "LOCAL_SETUP_ENABLED", False)
     with TestClient(
         app, base_url=BASE, client=("127.0.0.1", 50000), follow_redirects=False
     ) as client:
@@ -135,7 +146,8 @@ def module(monkeypatch: pytest.MonkeyPatch) -> EModule:
     """只組裝合成 B／G，保留配置頁的 pending 整合拒絕。"""
     auth = MagicMock()
     auth.login.return_value = IssuedSession(ACTOR, SecretStr(TOKEN))
-    value = EModule(access=Access(), auth=auth)
+    access = Access()
+    value = EModule(access=access, auth=auth, registry=access.registry)
     monkeypatch.setitem(app.dependency_overrides, get_e_module, lambda: value)
     return value
 
@@ -252,7 +264,7 @@ def test_login_success_keeps_shared_session_cookie_properties(
             "next": "/functions",
         },
     )
-    assert page.status_code == 303 and page.headers["location"] == "/functions"
+    assert page.status_code == 303 and page.headers["location"] == "/welcome"
     cookie = page.headers["set-cookie"]
     for item in ["HttpOnly", "Secure", "SameSite=lax", "Path=/"]:
         assert item in cookie
@@ -319,7 +331,7 @@ def test_login_rejects_duplicate_fields_and_cross_origin(
 )
 def test_next_never_redirects_to_external_or_dev_pages(browser: TestClient, target: str) -> None:
     page = browser.get("/login", params={"next": target})
-    assert Inputs(page.text).fields["next"]["value"] == "/workspace"
+    assert Inputs(page.text).fields["next"]["value"] == "/welcome"
 
 
 @pytest.mark.parametrize(
@@ -339,11 +351,11 @@ def test_all_configuration_routes_require_login_before_data(
 @pytest.mark.parametrize(
     "path", ["/accounts", "/department", "/functions", "/department-functions"]
 )
-def test_cookie_without_shared_adapter_is_503_not_a_bypass(
+def test_invalid_cookie_cannot_bypass_login(
     browser: TestClient, stores: list[MagicMock], path: str
 ) -> None:
     browser.cookies.set(SESSION_COOKIE_NAME, TOKEN)
-    assert browser.get(path).status_code == 503
+    assert browser.get(path).status_code == 303
     for spy in stores:
         spy.assert_not_called()
 
@@ -360,7 +372,7 @@ def test_authenticated_user_still_waits_for_safe_data_and_transaction_bridge(
         spy.assert_not_called()
 
 
-@pytest.mark.parametrize("fault", ["frontend", "expired", "not_admin", "no_system_management"])
+@pytest.mark.parametrize("fault", ["frontend", "expired", "not_admin"])
 def test_invalid_admin_qualification_never_reaches_features(
     browser: TestClient, module: EModule, stores: list[MagicMock], fault: str
 ) -> None:
@@ -368,7 +380,6 @@ def test_invalid_admin_qualification_never_reaches_features(
         "frontend": {"session_audience": "frontend"},
         "expired": {"expires_at": datetime.now(UTC) - timedelta(seconds=1)},
         "not_admin": {"admin_access": False},
-        "no_system_management": {"system_management": False},
     }
     module.access.user = replace(module.access.user, **changes[fault])
     browser.cookies.set(SESSION_COOKIE_NAME, TOKEN)
@@ -425,3 +436,162 @@ def test_login_error_escapes_email_instead_of_rendering_markup(
     )
     assert page.status_code == 401 and "&lt;script&gt;" in page.text
     assert "<script>synthetic()" not in page.text and "synthetic-private-password" not in page.text
+
+
+@pytest.mark.parametrize("effect", ["unset", "deny"])
+def test_welcome_only_login_does_not_unlock_other_features(
+    browser: TestClient,
+    module: EModule,
+    stores: list[MagicMock],
+    effect: str,
+) -> None:
+    module.access.user = replace(module.access.user, system_management=False)
+    module.access.effects = {
+        (item.code, action): effect for item in module.registry for action in item.actions
+    }
+    response = browser.post(
+        "/login",
+        headers=ORIGIN,
+        data={
+            "email": "synthetic@example.invalid",
+            "password": "synthetic-not-real",
+            "next": "/functions",
+        },
+    )
+    assert response.status_code == 303 and response.headers["location"] == "/welcome"
+    page = browser.get("/welcome")
+    assert page.status_code == 200 and "歡迎回來" in page.text
+    for path in ["/accounts", "/department", "/functions", "/workspace", "/account"]:
+        assert f'href="{path}"' not in page.text
+        assert browser.get(path).status_code == 403
+    for spy in stores:
+        spy.assert_not_called()
+
+
+@pytest.mark.parametrize("action", [Action.CREATE, Action.EDIT, Action.DELETE])
+def test_builtin_welcome_rejects_writes_even_for_a_system_manager(
+    module: EModule, action: Action
+) -> None:
+    from app.schemas.e_admin import DeniedError
+
+    with pytest.raises(DeniedError):
+        module.check(module.access.user, "welcome", action)
+
+
+@pytest.mark.parametrize("method", ["post", "patch", "delete"])
+def test_welcome_has_no_content_write_endpoint(browser: TestClient, method: str) -> None:
+    assert getattr(browser, method)("/welcome", headers=ORIGIN).status_code == 405
+
+
+@pytest.mark.parametrize("fault", ["expired", "frontend", "not_admin", "revoked"])
+def test_welcome_still_requires_current_valid_admin_identity(
+    browser: TestClient, module: EModule, fault: str
+) -> None:
+    browser.cookies.set(SESSION_COOKIE_NAME, TOKEN)
+    changes = {
+        "expired": {"expires_at": datetime.now(UTC) - timedelta(seconds=1)},
+        "frontend": {"session_audience": "frontend"},
+        "not_admin": {"admin_access": False},
+    }
+    if fault == "revoked":
+        browser.cookies.set(SESSION_COOKIE_NAME, "synthetic-revoked-token")
+    else:
+        module.access.user = replace(module.access.user, **changes[fault])
+    assert browser.get("/welcome").status_code == (303 if fault in {"expired", "revoked"} else 403)
+
+
+def test_formal_welcome_is_not_an_anonymous_public_page(browser: TestClient) -> None:
+    assert browser.get("/welcome").status_code == 303
+    assert browser.get("/").headers["location"] == "/welcome"
+
+
+def test_welcome_baseline_does_not_depend_on_business_grant_service(
+    browser: TestClient, module: EModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.schemas.e_admin import UnavailableError
+
+    browser.cookies.set(SESSION_COOKIE_NAME, TOKEN)
+    monkeypatch.setattr(module.access, "effective_access", MagicMock(side_effect=UnavailableError))
+    page = browser.get("/welcome")
+    assert page.status_code == 200 and "歡迎回來" in page.text
+    assert 'href="/functions"' not in page.text
+    assert browser.get("/functions").status_code == 503
+
+
+@pytest.mark.parametrize("department_id", [DEPT, UUID("00000000-0000-4000-8000-000000000099")])
+def test_baseline_follows_verified_selected_department_without_seed(
+    module: EModule, department_id: UUID
+) -> None:
+    user = replace(
+        module.access.user, selected_department_id=department_id, system_management=False
+    )
+    decision = module.check(user, "welcome", Action.VIEW)
+    assert decision.selected_department_id == department_id
+    assert decision.action == Action.VIEW and decision.scope.kind == "own"
+    assert decision.policy_version == "builtin-welcome/v1"
+    assert module.access.calls == []
+
+
+def test_welcome_cannot_authorize_other_data_or_forged_write_capabilities(module: EModule) -> None:
+    from app.schemas.e_admin import DeniedError, Target
+    from app.services.e_authorization import require_permission
+    from app.services.e_registry import Capability
+
+    with pytest.raises(DeniedError):
+        module.check(module.access.user, "welcome", Action.VIEW, Target(global_resource=True))
+    with pytest.raises(DeniedError):
+        require_permission(
+            module.access,
+            module.access.user,
+            "welcome",
+            Action.EDIT,
+            definition=Capability(
+                "welcome", "偽造修改", "測試", "/welcome", frozenset({Action.EDIT}), False, False
+            ),
+        )
+
+
+def test_login_department_permission_changes_are_rechecked_with_same_cookie(
+    browser: TestClient, module: EModule, stores: list[MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一般部門成員登入後，撤銷勾選即失去管理功能；歡迎頁仍可讀。"""
+    module.access.user = replace(module.access.user, system_management=False)
+    response = browser.post(
+        "/login",
+        headers=ORIGIN,
+        data={"email": "synthetic@example.invalid", "password": "synthetic-not-real"},
+    )
+    assert response.status_code == 303 and response.headers["location"] == "/welcome"
+    assert 'href="/system/features"' in browser.get("/welcome").text
+    assert browser.get("/functions").status_code == 503  # 此替身沒有交易接點
+    module.access.effects = {
+        (item.code, action): "deny" for item in module.registry for action in item.actions
+    }
+    page = browser.get("/welcome")
+    assert page.status_code == 200 and 'href="/system/features"' not in page.text
+    assert browser.get("/functions").status_code == 403
+    monkeypatch.setattr(module.access, "authenticate", lambda token: None)
+    assert browser.get("/welcome").status_code == 303
+    for spy in stores:
+        spy.assert_not_called()
+
+
+def test_department_view_checkbox_cannot_submit_unchecked_edits(
+    browser: TestClient, module: EModule, stores: list[MagicMock]
+) -> None:
+    module.access.user = replace(module.access.user, system_management=False)
+    module.access.effects = {
+        (item.code, action): "allow" if action == Action.VIEW else "deny"
+        for item in module.registry
+        for action in item.actions
+    }
+    response = browser.post(
+        "/login",
+        headers=ORIGIN,
+        data={"email": "synthetic@example.invalid", "password": "synthetic-not-real"},
+    )
+    assert response.status_code == 303
+    assert browser.get("/welcome").status_code == 200
+    assert browser.post(f"/functions/{ACTOR}/status", headers=ORIGIN).status_code == 403
+    for spy in stores:
+        spy.assert_not_called()

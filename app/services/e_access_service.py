@@ -14,6 +14,7 @@ from app.schemas.e_access import (
 from app.schemas.e_admin import Action, DataScope, DeniedError, Identity, Target, UnavailableError
 from app.schemas.e_ports import AccessPort
 from app.services.e_adapter import call_adapter
+from app.services.e_authorization import permission_effects_allow
 from app.services.e_registry import Capability, validate_registry
 
 ACTION_LABELS = {
@@ -80,8 +81,11 @@ def validate_access_snapshot(
             decision.policy_version != snapshot.policy_version
             or decision.valid_until.tzinfo is None
             or decision.valid_until <= now
-            or decision.department_effect not in {"allow", "deny", "unset"}
-            or (definition.management and decision.role_effect not in {"allow", "deny", "unset"})
+            or decision.authorization_basis != "department"
+            or (
+                decision.authorization_basis == "department"
+                and decision.department_effect not in {"allow", "deny", "unset"}
+            )
             or not isinstance(decision.function_active, bool)
         ):
             raise UnavailableError
@@ -91,12 +95,9 @@ def validate_access_snapshot(
         ):
             raise UnavailableError
         if (
-            decision.department_effect != "allow"
-            or (definition.management and decision.role_effect != "allow")
-            or not decision.function_active
+            not permission_effects_allow(identity, definition, decision)
             or scope.kind == "none"
             or (scope.kind == "departments" and not scope.department_ids)
-            or (definition.management and definition.system_only and not identity.system_management)
         ):
             continue
         if definition.code == "sys.features" and not scope.covers(

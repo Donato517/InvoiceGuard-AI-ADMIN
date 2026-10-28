@@ -1,0 +1,46 @@
+/* 部門內容頁與列表，窄視窗保持文字正常排列，僅操作表格可橫向捲動。 */
+.e-department-detail { margin-top: 24px; max-width: 1100px; }
+.e-department-detail__table { overflow-x: auto; max-width: 100%; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.e-department-detail__table .e-permission-table { min-width: 720px; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
+.e-department-detail__table label { white-space: nowrap; }
+.e-department-detail__buttons { display: flex; flex-wrap: wrap; gap: 12px; }
+.e-department-detail .btn { min-height: 44px; }
+.filter-bar { flex-wrap: wrap; }
+.filter-bar label, .filter-bar .btn { flex-shrink: 0; white-space: nowrap; }
+.filter-bar input { min-width: 0; max-width: 100%; }
+#departments { overflow-x: auto; }
+
+@media (max-width: 800px) {
+  .admin-layout { grid-template-columns: minmax(0, 1fr); }
+  .admin-layout__content { padding: 16px; min-width: 0; }
+  .app-sidebar nav { display: flex; flex-wrap: wrap; }
+  .app-sidebar__link { padding: 12px 16px; }
+}
+
+/* 全選與單項均用原生核取方塊；工具控制項不屬於送出資料。 */
+.e-department-detail [hidden] { display: none; }
+.e-department-detail__bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.e-department-detail__bulk span { color: var(--color-text-muted); }
+.e-department-detail__bulk-status:empty { display: none; }
+
+/* 每個操作格都採相同的「控制項 + 說明」兩行結構，避免全選被垂直置中到不同位置。 */
+.e-permission-table__function-col { width: 36%; }
+.e-permission-table__action-col { width: 12.8%; }
+.e-permission-table th { padding: 16px; font-size: 14px; font-weight: 600; background: #f8fafc; color: #475569; }
+.e-permission-table td { padding: 20px 16px; vertical-align: middle; }
+.e-permission-table th:not(:first-child), .e-permission-table td:not(:first-child) { text-align: center; }
+.e-permission-table tbody tr:last-child td { border-bottom: 0; }
+.e-permission-table [data-builtin-welcome] { background: #fafbfd; }
+.e-permission-function { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.e-permission-function__name { font-size: 15px; font-weight: 600; line-height: 24px; overflow-wrap: anywhere; }
+.e-permission-function code { font-size: 13px; line-height: 20px; color: #64748b; overflow-wrap: anywhere; }
+.e-permission-function__meta { color: #64748b; font-size: 12px; line-height: 20px; }
+.e-permission-function__separator { margin: 0 7px; }
+.e-permission-state { color: #64748b; }
+.e-permission-state--active { color: #287657; }
+.e-permission-choice { display: grid; grid-template-rows: 24px 18px; gap: 6px; justify-items: center; align-items: center; }
+.e-permission-choice label { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 24px; line-height: 24px; font-size: 14px; }
+.e-permission-choice input[type="checkbox"] { width: 16px; height: 16px; margin: 0; flex: 0 0 16px; accent-color: var(--color-primary); }
+.e-permission-choice__note { min-height: 18px; font-size: 12px; line-height: 18px; color: #64748b; white-space: nowrap; }
+.e-permission-choice__fixed { font-size: 14px; line-height: 24px; color: #64748b; }
+.e-permission-choice--disabled label { color: #94a3b8; }

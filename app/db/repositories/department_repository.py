@@ -147,3 +147,32 @@ def set_active(db: Session, department_id: UUID, active: bool) -> Department:
     return Department(
         **db.execute(STATUS, {"id": department_id, "active": active}).mappings().one()
     )
+
+
+def get_department(db: Session, department_id: UUID) -> Department | None:
+    """單筆內容頁查詢，不取寫入鎖、不讀帳號資料。"""
+    row = (
+        db.execute(
+            text(f"SELECT {_COLUMNS} FROM public.departments WHERE department_id=:id"),
+            {"id": department_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return Department(**row) if row else None
+
+
+def update_details(db: Session, department_id: UUID, code: str, name: str, active: bool) -> None:
+    """同交易一次更新三個部門欄位；呼叫端已鎖列及驗證，不自行提交。"""
+    db.execute(
+        text("""
+            UPDATE public.departments SET department_code=:code, department_name=:name,
+                is_active=:active, updated_at=now() WHERE department_id=:id
+        """),
+        {"id": department_id, "code": code, "name": name, "active": active},
+    )
+
+
+def prepare_detail_read(db: Session) -> None:
+    """內容頁以同一個唯讀快照讀取部門及功能，不取寫入鎖。"""
+    db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))

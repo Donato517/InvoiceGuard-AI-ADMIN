@@ -1,23 +1,17 @@
 """
 模組名稱：app.routers.dashboard
 功能說明：儀表板（後台首頁）。
-路由：GET /（導向 /dashboard）、GET /dashboard
+路由：GET /dashboard；網站首頁由 auth 的內建歡迎入口處理
 """
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 
 from app.core.deps import require_admin
 from app.core.templating import templates
 from app.routers.invoices import _INVOICE_STORE
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(require_admin)])
-
-
-@router.get("/")
-def index() -> RedirectResponse:
-    """後台首頁直接導向儀表板。"""
-    return RedirectResponse("/dashboard", status_code=303)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)

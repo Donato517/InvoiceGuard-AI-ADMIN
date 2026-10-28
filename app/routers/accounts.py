@@ -1,7 +1,7 @@
 """模組名稱：app.routers.accounts
 功能說明：正式帳號管理列表及內容頁，管理者直接修改、刪除採停用。
 路由：GET /accounts、GET/POST /accounts/new、GET/POST /accounts/{user_id}/edit、POST /accounts/{user_id}/disable、POST /accounts/{user_id}/departments
-注意事項：本機也必須經 E 身分／授權接點；資料與交易接線未完成時拒絕，雲端關閉。
+注意事項：核定本機初始化暫免登入；正式身分／授權仍待接線，雲端關閉。
 """
 
 from ipaddress import ip_address

@@ -1,0 +1,124 @@
+{#
+  @template pages/departments/list.html
+  @description 部門列表、新增、修改名稱、啟用與停用，沿用 ADMIN 元件。
+  @route GET/POST /department、POST /department/{department_id}/name、/code、/status（限本機）
+  @context departments: list[Department] 真實資料庫搜尋結果
+  @context q: str 搜尋文字
+  @context message: str 成功訊息
+  @context error: str 失敗訊息
+  @context code: str 新增失敗保留代碼
+  @context name: str 新增失敗保留名稱
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}部門管理{% endblock %}
+{% block content %}
+  <div id="departments"
+       hx-target="#departments"
+       hx-select="#departments"
+       hx-swap="outerHTML">
+    <p class="alert">本機開發測試：連接既有資料庫，請僅建立及操作虛構測試部門。正式部署前須接回授權機制。</p>
+    {% if message %}<p class="alert" role="status">{{ message }}</p>{% endif %}
+    {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+    <h2>部門列表</h2>
+    <form class="filter-bar"
+          method="get"
+          action="/department"
+          hx-get="/department">
+      <label for="q">部門代碼或名稱</label>
+      <input id="q" name="q" type="search" value="{{ q }}" maxlength="200">
+      <button type="submit" class="btn">搜尋</button>
+      <a class="btn" href="/department">清除</a>
+    </form>
+    {% if departments %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">代碼</th>
+            <th scope="col">名稱</th>
+            <th scope="col">狀態</th>
+            <th scope="col">建立時間</th>
+            <th scope="col">修改時間</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for department in departments %}
+            <tr>
+              <td>{{ department.department_code }}</td>
+              <td>{{ department.department_name }}</td>
+              <td><span class="badge">{{ '啟用' if department.is_active else '停用' }}</span></td>
+              <td>{{ department.created_at | taipei_datetime }}</td>
+              <td>{{ department.updated_at | taipei_datetime }}</td>
+              <td>
+                <a class="btn"
+                   href="/department-functions?department_id={{ department.department_id }}">設定功能</a>
+                <details>
+                  <summary>修改部門</summary>
+                  {% if department.department_code != "UNASSIGNED" %}
+                    <form class="form"
+                          method="post"
+                          action="/department/{{ department.department_id }}/code"
+                          hx-post="/department/{{ department.department_id }}/code">
+                      <div class="form-field">
+                        <label for="code-{{ department.department_id }}">部門代碼</label>
+                        <input id="code-{{ department.department_id }}"
+                               name="code"
+                               value="{{ department.department_code }}"
+                               maxlength="200"
+                               required>
+                      </div>
+                      <button class="btn" type="submit">儲存代碼</button>
+                    </form>
+                  {% endif %}
+                  <form class="form"
+                        method="post"
+                        action="/department/{{ department.department_id }}/name"
+                        hx-post="/department/{{ department.department_id }}/name">
+                    <div class="form-field">
+                      <label for="name-{{ department.department_id }}">部門名稱（{{ department.department_code }}）</label>
+                      <input id="name-{{ department.department_id }}"
+                             name="name"
+                             value="{{ department.department_name }}"
+                             maxlength="200"
+                             required>
+                    </div>
+                    <button class="btn" type="submit">儲存名稱</button>
+                  </form>
+                </details>
+                {% if department.is_active %}
+                  <form method="post"
+                        action="/department/{{ department.department_id }}/status"
+                        data-confirm="確定停用此部門嗎？系統會先檢查帳號與部門關聯。">
+                    <input type="hidden" name="active" value="false">
+                    <button class="btn" type="submit">停用</button>
+                  </form>
+                {% else %}
+                  <form method="post"
+                        action="/department/{{ department.department_id }}/status"
+                        hx-post="/department/{{ department.department_id }}/status">
+                    <input type="hidden" name="active" value="true">
+                    <button class="btn" type="submit">啟用</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% elif not error %}
+      <p class="empty-state">沒有符合的部門</p>
+    {% endif %}
+    <h2>新增部門</h2>
+    <form class="form" method="post" action="/department" hx-post="/department">
+      <div class="form-field">
+        <label for="code">部門代碼</label>
+        <input id="code" name="code" value="{{ code }}" maxlength="200" required>
+      </div>
+      <div class="form-field">
+        <label for="name">部門名稱</label>
+        <input id="name" name="name" value="{{ name }}" maxlength="200" required>
+      </div>
+      <button class="btn btn--primary" type="submit">新增部門</button>
+    </form>
+  </div>
+{% endblock content %}

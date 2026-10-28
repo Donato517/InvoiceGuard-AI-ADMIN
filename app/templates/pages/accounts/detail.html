@@ -1,0 +1,94 @@
+{#
+  @template pages/accounts/detail.html
+  @description 正式帳號內容頁：共用新增／修改表單；管理者直接改密碼，刪除採停用。
+  @route GET/POST /accounts/new、GET/POST /accounts/{user_id}/edit、POST /accounts/{user_id}/disable、POST /accounts/{user_id}/departments（目前限本機）
+  @context account: AccountSummary | None 目前帳號資料
+  @context user_id: UUID | None 修改目標，None 為新增
+  @context email: str Email 回填值，密碼永不回填
+  @context message: str 成功提示
+  @context error: str 失敗提示
+  @context department_settings: AccountDepartmentSettings | None 部門選項及已選關聯
+  @context department_error: str 部門選項讀取失敗訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}{{ '修改帳號' if user_id else '新增帳號' }}{% endblock %}
+{% block content %}
+  <div class="filter-bar"><a class="btn" href="/accounts">返回帳號列表</a></div>
+  {% if message %}<p class="alert" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  {% if account %}
+    <p>UUID：<code>{{ account.user_id }}</code></p>
+    <p>狀態：{{ '啟用' if account.account_status == 'active' else ('停用' if account.account_status == 'disabled' else account.account_status) }}</p>
+  {% endif %}
+  {% if not user_id or account %}
+    <form class="form"
+          method="post"
+          action="{{ '/accounts/' ~ user_id ~ '/edit' if user_id else '/accounts/new' }}">
+      <div class="form-field">
+        <label for="email">Email</label>
+        <input id="email"
+               name="email"
+               type="email"
+               value="{{ email }}"
+               maxlength="320"
+               autocomplete="off"
+               required>
+      </div>
+      <div class="form-field">
+        {% if user_id %}
+          <label for="new-password">重設密碼（留空保留原密碼）</label>
+          <input id="new-password"
+                 name="new_password"
+                 type="password"
+                 maxlength="256"
+                 autocomplete="new-password">
+          <p>管理者可直接重設密碼，無需輸入此帳號原密碼。</p>
+        {% else %}
+          <label for="password">初始密碼</label>
+          <input id="password"
+                 name="password"
+                 type="password"
+                 maxlength="256"
+                 autocomplete="new-password"
+                 required>
+        {% endif %}
+      </div>
+      {% if not user_id %}
+        {% if department_settings %}
+          {% include "pages/accounts/_departments.html" %}
+        {% else %}
+          <p class="alert alert--danger" role="alert">部門資料無法讀取，暫時無法新增帳號：{{ department_error }}</p>
+        {% endif %}
+      {% endif %}
+      <div>
+        <button class="btn btn--primary"
+                type="submit"
+                {% if not user_id and not department_settings %}disabled{% endif %}>{{ '儲存變更' if user_id else '新增帳號' }}</button>
+      </div>
+    </form>
+    {% if user_id %}
+      <h2>帳號對應部門</h2>
+      {% if department_settings %}
+        <form class="form"
+              method="post"
+              action="/accounts/{{ user_id }}/departments">
+          {% include "pages/accounts/_departments.html" %}
+          <div>
+            <button class="btn btn--primary" type="submit">儲存部門設定</button>
+          </div>
+        </form>
+      {% else %}
+        <p class="alert alert--danger" role="alert">部門資料無法讀取：{{ department_error }}</p>
+      {% endif %}
+    {% endif %}
+    {% if account and account.account_status != "disabled" %}
+      <h2>刪除帳號（停用）</h2>
+      <p>帳號將停用，原有資料與部門關聯均保留，不執行永久刪除。</p>
+      <form method="post"
+            action="/accounts/{{ user_id }}/disable"
+            data-confirm="確定停用此帳號嗎？帳號資料與部門關聯將保留。">
+        <button class="btn" type="submit">停用帳號</button>
+      </form>
+    {% endif %}
+  {% endif %}
+{% endblock content %}

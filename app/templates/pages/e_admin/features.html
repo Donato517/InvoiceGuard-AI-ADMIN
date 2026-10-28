@@ -1,0 +1,98 @@
+{#
+  @template pages/e_admin/features.html
+  @description 功能目錄與固定分類／route／action 說明，不接受自訂執行路徑。
+  @route GET /system/features、/system/features/{function_id}（需管理授權）
+  @context items: list 功能目錄
+  @context selected: Feature | None 選取功能
+  @context registry: tuple 固定能力
+  @context can_save: bool 是否可新增或修改
+#}
+{% extends "layouts/e_admin.html" %}
+{% block title %}功能目錄{% endblock %}
+{% block content %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>代碼</th>
+        <th>名稱</th>
+        <th>平台</th>
+        <th>狀態</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>{{ item.function_code }}</td>
+          <td>{{ item.function_name }}</td>
+          <td>{{ item.app_scope }}</td>
+          <td>{{ '啟用' if item.is_active else '停用' }}</td>
+          <td><a href="/system/features/{{ item.function_id }}">查看／修改</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if can_save %}
+    <h2>{{ '修改功能' if selected else '新增功能' }}</h2>
+    <form class="form"
+          method="post"
+          action="/system/features{% if selected %}/{{ selected.function_id }}{% endif %}">
+      {% if selected %}
+        <input type="hidden"
+               name="expected_revision"
+               value="{{ selected.revision }}">
+      {% endif %}
+      <div class="form-field">
+        <label for="function-code">功能代碼（建立後固定）</label>
+        <input id="function-code"
+               name="function_code"
+               maxlength="100"
+               value="{{ selected.function_code if selected else '' }}"
+               {% if selected %}readonly{% endif %}
+               required>
+      </div>
+      <div class="form-field">
+        <label for="function-name">功能名稱</label>
+        <input id="function-name"
+               name="function_name"
+               maxlength="200"
+               value="{{ selected.function_name if selected else '' }}"
+               required>
+      </div>
+      <label for="app-scope">適用平台</label>
+      <select id="app-scope" name="app_scope">
+        {% for scope in ['admin', 'frontend', 'both'] %}
+          <option value="{{ scope }}"
+                  {% if selected and selected.app_scope == scope %}selected{% endif %}>{{ scope }}</option>
+        {% endfor %}
+      </select>
+      <label><input name="is_active"
+       type="checkbox"
+       value="true"
+       {% if selected and selected.is_active %}checked{% endif %}>啟用</label>
+      <p>只有已接入的功能可啟用；新增名稱不會新增可操作的程式。</p>
+      <button class="btn btn--primary" type="submit">儲存功能</button>
+    </form>
+  {% endif %}
+  <h2>已接入功能說明</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>分類</th>
+        <th>代碼</th>
+        <th>站內路徑</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in registry %}
+        <tr>
+          <td>{{ item.category }}</td>
+          <td>{{ item.code }}</td>
+          <td>{{ item.route }}</td>
+          <td>{{ item.actions | sort | join(", ") }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock content %}

@@ -1,0 +1,26 @@
+{#
+  @template pages/e_admin/forgot.html
+  @description 共用忘記密碼申請，不自行發行 Token。
+  @route GET /auth/password/forgot、POST /auth/password/forgot
+  @context message: str | None 通用受理訊息
+#}
+{% extends "layouts/blank.html" %}
+{% block title %}忘記密碼{% endblock %}
+{% block content %}
+  <section class="auth-card">
+    <h1>忘記密碼</h1>
+    {% if message %}<p role="status">{{ message }}</p>{% endif %}
+    <form class="form" method="post" action="/auth/password/forgot">
+      <div class="form-field">
+        <label for="reset-email">Email</label>
+        <input id="reset-email"
+               name="email"
+               type="email"
+               autocomplete="username"
+               required>
+      </div>
+      <button class="btn btn--primary" type="submit">申請重設密碼</button>
+    </form>
+    <p><a href="/login">回登入頁</a></p>
+  </section>
+{% endblock content %}

@@ -7,10 +7,21 @@ InvoiceGuard AI 管理後台：發票審核、使用者管理、排程與稽核�
 | 語言 / 框架 | Python 3.12 + FastAPI + Jinja2 樣板（伺服器端產生 HTML） |
 | 互動 | HTMX（以 HTML 屬性做局部更新，幾乎不寫 JavaScript） |
 | 資料來源 | **自有 DB 模組**（SQLAlchemy），直接連與 API 相同的 PostgreSQL |
-| 登入 | 管理者帳號（`users.role = admin`），已簽署的 httpOnly cookie |
+| 登入 | 06_E 委派 B 共用 PortableAuth，HttpOnly opaque Cookie；正式 adapter 尚未接線，登入 POST 回 503 |
 | 品質工具 | Ruff（Python）、djLint（樣板）、pytest |
 | 部署 | Vercel Python Runtime（自動偵測 `app/main.py`），不開放搜尋引擎索引 |
 | 相關專案 | [InvoiceGuard-AI-API](https://github.com/Donato517/InvoiceGuard-AI-API)（後端 API，資料表結構管理者）、[InvoiceGuard-AI](https://github.com/Donato517/InvoiceGuard-AI)（前台） |
+
+## 06_E 本機配置入口（2026-10-27）
+
+最新核定已取消以下配置入口的本機免登入。它們及子路由均驗身分與操作；正式資料／交易授權接線未完成時保持拒絕，雲端仍關閉：
+
+- [功能管理](http://invoiceguard-ai-admin.localhost:8080/functions)
+- [部門功能](http://invoiceguard-ai-admin.localhost:8080/department-functions)
+- [新增／修改部門](http://invoiceguard-ai-admin.localhost:8080/department)
+- [新增帳號並勾選部門](http://invoiceguard-ai-admin.localhost:8080/accounts/new)
+
+操作、主管與多部門新規則、已驗證範圍及正式接點待辦見 [E-FUNCTION-PAGES.md](docs/E-FUNCTION-PAGES.md)。最新登入頁、四入口封閉狀態與接線待辦見 [E-LOGIN-ACCESS.md](docs/E-LOGIN-ACCESS.md)。本批僅做離線驗證；正式登入與主管端到端仍待接線。
 
 ## 快速開始（Windows 團隊開發）
 
@@ -86,3 +97,7 @@ START 最後自動開啟當次 HTTPS 的 `/login`，電腦與手機都直接看�
 
 `docs/CLAUDE_REVIEW_PROMPT.md`、`docs/CLAUDE_DB_READONLY_REVIEW.md`、`docs/LOCAL_CLOUD_DB_CRUD_DISCUSSION.md`
 是歷史檢驗指令與討論紀錄，不是現行規則；`docs/DB_READONLY_PROBE.md` 說明既有唯讀檢查功能。
+
+## 06_E 最新開發交接（2026-10-27）
+
+E 的部門、功能目錄、G 同源矩陣及登入／本人 UI 已有程式與離線測試；正式 B／G／DB journal 仍待接線，缺少時拒絕操作。入口見 [E-TEAM-HANDOFF.md](docs/E-TEAM-HANDOFF.md)，實測與界線見 [E-IMPLEMENTATION-RESULTS.md](docs/E-IMPLEMENTATION-RESULTS.md)。

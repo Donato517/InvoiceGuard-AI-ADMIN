@@ -8,8 +8,6 @@
     - cookie 設定 SameSite=Lax，並對會變更資料的 POST 請求加上 verify_same_origin 檢查。
 """
 
-import hashlib
-import hmac
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -33,25 +31,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """比對密碼與雜湊值是否相符。"""
-    if not password or not password_hash:
-        return False
-    if password_hash.startswith("pbkdf2:sha256:"):
-        try:
-            parts = password_hash.split("$")
-            if len(parts) == 3:
-                iterations = int(parts[0].split(":")[2])
-                salt = parts[1].encode("utf-8")
-                expected_hash = parts[2]
-                calc = hashlib.pbkdf2_hmac(
-                    "sha256", password.encode("utf-8"), salt, iterations
-                ).hex()
-                return hmac.compare_digest(calc, expected_hash)
-        except Exception:
-            return False
-    try:
-        return _password_hash.verify(password, password_hash)
-    except Exception:
-        return False
+    return _password_hash.verify(password, password_hash)
 
 
 # ---- 登入 cookie ----
@@ -69,17 +49,12 @@ def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret_key, salt=_SESSION_SALT)
 
 
-def create_session_token(user_id: int | str) -> str:
+def create_session_token(user_id: int) -> str:
     """產生已簽署的登入資料（寫入 cookie 用）。"""
-    uid_val = (
-        int(user_id)
-        if isinstance(user_id, int) or (isinstance(user_id, str) and user_id.isdigit())
-        else str(user_id)
-    )
-    return _serializer().dumps({"uid": uid_val})
+    return _serializer().dumps({"uid": user_id})
 
 
-def read_session_token(token: str) -> str | int | None:
+def read_session_token(token: str) -> int | None:
     """驗證登入資料並取出管理者 ID。
 
     Returns:
@@ -90,10 +65,10 @@ def read_session_token(token: str) -> str | int | None:
     except BadSignature:  # 已過期（SignatureExpired）也是 BadSignature 的子類別
         return None
     user_id = data.get("uid") if isinstance(data, dict) else None
-    return user_id if isinstance(user_id, (int, str)) else None
+    return user_id if isinstance(user_id, int) else None
 
 
-def set_session_cookie(response: Response, user_id: int | str) -> None:
+def set_session_cookie(response: Response, user_id: int) -> None:
     """登入成功後寫入登入 cookie。"""
     response.set_cookie(
         SESSION_COOKIE_NAME,

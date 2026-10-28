@@ -115,3 +115,7 @@ Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
 歷史檢驗指令與實測結果見各站 `docs/REVIEW_FIX_LOG.md`、`docs/TEST_REPORT.md`。
 
 官方參考：[Vercel 環境變數](https://vercel.com/docs/environment-variables)、[系統環境變數](https://vercel.com/docs/environment-variables/system-environment-variables)。
+
+## 06_E 的本機狀態（2026-10-27）
+
+舊 require_admin 的 Session 簽署機密限制仍適用其他組原路由。E 的正式登入已改為 B 共用 opaque Session adapter；尚未接線時回 503，不注入另一個 SESSION_SECRET_KEY，也不使用 APP_ENV=local 放行。本機仍連正式 DB／Storage，沒有因此取得操作正式資料的授權。見 [E 交接](E-TEAM-HANDOFF.md)。

@@ -11,9 +11,7 @@
         ...
 """
 
-import contextlib
-from collections.abc import Iterator
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -21,7 +19,6 @@ from sqlalchemy.orm import Session
 from app.constants import SESSION_COOKIE_NAME
 from app.core.config import settings
 from app.core.exceptions import ForbiddenError, LoginRequiredError, NotFoundError
-from app.core.module_errors import ModuleConfigurationError
 from app.core.security import read_session_token
 from app.db.models.user import User, UserRole
 from app.db.repositories import user_repository
@@ -31,29 +28,7 @@ from app.db.session import get_db
 DbSession = Annotated[Session, Depends(get_db)]
 
 
-def get_optional_db() -> Iterator[Session | None]:
-    """FastAPI 相依注入：取得資料庫 Session；未設定資料庫時回傳 None（支援無雲端 DB 的本機開發／示範模式）。"""
-    try:
-        gen = get_db()
-        session = next(gen)
-    except (ModuleConfigurationError, RuntimeError):
-        yield None
-        return
-    except Exception:
-        yield None
-        return
-
-    try:
-        yield session
-    finally:
-        with contextlib.suppress(Exception):
-            next(gen, None)
-
-
-OptionalDbSession = Annotated[Session | None, Depends(get_optional_db)]
-
-
-def get_session_user_id(request: Request) -> str | int:
+def get_session_user_id(request: Request) -> int:
     """從登入 cookie 取出管理者 ID；未登入、遭竄改或過期時拋出 LoginRequiredError。"""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     user_id = _read_user_id(token) if token else None
@@ -62,7 +37,7 @@ def get_session_user_id(request: Request) -> str | int:
     return user_id
 
 
-def _read_user_id(token: str) -> str | int | None:
+def _read_user_id(token: str) -> int | None:
     """驗證登入 cookie；本機沒有簽署金鑰時，殘留的 cookie 視為未登入。"""
     try:
         return read_session_token(token)
@@ -76,17 +51,15 @@ def _read_user_id(token: str) -> str | int | None:
 def require_admin(
     request: Request,
     # NOTE: 必須排在 db 之前——未登入時先拋出例外，不必建立資料庫連線
-    user_id: Annotated[str | int, Depends(get_session_user_id)],
-    db: OptionalDbSession,
-) -> User | Any:
+    user_id: Annotated[int, Depends(get_session_user_id)],
+    db: DbSession,
+) -> User:
     """確認目前使用者是啟用中的管理者，並放入 request.state.admin 供樣板使用。
 
     Raises:
         LoginRequiredError: 帳號不存在或已停用。
         ForbiddenError: 帳號不是管理者。
     """
-    if db is None:
-        raise LoginRequiredError
     user = user_repository.get_by_id(db, user_id)
     if user is None or not user.is_active:
         raise LoginRequiredError
@@ -97,7 +70,7 @@ def require_admin(
 
 
 # 需要管理者資料的路由：在參數宣告 `admin: CurrentAdmin`
-CurrentAdmin = Annotated[User | Any, Depends(require_admin)]
+CurrentAdmin = Annotated[User, Depends(require_admin)]
 
 
 def require_dev_pages() -> None:

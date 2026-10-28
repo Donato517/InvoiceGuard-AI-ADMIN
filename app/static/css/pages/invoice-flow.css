@@ -54,11 +54,14 @@
 .dropzone {
   display: grid;
   gap: var(--space-2);
+  justify-items: center;
   padding: 2.625rem var(--space-5);
   text-align: center;
+  cursor: pointer;
   background-color: var(--color-file-box-bg);
   border: 2px dashed var(--color-file-box-border);
   border-radius: 0.75rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .dropzone--drag {
@@ -69,6 +72,41 @@
 .dropzone__icon {
   margin-bottom: 0.625rem;
   font-size: 2.5rem;
+}
+
+/* ---- 發票檔案即時預覽 ---- */
+.invoice-file-preview {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  padding: var(--space-4);
+  background-color: var(--color-table-th-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+}
+
+.invoice-file-preview__img {
+  display: block;
+  max-width: 100%;
+  max-height: 26rem;
+  object-fit: contain;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.invoice-file-preview__frame {
+  width: 100%;
+  height: 26rem;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.two-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
 }
 
 /* ---- 辨識結果預覽（原型 .invoice-preview）---- */
@@ -152,7 +190,8 @@
 }
 
 @media (max-width: 800px) {
-  .download-list {
+  .download-list,
+  .two-cols {
     grid-template-columns: 1fr;
   }
 }

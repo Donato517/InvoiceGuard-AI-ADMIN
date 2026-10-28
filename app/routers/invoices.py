@@ -331,7 +331,7 @@ def invoice_flow(
 
 
 @router.post("/{invoice_id}/flow/upload")
-def upload_invoice_file(
+async def upload_invoice_file(
     invoice_id: int,
     file: Annotated[UploadFile | None, File()] = None,
 ) -> RedirectResponse:
@@ -341,9 +341,30 @@ def upload_invoice_file(
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
     if file and file.filename:
+        raw_bytes = await file.read()
         invoice["file_name"] = file.filename
+        invoice["file_bytes"] = raw_bytes
+        content_type = file.content_type or ""
+        if file.filename.lower().endswith(".pdf") or "pdf" in content_type.lower():
+            invoice["file_media_type"] = "application/pdf"
+        elif file.filename.lower().endswith(".png") or "png" in content_type.lower():
+            invoice["file_media_type"] = "image/png"
+        else:
+            invoice["file_media_type"] = "image/jpeg"
     invoice["stage"] = max(invoice.get("stage", 1), 2)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
+
+
+@router.get("/{invoice_id}/file")
+def get_invoice_file(invoice_id: int) -> Response:
+    """取得已上傳發票檔案預覽內容。"""
+    invoice = _find_invoice(invoice_id)
+    if not invoice or not invoice.get("file_bytes"):
+        raise HTTPException(status_code=404, detail="找不到發票檔案")
+    return Response(
+        content=invoice["file_bytes"],
+        media_type=invoice.get("file_media_type", "image/jpeg"),
+    )
 
 
 @router.post("/{invoice_id}/flow/correct")

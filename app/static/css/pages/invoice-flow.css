@@ -1,0 +1,121 @@
+/* ==========================================================================
+   頁面樣式：發票作業流程（pages/invoices/flow.html 及 _flow_step_*.html）
+   在該頁樣板的 {% block head %} 載入。
+   對應 HTML 原型：.steps / .step / .drop / .invoice-preview / .downloads / .flow-footer / .todo
+   ========================================================================== */
+
+/* ---- 步驟列（原型 .steps / .step）---- */
+.stepper {
+  display: flex;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-4);
+  overflow-x: auto;
+}
+
+.stepper__item {
+  display: flex;
+  flex: 1 0 auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.stepper__item--active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.stepper__item--done {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
+}
+
+.stepper__index {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  background-color: var(--color-neutral-soft);
+  border-radius: 50%;
+}
+
+/* ---- 上傳區（原型 .drop）---- */
+.dropzone {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-8);
+  text-align: center;
+  background-color: var(--color-primary-soft);
+  border: 2px dashed var(--color-primary);
+  border-radius: var(--radius-lg);
+}
+
+.dropzone--drag {
+  background-color: var(--color-neutral-soft);
+}
+
+.dropzone__icon {
+  font-size: 2rem;
+}
+
+/* ---- 辨識結果預覽（原型 .invoice-preview）---- */
+.invoice-preview {
+  padding: var(--space-6);
+  line-height: 1.9;
+  background-color: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ---- 下載卡（原型 .downloads / .download-card）---- */
+.download-list {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.download-card {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+  padding: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.download-card__icon {
+  font-size: 2rem;
+}
+
+/* ---- 上一步／下一步列（原型 .flow-footer）---- */
+.flow-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ---- 待辦事項列（原型 .todo）---- */
+.todo-item {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.check-ok {
+  color: var(--color-success);
+}
+
+.check-warn {
+  color: var(--color-warning);
+}

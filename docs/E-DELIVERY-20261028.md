@@ -30,3 +30,12 @@
 先保存本批成果到獨立 E 分支，再整合最新 origin/main 並重驗。上傳分支後以 PR 提交 main，不直接 Push main；是否已合併應以 GitHub PR 狀態為準。依團隊規範，合併前須有組員 review 與 Preview 操作驗收，不把建立 PR 當成合併完成。
 
 交接入口：[登入說明](E-LOGIN-ACCESS.md)、[開發紀錄](E-DEVELOPMENT-LOG.md)、[測試報告](TEST_REPORT.md)。
+
+
+## 2026-10-28 最新 main 整合後驗證
+
+- 整合後完整離線回歸 1193 passed、9 skipped、1 個既有 Starlette／httpx warning（197.25s）
+- 部門全選與側欄桌機／手機實際瀏覽器離線 DOM：17 passed、0 skipped（50.00s）。
+- Ruff lint／format、djLint（49 樣板、0 errors）、跨站專案契約檢查通過；Git 合併沒有文字衝突。來源 main 的 JS 尾端多餘空白行已清理，無功能變動。
+- 保留來源 main 1105460 的發票流程、知識庫及儀表板；移除舊固定本機 Session 金鑰預設，E 登入維持核定的目前部門授權流程。
+- 準備上傳 codex/06e-login-department-20261028，PR 目標 main。上傳／PR／合併實際結果以 GitHub 為準；未修改正式資料或雲端環境設定。

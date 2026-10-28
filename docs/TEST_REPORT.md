@@ -1194,3 +1194,12 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 ## 2026-10-28 整批交付前完整回歸
 
 - 1179 passed、9 skipped、1 個既有 warning（124.82s）；這是整合最新 main 前的 E 工作樹。側欄瀏覽器離線驗證 8 passed。交付說明見 [E-DELIVERY-20261028](E-DELIVERY-20261028.md)，合併後測試另行記錄。
+
+
+## 2026-10-28 最新 main 整合後驗證
+
+- 整合後完整離線回歸 1193 passed、9 skipped、1 個既有 Starlette／httpx warning（197.25s）
+- 部門全選與側欄桌機／手機實際瀏覽器離線 DOM：17 passed、0 skipped（50.00s）。
+- Ruff lint／format、djLint（49 樣板、0 errors）、跨站專案契約檢查通過；Git 合併沒有文字衝突。來源 main 的 JS 尾端多餘空白行已清理，無功能變動。
+- 保留來源 main 1105460 的發票流程、知識庫及儀表板；移除舊固定本機 Session 金鑰預設，E 登入維持核定的目前部門授權流程。
+- 準備上傳 codex/06e-login-department-20261028，PR 目標 main。上傳／PR／合併實際結果以 GitHub 為準；未修改正式資料或雲端環境設定。

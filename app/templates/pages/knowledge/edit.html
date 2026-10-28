@@ -1,0 +1,89 @@
+{#
+  @template pages/knowledge/edit.html
+  @description 編輯知識庫名稱／文件名稱，或編輯文件內容（HTML 原型 renderEditor）。三種模式共用一個樣板。
+  @route GET /knowledge/{kb_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/content（需管理者登入）
+  @context mode: str            kb_name / doc_name / doc_content
+  @context kb: dict             {id, title}
+  @context doc: dict | None     {id, title, file_name, revision}；mode 為 kb_name 時為 None
+  @context can_edit: bool       目前管理者是否有權限修改
+  @context content: dict | None {text, text_editable, preview_url}；只在 doc_content 模式提供
+  @context error: str | None    錯誤訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}{% if mode == "kb_name" %}編輯知識庫{% elif mode == "doc_name" %}編輯文件{% else %}文件內容與編輯{% endif %}{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
+{% endblock head %}
+{% block content %}
+  <a href="{{ '/knowledge' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents' }}"
+     class="btn btn--secondary btn--small">← 返回</a>
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  {% if not can_edit %}
+    <p class="alert alert--warning">此文件為其他部門所有、已被其他部門選用，或後端未授權；共用文件請聯絡工程師。</p>
+  {% endif %}
+  <section class="card">
+    {% if mode != "doc_content" %}
+      {# ---- 改名／刪除 ---- #}
+      <form method="post"
+            action="{{ '/knowledge/' ~ kb.id ~ '/rename' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents/' ~ doc.id ~ '/rename' }}"
+            class="form">
+        <div class="form-field">
+          <label for="title">{{ "知識庫名稱" if mode == "kb_name" else "文件名稱" }}</label>
+          <input id="title"
+                 name="title"
+                 maxlength="160"
+                 value="{{ kb.title if mode == 'kb_name' else doc.title }}"
+                 {% if not can_edit %}disabled{% endif %}
+                 required>
+        </div>
+        <button type="submit" class="btn btn--success" {% if not can_edit %}disabled{% endif %}>儲存名稱</button>
+      </form>
+      {% if can_edit %}
+        <form method="post"
+              action="{{ '/knowledge/' ~ kb.id ~ '/delete' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents/' ~ doc.id ~ '/delete' }}"
+              data-confirm="刪除後無法復原，確定要刪除嗎？">
+          <button type="submit" class="btn btn--danger">{{ "刪除知識庫" if mode == "kb_name" else "刪除文件" }}</button>
+        </form>
+      {% endif %}
+      <p class="muted">
+        {% if mode == "kb_name" %}
+          重新命名影響所有部門；刪除會移除知識庫、部門配置及其中的文件。
+        {% else %}
+          刪除會移除此文件與其在本知識庫中的部門選用設定。
+        {% endif %}
+      </p>
+    {% else %}
+      {# ---- 內容 ---- #}
+      <p class="alert alert--warning">內容變更後會重設為未核准並重新建立索引。</p>
+      <form method="post"
+            action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content"
+            enctype="multipart/form-data"
+            class="form">
+        <input type="hidden" name="revision" value="{{ doc.revision }}">
+        {% if content.text is not none %}
+          <textarea name="text"
+                    class="content-editor"
+                    aria-label="文件內容"
+                    {% if not can_edit or not content.text_editable %}readonly{% endif %}>{{ content.text }}</textarea>
+        {% elif content.preview_url %}
+          <iframe class="content-frame" title="文件內容預覽" src="{{ content.preview_url }}"></iframe>
+        {% else %}
+          <p class="alert alert--info">此格式無法直接文字編輯，可下載原始文件或選擇新檔取代內容。</p>
+        {% endif %}
+        <div class="form-field">
+          <label for="replacement-file">替換原始檔（PDF、DOCX、TXT、Markdown；20 MB 以下）</label>
+          <input id="replacement-file"
+                 name="file"
+                 type="file"
+                 accept=".pdf,.docx,.txt,.md"
+                 {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="toolbar__actions">
+          {% if can_edit %}<button type="submit" class="btn btn--success">儲存內容</button>{% endif %}
+          <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/download"
+             class="btn btn--secondary">下載原始文件</a>
+        </div>
+      </form>
+    {% endif %}
+  </section>
+{% endblock content %}

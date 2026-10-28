@@ -1,0 +1,74 @@
+{#
+  @template pages/knowledge/_upload_modal.html
+  @description 上傳多個文件的對話框（HTML 原型 uploadDialog）。開關由 main.js 的 data-open-dialog / data-close-dialog 處理。
+  @route POST /knowledge/documents（multipart）→ 逐檔寫入 Storage 與 DB，回傳每檔結果
+  @context kb: dict | None                 在既有知識庫內上傳時提供；新增知識庫時為 None
+  @context departments: list[dict]         可選擇的所屬部門 [{id, name}]
+  @context new_knowledge_base: bool        true 時顯示「知識庫名稱」欄位
+#}
+<dialog id="upload-modal" class="modal" aria-labelledby="upload-heading">
+  <form method="post"
+        action="/knowledge/documents"
+        enctype="multipart/form-data"
+        hx-post="/knowledge/documents"
+        hx-encoding="multipart/form-data"
+        hx-target="#batch-results"
+        hx-swap="innerHTML">
+    <div class="modal__header">
+      <h2 id="upload-heading">上傳多個文件</h2>
+      <button type="button"
+              class="btn btn--secondary btn--small"
+              data-close-dialog
+              aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      {% if kb %}<input type="hidden" name="knowledge_base_id" value="{{ kb.id }}">{% endif %}
+      {% if new_knowledge_base %}
+        <div class="form-field">
+          <label for="knowledge-base-title">知識庫名稱</label>
+          <input id="knowledge-base-title"
+                 name="knowledge_base_title"
+                 maxlength="160"
+                 required>
+        </div>
+      {% endif %}
+      <div class="form-field">
+        <label for="upload-department">所屬部門</label>
+        <select id="upload-department" name="department_id" required>
+          {% for dept in departments %}<option value="{{ dept.id }}">{{ dept.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="document-title">文件名稱（單檔可自訂，多檔使用各自檔名）</label>
+        <input id="document-title" name="title" maxlength="160">
+      </div>
+      <div class="form-field">
+        <label for="document-files">選擇文件（可多選）</label>
+        <div class="file-box">
+          <input id="document-files"
+                 name="files"
+                 type="file"
+                 accept=".pdf,.docx,.txt,.md"
+                 multiple
+                 required>
+          <span class="muted">支援 PDF、DOCX、TXT、Markdown；每檔 20 MB 以下。</span>
+        </div>
+      </div>
+      <div class="form-field">
+        <label for="document-status">文件審核設定</label>
+        <select id="document-status" name="status">
+          <option value="hold">未核准（預設）</option>
+          <option value="active">已核准</option>
+        </select>
+      </div>
+      <div id="batch-results"
+           class="batch-results"
+           role="status"
+           aria-live="polite"></div>
+    </div>
+    <div class="modal__footer">
+      <button type="button" class="btn btn--secondary" data-close-dialog>取消</button>
+      <button type="submit" class="btn btn--primary">上傳文件</button>
+    </div>
+  </form>
+</dialog>

@@ -1,0 +1,15 @@
+{#
+  @template pages/invoices/_flow_step_export.html
+  @description 步驟 9：匯出結果（HTML 原型 flowStep 8）。下載由伺服器端產生檔案（StreamingResponse），不是前端 Blob。
+  @context invoice: dict  發票資料
+#}
+<p class="alert alert--info">按「確認完成」後，此發票才會列為已完成。</p>
+<div class="download-list">
+  {% for icon, title, kind, fmt in [("📄", "申報檔", "report", "TXT"), ("📊", "進項資料", "input", "CSV"), ("🧾", "會計傳票", "voucher", "CSV")] %}
+    <div class="download-card">
+      <div class="download-card__icon" aria-hidden="true">{{ icon }}</div>
+      <h3>{{ title }}</h3>
+      <a href="/invoices/{{ invoice.id }}/export/{{ kind }}" class="btn btn--primary">下載 {{ fmt }}</a>
+    </div>
+  {% endfor %}
+</div>

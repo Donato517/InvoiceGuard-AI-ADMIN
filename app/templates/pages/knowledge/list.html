@@ -1,0 +1,107 @@
+{#
+  @template pages/knowledge/list.html
+  @description 全部門知識庫管理（HTML 原型 renderKnowledge）：統計、搜尋、部門篩選、部門選用切換。
+  @route GET /knowledge（需管理者登入）
+  @context counts: dict               {total, active, inactive, unknown}
+  @context rows: list[dict]           [{id, title, badges, toggle_url}]
+  @context departments: list[dict]    [{id, name}] 供篩選下拉
+  @context q: str                     名稱搜尋字串（只搜名稱，不搜文件全文）
+  @context department_id: str         目前篩選的部門 id，"all" 為全部
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}知識庫管理{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
+{% endblock head %}
+{% block content %}
+  <p class="alert alert--info">
+    綠色部門＝已選用於問答；灰色＝未選用。部門篩選只顯示該部門目前選用的知識庫，取消選用不會刪除文件。
+  </p>
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-card__label">知識庫總數</div>
+      <div class="stat-card__value">{{ counts.total }}</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card__label">在使用中知識庫</div>
+      <div class="stat-card__value">{{ counts.active }}</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card__label">未使用知識庫</div>
+      <div class="stat-card__value">{{ counts.inactive }}</div>
+    </div>
+  </div>
+  <p class="muted">
+    至少一個部門選用即計為在使用中；所有部門未選用才計為未使用。
+    {% if counts.unknown %}另有 {{ counts.unknown }} 個尚未確認。{% endif %}
+  </p>
+  <section class="card">
+    <div class="toolbar">
+      <h2 class="card__title">知識庫清單</h2>
+      <form class="toolbar__actions"
+            method="get"
+            action="/knowledge"
+            hx-get="/knowledge"
+            hx-trigger="change, input delay:300ms from:#kb-search"
+            hx-target="#kb-table"
+            hx-select="#kb-table"
+            hx-swap="outerHTML"
+            hx-push-url="true">
+        <input id="kb-search"
+               name="q"
+               type="search"
+               value="{{ q }}"
+               placeholder="搜尋知識庫名稱…"
+               aria-label="搜尋知識庫名稱">
+        <select name="department_id" aria-label="部門篩選">
+          <option value="all">全部部門</option>
+          {% for dept in departments %}
+            <option value="{{ dept.id }}" {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
+          {% endfor %}
+        </select>
+        <noscript>
+          <button type="submit" class="btn">篩選</button>
+        </noscript>
+      </form>
+      <button type="button"
+              class="btn btn--success btn--small"
+              data-open-dialog="upload-modal">＋ 新增知識庫及文件</button>
+    </div>
+    <p class="muted">搜尋結果：{{ rows | length }} 個，只搜尋名稱，不搜尋文件全文。</p>
+    <div id="kb-table">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">知識庫名稱（編輯）</th>
+            <th scope="col">使用部門（可切換）</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for kb in rows %}
+            <tr>
+              <td>
+                <a href="/knowledge/{{ kb.id }}/edit">{{ kb.title }}</a>
+              </td>
+              <td>
+                {% with badges=kb.badges, toggle_url=kb.toggle_url, target="dept-badges-" ~ kb.id %}
+                  {% include "pages/knowledge/_dept_badges.html" %}
+                {% endwith %}
+              </td>
+              <td>
+                <a href="/knowledge/{{ kb.id }}/documents" class="btn btn--secondary btn--small">查看文件</a>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="3" class="empty-state">沒有符合條件的知識庫</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% with new_knowledge_base=true %}
+    {% include "pages/knowledge/_upload_modal.html" %}
+  {% endwith %}
+{% endblock content %}

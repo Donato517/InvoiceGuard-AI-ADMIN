@@ -1,0 +1,18 @@
+{#
+  @template pages/invoices/_stepper.html
+  @description 步驟列片段；前台與 ADMIN 使用相同結構（兩站各放一份，內容保持一致）。
+  @context steps: list[dict]  [{number, label, state, url}]，state 為 active / done / locked
+#}
+<ol class="stepper" aria-label="作業步驟">
+  {% for item in steps %}
+    <li class="stepper__item {% if item.state == 'active' %}stepper__item--active{% elif item.state == 'done' %}stepper__item--done{% endif %}"
+        {% if item.state == 'active' %}aria-current="step"{% endif %}>
+      <span class="stepper__index">{{ '✓' if item.state == 'done' else item.number }}</span>
+      {% if item.state == 'locked' %}
+        {{ item.label }}
+      {% else %}
+        <a href="{{ item.url }}">{{ item.label }}</a>
+      {% endif %}
+    </li>
+  {% endfor %}
+</ol>

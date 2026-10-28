@@ -27,6 +27,41 @@
   background-color: var(--color-primary-hover);
 }
 
+.btn--secondary {
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  border-color: var(--color-border);
+}
+
+.btn--secondary:hover {
+  background-color: var(--color-bg-muted);
+}
+
+.btn--success {
+  color: var(--color-bg);
+  background-color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.btn--success:hover {
+  filter: brightness(0.95);
+}
+
+.btn--danger {
+  color: var(--color-bg);
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.btn--danger:hover {
+  filter: brightness(0.95);
+}
+
+.btn--small {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
 .btn--text {
   padding: 0;
   color: var(--color-primary);
@@ -79,12 +114,34 @@
 /* ---- 提示訊息 ---- */
 .alert {
   padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
   border-radius: var(--radius-md);
+  background-color: var(--color-neutral-soft);
+  color: var(--color-text);
+}
+
+.alert--info {
+  color: #1e40af;
+  background-color: var(--color-primary-soft);
+  border: 1px solid #bfdbfe;
+}
+
+.alert--success {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
+  border: 1px solid #bbf7d0;
+}
+
+.alert--warning {
+  color: var(--color-warning-soft-text);
+  background-color: var(--color-warning-soft);
+  border: 1px solid #fde68a;
 }
 
 .alert--danger {
   color: var(--color-danger);
-  background-color: rgb(220 38 38 / 8%);
+  background-color: var(--color-danger-soft);
+  border: 1px solid #fecaca;
 }
 
 /* ---- 狀態標籤（對應發票狀態值）---- */
@@ -96,18 +153,24 @@
   background-color: var(--color-bg-muted);
 }
 
-.badge--passed {
-  color: var(--color-success);
+.badge--passed,
+.badge--success {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
 }
 
 .badge--flagged,
-.badge--rejected {
-  color: var(--color-danger);
+.badge--rejected,
+.badge--danger {
+  color: var(--color-danger-soft-text);
+  background-color: var(--color-danger-soft);
 }
 
 .badge--pending,
-.badge--analyzing {
-  color: var(--color-warning);
+.badge--analyzing,
+.badge--warning {
+  color: var(--color-warning-soft-text);
+  background-color: var(--color-warning-soft);
 }
 
 /* ---- 分頁 ---- */
@@ -133,4 +196,115 @@
   padding: var(--space-8);
   text-align: center;
   color: var(--color-text-muted);
+}
+
+/* ---- 卡片容器 ---- */
+.card {
+  padding: var(--space-6);
+  margin-bottom: var(--space-4);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.card__title {
+  margin-top: 0;
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-lg);
+}
+
+/* ---- 工具列 ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ---- 對話框（Modal）---- */
+.modal {
+  width: min(640px, 92vw);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg);
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 10%), 0 8px 10px -6px rgb(0 0 0 / 10%);
+}
+
+.modal::backdrop {
+  background-color: rgb(17 24 39 / 50%);
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal__header h2,
+.modal__header h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.modal__body {
+  padding: var(--space-6);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--color-border);
+  background-color: var(--color-bg-muted);
+}
+
+/* ---- 檔案選取盒 ---- */
+.file-box {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background-color: var(--color-bg-muted);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ---- 檢核結果提示 ---- */
+.check-ok {
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.check-warn {
+  color: var(--color-warning);
+  font-weight: 500;
+}
+
+/* ---- 統計卡色彩修飾 ---- */
+.stat-card--success .stat-card__value {
+  color: var(--color-success);
+}
+
+.stat-card--warning .stat-card__value {
+  color: var(--color-warning);
+}
+
+.stat-card--danger .stat-card__value {
+  color: var(--color-danger);
 }

@@ -1,0 +1,14 @@
+{#
+  @template layouts/e_login.html
+  @description ADMIN 登入專用響應式版型，參考使用者提供的桌機與手機原型外觀。
+  @block content 登入卡片；不沿用原型的 JavaScript 帳密或瀏覽器身分儲存。
+#}
+{% extends "base.html" %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/e-login.css') }}">
+{% endblock head %}
+{% block body %}
+  <main class="e-login">
+    {% block content %}{% endblock %}
+  </main>
+{% endblock body %}

@@ -1,5 +1,6 @@
 """帳號多部門設定：驗證主要部門、交易順序、權限關聯保護與表單，不連正式 DB。"""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.repositories import user_account_repository as repository
 from app.main import app
+from app.routers.e_admin import require_configuration_access
 from app.schemas.account import AccountSummary
 from app.schemas.account_management import AccountDepartmentSettings
 from app.schemas.department import Department
@@ -48,8 +50,8 @@ def db(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 @pytest.fixture
-def browser(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """檢查正式路由與表單，不覆寫同源保護。"""
+def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "get_account", lambda user: ACCOUNT)
     monkeypatch.setattr(
         service,
@@ -58,12 +60,15 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             departments=OPTIONS, selected_ids=[FIRST, SECOND], primary_department_id=FIRST
         ),
     )
-    return TestClient(
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
+    with TestClient(
         app,
         base_url="http://invoiceguard-ai-admin.localhost:8080",
         client=("127.0.0.1", 50000),
         follow_redirects=False,
-    )
+    ) as browser:
+        yield browser
 
 
 def test_new_and_edit_offer_multiple_departments(browser: TestClient) -> None:

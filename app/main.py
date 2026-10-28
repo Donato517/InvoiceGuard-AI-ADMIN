@@ -23,6 +23,8 @@ from app.routers import (
     departments,
     dev_accounts,
     dev_files,
+    e_admin,
+    e_function_settings,
     health,
     invoices,
     robots,
@@ -47,6 +49,7 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="s
 
 # ---- 例外處理 ----
 register_exception_handlers(app)
+app.add_exception_handler(e_admin.EError, e_admin.handle_e_error)
 
 # ---- 頁面路由 ----
 app.include_router(health.router)
@@ -63,3 +66,7 @@ app.include_router(departments.router)
 app.include_router(dev_accounts.page)
 app.include_router(dev_accounts.api)
 app.include_router(dev_files.page)
+
+# 06_E 正式功能；共同接點未就緒時拒絕操作。
+app.include_router(e_admin.router)
+app.include_router(e_function_settings.router)

@@ -117,7 +117,11 @@ def test_unknown_page_shows_custom_404(client: TestClient) -> None:
 
 
 def test_invalid_form_shows_error_page_without_echoing_input(admin_client: TestClient) -> None:
-    response = admin_client.post("/login", data={"password": "synthetic-pass-marker"})
+    response = admin_client.post(
+        "/login",
+        headers={"Origin": "http://testserver"},
+        data={"password": "synthetic-pass-marker"},
+    )
 
     assert response.status_code == 400
     assert response.headers["content-type"].startswith("text/html")

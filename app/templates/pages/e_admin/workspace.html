@@ -1,0 +1,12 @@
+{#
+  @template pages/e_admin/workspace.html
+  @description 管理站完整有效功能工作台，無可用功能由伺服器拒絕。
+  @route GET /workspace（需管理站登入）
+  @context effective_access: SelfAccess 依完整核定功能清單驗證的權限投影
+#}
+{% extends "layouts/e_admin.html" %}
+{% block title %}工作台{% endblock %}
+{% block content %}
+  <p>以下列出本次部門情境可執行的功能與資料範圍。</p>
+  {% include "pages/e_admin/effective_access.html" %}
+{% endblock content %}

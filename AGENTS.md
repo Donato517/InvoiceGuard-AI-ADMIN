@@ -11,8 +11,20 @@
 - DB：程序有合法 `DATABASE_URL` 即可使用（本機與雲端皆可，仍驗證 PostgreSQL 格式與 TLS）；本機值由 START 注入，連的是正式 DB。
 - Vercel 模組（檔案存取）：`app/integrations/supabase_storage.py`，與 API 相同；本機值由 START 注入，連的是正式 Storage。
 - 示範檔案 `/dev/accounts`（DB 模組：帳號查詢／新增／修改）與 `/dev/files`（Vercel 模組：圖片／RAG 檔案）只在 `dev_pages_enabled` 為真（`APP_ENV=local`、非 Vercel、解析後 `module_backend=remote`，含本機 auto）時開放、不需登入，直接讀寫正式 DB／Storage。
-- 本機無法登入後台：`SESSION_SECRET_KEY` 在本機屬禁用機密，需要 `require_admin` 的頁面只能在雲端使用，或以測試替身（`admin_client`）驗證。
+- 舊 `require_admin` 路由仍受本機禁用 `SESSION_SECRET_KEY` 限制。06_E 的 `/login` 已改委派 B 共用 PortableAuth；B／G adapter 尚未接線時回 503，不開本機繞過。E 測試以 `get_e_module` 的 dependency override 提供合成替身，正式程式沒有測試模式開關；見 `docs/E-TEAM-HANDOFF.md`。
 - `remote_admin_client` 目前沒有呼叫端；`MODULE_BACKEND=remote` 實際代表「本機開發」並開放 `/dev` 示範檔案。
+
+## 2026-10-27 最新核定：ADMIN 登入與配置入口恢復驗權
+
+- 使用者取消 /accounts、/department、/functions、/department-functions 的本機免登入例外。它們及所有子路由保留本機／Host／peer／同源條件，再經 require_configuration_access 驗身分與明確操作。無 Cookie 導向登入；B／G 或正式資料／交易接線不足時 503，不放行配置服務。
+- ADMIN 登入頁依附件外觀共用桌機／手機響應式。正式認證、G 與 journal 尚未交付；只用合成替身測試，不從示範帳密、舊 BIGINT users、web storage 或任意角色 Header 建立正式身分。
+- 部門基本功能＋主管負責／明確委派、目前選取部門與獨立 scope 規則不變。既有配置 UI／服務仍保留，待正式資料範圍與交易重驗完成後驗收，不可直接刪除 pending 閘門。詳見 docs/E-LOGIN-ACCESS.md。
+
+## 2026-10-27 第三批歷史規則（匿名例外已取消）
+
+- 指定 /accounts、/department、/functions、/department-functions 暫時本機免登入；必須保留 local／非 Vercel／remote、loopback、固定 Host 與嚴格同源限制，雲端關閉。共用正式 DB 由使用者在頁面操作；代理只做離線測試，不做正式資料讀寫驗收。
+- 授權改為「目前選取有效部門的基本功能＋主管授權管理」，不聯集多部門。主管可管理本部門及外部部門，但只限負責／明確委派功能。操作與資料 scope 分開；系統部門／功能字典的 system_management 資格不自動授予主管。
+- 此使用者例外優先於下方舊的一般本機不得免登入條款，只限上述配置入口。正式 /login／本人／工作台與 /system/* 的 B／G／journal 仍未組裝，保持缺接線拒絕。見 docs/E-FUNCTION-PAGES.md 及 docs/E-ACCESS-CONTRACT.md。
 
 <!-- shared-rules:start -->
 ## 三站架構

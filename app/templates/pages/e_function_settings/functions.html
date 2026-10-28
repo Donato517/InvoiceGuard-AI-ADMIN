@@ -1,0 +1,80 @@
+{#
+  @template pages/e_function_settings/functions.html
+  @description 功能列表：搜尋、平台與狀態篩選、分頁，連結獨立內容頁。
+  @route GET /functions（核定的本機配置入口）
+  @context query: FunctionListQuery 搜尋條件與頁碼；items: tuple[FunctionSetting] 當頁資料
+  @context total, pages: int 總數與頁數
+  @context new_url, edit_urls, previous_url, next_url: 固定站內網址
+  @context saved: bool 成功提示；error, retry_url: 讀取失敗時的安全提示
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}功能管理{% endblock %}
+{% block content %}
+  {% if saved %}<p class="alert" role="status">功能設定已儲存。</p>{% endif %}
+  {% if error %}
+    <p class="alert alert--danger" role="alert">{{ error }}</p>
+    <a class="btn" href="{{ retry_url }}">重新載入</a>
+  {% else %}
+    <div class="filter-bar">
+      <a class="btn btn--primary" href="{{ new_url }}">新增功能</a>
+    </div>
+  {% endif %}
+  <form class="filter-bar" method="get" action="/functions">
+    <label for="q">功能代碼或名稱</label>
+    <input id="q" name="q" type="search" value="{{ query.q }}" maxlength="200">
+    <label for="platform">適用平台</label>
+    <select id="platform" name="platform">
+      {% for value, label in [('all', '全部平台'), ('admin', '管理站'), ('frontend', '前台'), ('both', '前台與管理站')] %}
+        <option value="{{ value }}"
+                {% if query.platform == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="status">狀態</label>
+    <select id="status" name="status">
+      {% for value, label in [('all', '全部狀態'), ('active', '啟用'), ('inactive', '停用')] %}
+        <option value="{{ value }}" {% if query.status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">搜尋</button>
+    <a class="btn" href="/functions">清除</a>
+  </form>
+  {% if not error %}
+    {% if items %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">功能代碼</th>
+            <th scope="col">功能名稱</th>
+            <th scope="col">適用平台</th>
+            <th scope="col">狀態</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr>
+              <td><code>{{ item.function_code }}</code></td>
+              <td>{{ item.function_name }}</td>
+              <td>{{ {'admin': '管理站', 'frontend': '前台', 'both': '前台與管理站'}.get(item.app_scope, '待確認') }}</td>
+              <td><span class="badge">{{ '啟用' if item.is_active else '停用' }}</span></td>
+              <td><a class="btn" href="{{ edit_urls[item.function_id] }}">檢視／修改</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty-state">
+        {% if query.q or query.platform != "all" or query.status != "all" %}
+          沒有符合條件的功能，請調整搜尋條件。
+        {% else %}
+          尚未建立功能，請按「新增功能」。
+        {% endif %}
+      </p>
+    {% endif %}
+    <nav class="pagination" aria-label="功能列表分頁">
+      {% if query.page > 1 %}<a class="pagination__item" href="{{ previous_url }}">上一頁</a>{% endif %}
+      <span>第 {{ query.page }}／{{ pages }} 頁，共 {{ total }} 筆；每頁 20 筆</span>
+      {% if query.page < pages %}<a class="pagination__item" href="{{ next_url }}">下一頁</a>{% endif %}
+    </nav>
+  {% endif %}
+{% endblock content %}

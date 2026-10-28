@@ -50,6 +50,8 @@
               <td>{{ department.created_at | taipei_datetime }}</td>
               <td>{{ department.updated_at | taipei_datetime }}</td>
               <td>
+                <a class="btn"
+                   href="/department-functions?department_id={{ department.department_id }}">設定功能</a>
                 <details>
                   <summary>修改部門</summary>
                   {% if department.department_code != "UNASSIGNED" %}

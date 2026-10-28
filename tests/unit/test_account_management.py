@@ -1,5 +1,6 @@
 """正式帳號兩頁管理：合成資料、Session 替身，不連正式 DB。"""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import settings
 from app.db.repositories import user_account_repository as repository
 from app.main import app
+from app.routers.e_admin import require_configuration_access
 from app.schemas.account import AccountSummary
 from app.schemas.account_management import AccountDepartmentSettings
 from app.services import account_management_service as service
@@ -20,8 +22,8 @@ HEADERS = {"Origin": "http://invoiceguard-ai-admin.localhost:8080"}
 
 
 @pytest.fixture
-def browser(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """真正測試本機與同源保護，不覆寫安全相依。"""
+def browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "list_accounts", lambda q="", page=1: ([ACCOUNT], 1))
     monkeypatch.setattr(service, "get_account", lambda user_id: ACCOUNT)
     monkeypatch.setattr(
@@ -31,12 +33,15 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             departments=[], selected_ids=[], primary_department_id=None
         ),
     )
-    return TestClient(
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
+    with TestClient(
         app,
         base_url="http://invoiceguard-ai-admin.localhost:8080",
         client=("127.0.0.1", 50000),
         follow_redirects=False,
-    )
+    ) as browser:
+        yield browser
 
 
 @pytest.fixture

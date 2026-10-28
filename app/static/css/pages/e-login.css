@@ -1,0 +1,95 @@
+/* ADMIN 登入專用設計變數；參考桌機藍色漸層／白卡片及手機圓角按鈕。 */
+:root {
+  --e-login-start: #102c52;
+  --e-login-end: #216de0;
+  --e-login-accent: #69b7ff;
+  --e-login-ink: #12243a;
+  --e-login-muted: #64748b;
+  --e-login-border: #cbd5e1;
+  --e-login-card: 26.875rem;
+  --e-login-padding: 2.25rem;
+  --e-login-radius: 1.25rem;
+  --e-login-control-radius: 0.5625rem;
+  --e-login-shadow: 0 1.25rem 4.0625rem #071b4b45;
+  --e-login-brand-size: 1.625rem;
+  --e-login-brand-spacing: -0.0625rem;
+  --e-login-control-height: 2.875rem;
+}
+
+.e-login {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: linear-gradient(135deg, var(--e-login-start), var(--e-login-end));
+  color: var(--e-login-ink);
+}
+
+.e-login__card {
+  width: 100%;
+  max-width: var(--e-login-card);
+  min-width: 0;
+  padding: var(--e-login-padding);
+  background: var(--color-bg);
+  border-radius: var(--e-login-radius);
+  box-shadow: var(--e-login-shadow);
+}
+
+.e-login__brand {
+  font-size: var(--e-login-brand-size);
+  font-weight: 800;
+  letter-spacing: var(--e-login-brand-spacing);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.e-login__brand span { color: var(--e-login-accent); }
+
+.e-login__subtitle,
+.e-login__note {
+  color: var(--e-login-muted);
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-3);
+}
+
+.e-login__form {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.e-login__field { display: grid; gap: var(--space-2); }
+.e-login__field label { color: var(--e-login-muted); font-size: var(--font-size-sm); }
+
+.e-login__field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--e-login-control-height);
+  padding: var(--space-3);
+  border: 1px solid var(--e-login-border);
+  border-radius: var(--e-login-control-radius);
+  background: var(--color-bg);
+  color: var(--e-login-ink);
+  font: inherit;
+}
+
+.e-login__field input:focus-visible {
+  outline: var(--space-1) solid var(--e-login-accent);
+  outline-offset: var(--space-1);
+}
+
+.e-login__submit {
+  min-height: var(--e-login-control-height);
+  border-radius: var(--e-login-control-radius);
+}
+
+.e-login__links { margin-top: var(--space-4); font-size: var(--font-size-sm); }
+.e-login__error { margin-top: var(--space-4); overflow-wrap: anywhere; }
+
+@media (max-width: 40rem) {
+  .e-login { padding: var(--space-4); }
+  .e-login__card { padding: var(--space-6); }
+  .e-login__field input { font-size: var(--font-size-base); }
+}

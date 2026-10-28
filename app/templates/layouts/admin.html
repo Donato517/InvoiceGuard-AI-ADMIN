@@ -13,9 +13,11 @@
         {% if request.state.admin is defined %}
           <span class="app-header__user">{{ request.state.admin.display_name }}</span>
         {% endif %}
-        <form method="post" action="/logout" data-confirm="確定要登出嗎？">
-          <button type="submit" class="btn">登出</button>
-        </form>
+        {% if request.state.admin is defined %}
+          <form method="post" action="/logout" data-confirm="確定要登出嗎？">
+            <button type="submit" class="btn">登出</button>
+          </form>
+        {% endif %}
       </header>
       <main class="admin-layout__content">
         {% block content %}{% endblock %}

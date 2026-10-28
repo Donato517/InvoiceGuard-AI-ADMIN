@@ -1,7 +1,7 @@
 """模組名稱：app.routers.accounts
 功能說明：正式帳號管理列表及內容頁，管理者直接修改、刪除採停用。
 路由：GET /accounts、GET/POST /accounts/new、GET/POST /accounts/{user_id}/edit、POST /accounts/{user_id}/disable、POST /accounts/{user_id}/departments
-注意事項：本機匿名測試限定 loopback 與核定 Host，雲端在正式授權接線前拒絕存取。
+注意事項：本機也必須經 E 身分／授權接點；資料與交易接線未完成時拒絕，雲端關閉。
 """
 
 from ipaddress import ip_address
@@ -16,11 +16,12 @@ from app.core.config import settings
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.security import verify_same_origin
 from app.core.templating import templates
+from app.routers.e_admin import require_configuration_access
 from app.services import account_management_service as service
 
 
 def require_local_accounts(request: Request) -> None:
-    """正式授權接線前只允許已核定的本機匿名測試，不信任轉送來源宣告。"""
+    """僅限定部署與來源；通過不代表已登入或已授權。"""
     if settings.APP_ENV != "local" or settings.is_vercel or settings.module_backend != "remote":
         raise NotFoundError
     try:
@@ -37,13 +38,15 @@ def require_local_accounts(request: Request) -> None:
 
 
 def require_account_origin(request: Request) -> None:
-    """匿名寫入必須提供完整同源 Origin，不沿用缺漏來源的寬鬆規則。"""
+    """帳號寫入另要求完整同源 Origin。"""
     if request.headers.get("origin") != f"{request.url.scheme}://{request.headers.get('host')}":
         raise ForbiddenError("帳號操作必須從本機管理頁面送出")
 
 
 router = APIRouter(
-    prefix="/accounts", tags=["accounts"], dependencies=[Depends(require_local_accounts)]
+    prefix="/accounts",
+    tags=["accounts"],
+    dependencies=[Depends(require_local_accounts), Depends(require_configuration_access)],
 )
 WRITE_CHECKS = [Depends(verify_same_origin), Depends(require_account_origin)]
 SAVED_MESSAGES = {
@@ -170,6 +173,7 @@ def _list(request: Request, *, q: str = "", page: int = 1, message: str = "") ->
             "next_url": "/accounts?" + urlencode({"q": q, "page": page + 1}),
         },
         status_code=status_code,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -215,6 +219,7 @@ def _detail(
             "department_error": department_error,
         },
         status_code=status_code,
+        headers={"Cache-Control": "no-store"},
     )
     response.headers["Cache-Control"] = "no-store"
     return response

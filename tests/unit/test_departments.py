@@ -1,5 +1,6 @@
 """部門管理回歸測試；僅使用合成資料及替身，不連正式資料庫。"""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.config import settings
 from app.db.repositories import department_repository as repository
 from app.main import app
+from app.routers.e_admin import require_configuration_access
 from app.schemas.department import Department
 from app.services import department_service as service
 
@@ -27,12 +29,15 @@ ROW = Department(
 
 
 @pytest.fixture
-def local_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """模擬真正 loopback 連線，不略過路由保護。"""
+def local_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """合成授權前提下的業務回歸；保留 Host 與同源保護，不代表正式開放。"""
     monkeypatch.setattr(service, "search", lambda q="": [ROW])
-    return TestClient(
+    # 僅隔離業務 UI；正式驗權與未接線拒絕行為由 test_e_login_access 驗證。
+    monkeypatch.setitem(app.dependency_overrides, require_configuration_access, lambda: None)
+    with TestClient(
         app, base_url="http://invoiceguard-ai-admin.localhost:8080", client=("127.0.0.1", 50000)
-    )
+    ) as browser:
+        yield browser
 
 
 @pytest.fixture

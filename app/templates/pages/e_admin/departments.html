@@ -1,0 +1,78 @@
+{#
+  @template pages/e_admin/departments.html
+  @description 部門安全列表與新增修改；停用不刪除歷史。
+  @route GET /system/departments、/system/departments/{department_id}（需管理授權）
+  @context items: list 部門範圍內資料
+  @context selected: Department | None 目前選取部門
+  @context can_save: bool 本次操作是否可用
+  @context can_grants: bool 是否可進入部門功能設定
+#}
+{% extends "layouts/e_admin.html" %}
+{% block title %}部門管理{% endblock %}
+{% block content %}
+  {% if selected %}
+    <p><a href="/system/departments">回部門列表</a></p>
+    {% if can_grants %}
+      <p><a href="/system/departments/{{ selected.department_id }}/permissions">設定本部門可使用的功能</a></p>
+    {% endif %}
+  {% else %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>代碼</th>
+          <th>名稱</th>
+          <th>狀態</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ item.department_code }}</td>
+            <td>{{ item.department_name }}</td>
+            <td>{{ '啟用' if item.is_active else '停用' }}</td>
+            <td><a href="/system/departments/{{ item.department_id }}">查看／修改</a></td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="4">目前範圍內沒有部門。</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  {% if can_save %}
+    <h2>{{ '修改部門' if selected else '新增部門' }}</h2>
+    <form class="form"
+          method="post"
+          action="/system/departments{% if selected %}/{{ selected.department_id }}{% endif %}">
+      {% if selected %}
+        <input type="hidden"
+               name="expected_revision"
+               value="{{ selected.revision }}">
+      {% endif %}
+      <div class="form-field">
+        <label for="department-code">部門代碼（區分大小寫）</label>
+        <input id="department-code"
+               name="department_code"
+               maxlength="100"
+               value="{{ selected.department_code if selected else '' }}"
+               required>
+      </div>
+      <div class="form-field">
+        <label for="department-name">部門名稱</label>
+        <input id="department-name"
+               name="department_name"
+               maxlength="200"
+               value="{{ selected.department_name if selected else '' }}"
+               required>
+      </div>
+      <label><input name="is_active"
+       type="checkbox"
+       value="true"
+       {% if not selected or selected.is_active %}checked{% endif %}>啟用</label>
+      <p>停用前請先完成帳號移轉及撤銷；系統不會自動搬移成員。</p>
+      <button class="btn btn--primary" type="submit">儲存部門</button>
+    </form>
+  {% endif %}
+{% endblock content %}

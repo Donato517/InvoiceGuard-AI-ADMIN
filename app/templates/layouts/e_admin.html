@@ -1,0 +1,35 @@
+{#
+  @template layouts/e_admin.html
+  @description E 依本次有效權限呈現工作台選單；不使用舊固定功能選單。
+  @context e_menu: tuple 已通過同一 guard 的功能
+  @context identity: Identity 已驗證管理站身分
+  @block content 頁面內容
+#}
+{% extends "base.html" %}
+{% block body %}
+  <div class="admin-layout">
+    <aside class="app-sidebar">
+      <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
+      <nav aria-label="後台選單">
+        <a class="app-sidebar__link" href="/workspace">工作台</a>
+        <a class="app-sidebar__link" href="/account">本人資訊</a>
+        {% for item in e_menu %}
+          {% if item.code != "sys.department-permissions" %}
+            <a class="app-sidebar__link" href="{{ item.route }}">{{ item.name }}</a>
+          {% endif %}
+        {% endfor %}
+      </nav>
+    </aside>
+    <div class="admin-layout__main">
+      <header class="app-header">
+        <h1 class="app-header__title">{{ self.title() }}</h1>
+        <form method="post" action="/logout">
+          <button class="btn" type="submit">登出</button>
+        </form>
+      </header>
+      <main class="admin-layout__content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+{% endblock body %}

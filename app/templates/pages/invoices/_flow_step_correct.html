@@ -1,0 +1,89 @@
+{#
+  @template pages/invoices/_flow_step_correct.html
+  @description 步驟 3：核對並修正辨識欄位（HTML 原型 flowStep 2）；儲存後正式寫入發票清單並清除暫存影像。
+  @route POST /invoices/{invoice_id}/flow/correct
+  @context invoice: dict  發票資料
+#}
+<p class="alert alert--info">
+  完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔），下次可直接從後續步驟繼續辦理。
+</p>
+<div class="{% if invoice.file_bytes %}two-cols{% endif %}">
+  {% if invoice.file_bytes %}
+    <div class="invoice-file-preview">
+      {% if invoice.file_media_type == "application/pdf" %}
+        <iframe class="invoice-file-preview__frame"
+                title="發票檔案預覽"
+                src="/invoices/{{ invoice.id }}/file"></iframe>
+      {% else %}
+        <img class="invoice-file-preview__img"
+             src="/invoices/{{ invoice.id }}/file"
+             alt="發票預覽：{{ invoice.file_name }}">
+      {% endif %}
+      <span class="muted small-text">上傳檔案：{{ invoice.file_name }}</span>
+    </div>
+  {% endif %}
+  <form id="flow-correct-form"
+        method="post"
+        action="/invoices/{{ invoice.id }}/flow/correct"
+        class="form">
+    <div class="form-grid">
+      <div class="form-field">
+        <label for="invoice_number">發票號碼</label>
+        <input id="invoice_number"
+               name="invoice_number"
+               value="{{ invoice.invoice_number }}"
+               maxlength="10"
+               required>
+      </div>
+      <div class="form-field">
+        <label for="invoice_date">發票日期（民國年/月/日）</label>
+        <input id="invoice_date"
+               name="invoice_date"
+               value="{{ invoice.invoice_date }}"
+               required>
+      </div>
+      <div class="form-field">
+        <label for="seller_tax_id">賣方統編</label>
+        <input id="seller_tax_id"
+               name="seller_tax_id"
+               value="{{ invoice.seller_tax_id or '' }}"
+               maxlength="8"
+               inputmode="numeric">
+      </div>
+      <div class="form-field">
+        <label for="buyer_tax_id">買方統編</label>
+        <input id="buyer_tax_id"
+               name="buyer_tax_id"
+               value="{{ invoice.buyer_tax_id or '' }}"
+               maxlength="8"
+               inputmode="numeric">
+      </div>
+      <div class="form-field">
+        <label for="item_description">品名</label>
+        <input id="item_description"
+               name="item_description"
+               value="{{ invoice.item_description or '' }}">
+      </div>
+      <div class="form-field">
+        <label for="net_amount">未稅金額</label>
+        <input id="net_amount"
+               name="net_amount"
+               type="number"
+               min="0"
+               step="1"
+               value="{{ invoice.net_amount }}">
+      </div>
+      <div class="form-field">
+        <label for="tax_amount">營業稅（5%）</label>
+        <input id="tax_amount" value="{{ invoice.tax_amount }}" readonly>
+      </div>
+      <div class="form-field">
+        <label for="total_amount">含稅總額</label>
+        <input id="total_amount" value="{{ invoice.total_amount }}" readonly>
+      </div>
+    </div>
+    <div class="toolbar__actions">
+      <button type="submit" class="btn btn--primary">儲存並進入系統檢核 →</button>
+    </div>
+  </form>
+</div>

@@ -9,7 +9,8 @@
     <div class="download-card">
       <div class="download-card__icon" aria-hidden="true">{{ icon }}</div>
       <h3>{{ title }}</h3>
-      <a href="/invoices/{{ invoice.id }}/export/{{ kind }}" class="btn btn--primary">下載 {{ fmt }}</a>
+      <a href="/invoices/{{ invoice.id }}/export/{{ kind }}"
+         class="btn btn--primary">下載 {{ fmt }}</a>
     </div>
   {% endfor %}
 </div>

@@ -1,18 +1,17 @@
 """
 模組名稱：app.routers.invoices
-功能說明：發票審核——列表、詳情、人工複核、與 9 步驟發票作業流程（ADMIN 負責步驟 4～9）。
+功能說明：發票審核——列表、詳情、人工複核、新增發票與 9 步驟發票作業流程。
 路由：/invoices
 注意事項：
     - 本路由需管理者權限（require_admin）。
-    - 步驟 4～9：系統自動檢核、財務審核、產生申報檔、匯入確認、自動產生傳票、匯出結果。
-    - 步驟 1～3 屬於前台採購端（上傳、OCR、核對）。
+    - 步驟 1～9：上傳發票、AI OCR 辨識、資料核對、系統自動檢核、財務審核、產生申報檔、匯入確認、自動產生傳票、匯出結果。
 """
 
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
@@ -138,10 +137,7 @@ def _find_invoice(invoice_id: int) -> dict[str, Any] | None:
 def _build_flow_steps(
     current_step: int, invoice_id: int, is_completed: bool
 ) -> list[dict[str, Any]]:
-    """建立發票作業 9 個步驟的中繼資料。
-
-    前台負責步驟 1～3；ADMIN 負責步驟 4～9。
-    """
+    """建立發票作業 9 個步驟的中繼資料。"""
     steps = []
     for idx, label in enumerate(INVOICE_FLOW_STEPS, start=1):
         if is_completed:
@@ -153,7 +149,6 @@ def _build_flow_steps(
         else:
             state = "locked"
 
-        # 步驟 1～3 為前台步驟，ADMIN 顯示 locked 或連結
         steps.append(
             {
                 "number": idx,
@@ -251,6 +246,36 @@ def invoice_list(
     )
 
 
+@router.get("/new")
+def create_new_invoice() -> RedirectResponse:
+    """建立新發票草稿並進入步驟 1（上傳發票）。"""
+    new_id = max((int(i["id"]) for i in _INVOICE_STORE), default=0) + 1
+    new_invoice: dict[str, Any] = {
+        "id": new_id,
+        "invoice_number": f"AB{12345677 + new_id}",
+        "invoice_date": "113/08/15",
+        "seller_tax_id": "24681357",
+        "buyer_tax_id": "12345678",
+        "item_description": "辦公用品",
+        "net_amount": 6000,
+        "tax_amount": 300,
+        "total_amount": 6300,
+        "stage": 1,
+        "status": "pending",
+        "review_status": "pending",
+        "is_completed": False,
+        "file_name": None,
+        "purpose": "供辦公室日常使用",
+        "account_code": "5601 辦公用品費",
+        "deduction_code": "1 - 進貨及費用",
+        "tax_type": "1 - 應稅",
+        "import_confirmed_at": None,
+        "filing_preview": None,
+    }
+    _INVOICE_STORE.insert(0, new_invoice)
+    return RedirectResponse(f"/invoices/{new_id}/flow?step=1", status_code=303)
+
+
 @router.get("/{invoice_id}", response_class=HTMLResponse)
 def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
     """發票審核詳情：辨識結果、AI 判斷理由、核准 / 駁回。"""
@@ -272,9 +297,9 @@ def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
 def invoice_flow(
     request: Request,
     invoice_id: int,
-    step: Annotated[int, Query(ge=4, le=9)] = 4,
+    step: Annotated[int, Query(ge=1, le=9)] = 4,
 ) -> HTMLResponse:
-    """發票作業流程（ADMIN 負責步驟 4～9）。"""
+    """發票作業流程（步驟 1～9）。"""
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -303,6 +328,50 @@ def invoice_flow(
             "error": None,
         },
     )
+
+
+@router.post("/{invoice_id}/flow/upload")
+def upload_invoice_file(
+    invoice_id: int,
+    file: Annotated[UploadFile | None, File()] = None,
+) -> RedirectResponse:
+    """步驟 1：上傳發票檔案並進入步驟 2（OCR 辨識預覽）。"""
+    invoice = _find_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+
+    if file and file.filename:
+        invoice["file_name"] = file.filename
+    invoice["stage"] = max(invoice.get("stage", 1), 2)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
+
+
+@router.post("/{invoice_id}/flow/correct")
+def correct_invoice_fields(
+    invoice_id: int,
+    invoice_number: Annotated[str, Form()],
+    invoice_date: Annotated[str, Form()],
+    seller_tax_id: Annotated[str | None, Form()] = None,
+    buyer_tax_id: Annotated[str | None, Form()] = None,
+    item_description: Annotated[str | None, Form()] = None,
+    net_amount: Annotated[int, Form()] = 0,
+) -> RedirectResponse:
+    """步驟 3：核對修正發票資料並進入步驟 4（系統自動檢核）。"""
+    invoice = _find_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+
+    invoice["invoice_number"] = invoice_number.strip()
+    invoice["invoice_date"] = invoice_date.strip()
+    invoice["seller_tax_id"] = (seller_tax_id or "").strip()
+    invoice["buyer_tax_id"] = (buyer_tax_id or "").strip()
+    if item_description is not None:
+        invoice["item_description"] = item_description.strip()
+    invoice["net_amount"] = max(0, net_amount)
+    invoice["tax_amount"] = round(invoice["net_amount"] * 0.05)
+    invoice["total_amount"] = invoice["net_amount"] + invoice["tax_amount"]
+    invoice["stage"] = max(invoice.get("stage", 3), 4)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
 
 @router.post("/{invoice_id}/flow/advance")

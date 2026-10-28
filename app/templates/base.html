@@ -19,9 +19,10 @@
       {% block title %}{% endblock %}
       | {{ SITE_NAME }}
     </title>
-    <link rel="icon"
-          type="image/svg+xml"
-          href="{{ static_url(SITE_ICON) }}">
+    <link rel="icon" type="image/svg+xml" href="{{ static_url(SITE_ICON) }}">
+    <link rel="stylesheet" href="{{ static_url('css/variables.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/reset.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/components.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/main.css') }}">
     {% block head %}{% endblock %}
   </head>

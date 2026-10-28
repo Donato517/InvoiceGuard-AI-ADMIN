@@ -10,69 +10,98 @@
 {% extends "layouts/e_admin.html" %}
 {% block title %}部門管理{% endblock %}
 {% block content %}
-  {% if selected %}
-    <p><a href="/system/departments">回部門列表</a></p>
-    {% if can_grants %}
-      <p><a href="/system/departments/{{ selected.department_id }}/permissions">設定本部門可使用的功能</a></p>
+  <div class="page-heading page-heading--between">
+    <div>
+      <h2>部門管理</h2>
+      <p class="muted small-text">查看與管理權限範圍內的部門設定。</p>
+    </div>
+    {% if selected %}
+      <div class="toolbar__actions">
+        <a class="btn btn--secondary btn--small" href="/system/departments">回部門列表</a>
+        {% if can_grants %}
+          <a class="btn btn--primary btn--small"
+             href="/system/departments/{{ selected.department_id }}/permissions">設定本部門可使用的功能</a>
+        {% endif %}
+      </div>
     {% endif %}
-  {% else %}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>代碼</th>
-          <th>名稱</th>
-          <th>狀態</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-          <tr>
-            <td>{{ item.department_code }}</td>
-            <td>{{ item.department_name }}</td>
-            <td>{{ '啟用' if item.is_active else '停用' }}</td>
-            <td><a href="/system/departments/{{ item.department_id }}">查看／修改</a></td>
-          </tr>
-        {% else %}
-          <tr>
-            <td colspan="4">目前範圍內沒有部門。</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  </div>
+  {% if not selected %}
+    <section class="card">
+      <h3 class="card__title">部門清單</h3>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>代碼</th>
+              <th>名稱</th>
+              <th>狀態</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+              <tr>
+                <td><code>{{ item.department_code }}</code></td>
+                <td>{{ item.department_name }}</td>
+                <td>
+                  <span class="badge {% if item.is_active %}badge--success{% else %}badge--gray{% endif %}">
+                    {{ '啟用' if item.is_active else '停用' }}
+                  </span>
+                </td>
+                <td><a class="btn btn--secondary btn--small"
+   href="/system/departments/{{ item.department_id }}">查看／修改</a></td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="4" class="empty-state">目前範圍內沒有部門。</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   {% endif %}
   {% if can_save %}
-    <h2>{{ '修改部門' if selected else '新增部門' }}</h2>
-    <form class="form"
-          method="post"
-          action="/system/departments{% if selected %}/{{ selected.department_id }}{% endif %}">
-      {% if selected %}
-        <input type="hidden"
-               name="expected_revision"
-               value="{{ selected.revision }}">
-      {% endif %}
-      <div class="form-field">
-        <label for="department-code">部門代碼（區分大小寫）</label>
-        <input id="department-code"
-               name="department_code"
-               maxlength="100"
-               value="{{ selected.department_code if selected else '' }}"
-               required>
-      </div>
-      <div class="form-field">
-        <label for="department-name">部門名稱</label>
-        <input id="department-name"
-               name="department_name"
-               maxlength="200"
-               value="{{ selected.department_name if selected else '' }}"
-               required>
-      </div>
-      <label><input name="is_active"
-       type="checkbox"
-       value="true"
-       {% if not selected or selected.is_active %}checked{% endif %}>啟用</label>
-      <p>停用前請先完成帳號移轉及撤銷；系統不會自動搬移成員。</p>
-      <button class="btn btn--primary" type="submit">儲存部門</button>
-    </form>
+    <section class="card">
+      <h2 class="card__title">{{ '修改部門' if selected else '新增部門' }}</h2>
+      <form class="form"
+            method="post"
+            action="/system/departments{% if selected %}/{{ selected.department_id }}{% endif %}">
+        {% if selected %}
+          <input type="hidden"
+                 name="expected_revision"
+                 value="{{ selected.revision }}">
+        {% endif %}
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="department-code">部門代碼（區分大小寫）</label>
+            <input id="department-code"
+                   name="department_code"
+                   maxlength="100"
+                   value="{{ selected.department_code if selected else '' }}"
+                   required>
+          </div>
+          <div class="form-field">
+            <label for="department-name">部門名稱</label>
+            <input id="department-name"
+                   name="department_name"
+                   maxlength="200"
+                   value="{{ selected.department_name if selected else '' }}"
+                   required>
+          </div>
+        </div>
+        <label>
+          <input name="is_active"
+                 type="checkbox"
+                 value="true"
+                 {% if not selected or selected.is_active %}checked{% endif %}>
+          啟用
+        </label>
+        <p class="muted small-text">停用前請先完成帳號移轉及撤銷；系統不會自動搬移成員。</p>
+        <div class="toolbar__actions">
+          <button class="btn btn--primary" type="submit">儲存部門</button>
+        </div>
+      </form>
+    </section>
   {% endif %}
 {% endblock content %}

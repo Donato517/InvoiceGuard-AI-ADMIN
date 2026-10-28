@@ -2,12 +2,34 @@
   @template partials/sidebar.html
   @description 後台左側選單；項目來自 app.constants.MENU_ITEMS，目前所在頁面加上 --active。
 #}
+{% set menu_icons = {
+  "/dashboard": "📊",
+  "/invoices": "🧾",
+  "/knowledge": "📚",
+  "/accounts": "👤",
+  "/department": "🏢",
+  "/functions": "⚙️",
+  "/department-functions": "🔐",
+  "/users": "👥",
+  "/system/audit-logs": "🛡️",
+  "/system/job-runs": "⏱️"
+} %}
 <aside class="app-sidebar">
-  <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
+  <div class="app-sidebar__logo">
+    InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
+  </div>
   <nav aria-label="後台選單">
     {% for label, path in MENU_ITEMS %}
+      {% if path == "/invoices" %}
+        <div class="app-sidebar__caption">發票與知識庫作業</div>
+      {% elif path == "/accounts" %}
+        <div class="app-sidebar__caption">系統與權限設定</div>
+      {% endif %}
       <a href="{{ path }}"
-         class="app-sidebar__link {% if request.url.path.startswith(path) %}app-sidebar__link--active{% endif %}">{{ label }}</a>
+         class="app-sidebar__link {% if request.url.path == path or (path != '/department' and request.url.path.startswith(path ~ '/')) %}app-sidebar__link--active{% endif %}">
+        <span class="app-sidebar__emoji" aria-hidden="true">{{ menu_icons.get(path, "•") }}</span>
+        <span>{{ label }}</span>
+      </a>
     {% endfor %}
   </nav>
 </aside>

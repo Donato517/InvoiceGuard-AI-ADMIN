@@ -7,59 +7,85 @@
 {% extends "layouts/e_admin.html" %}
 {% block title %}本人資訊{% endblock %}
 {% block content %}
-  <p>使用者識別：{{ profile.user_id }}</p>
-  <p>Email：{{ profile.email }}</p>
-  <h2>有效部門</h2>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>代碼</th>
-        <th>部門</th>
-        <th>目前情境</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for department in effective_access.departments %}
-        <tr>
-          <td>{{ department.department_code }}</td>
-          <td>{{ department.department_name }}</td>
-          <td>{{ '目前部門' if department.department_id == effective_access.selected_department_id else '' }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <h2>可用功能與資料範圍</h2>
-  {% include "pages/e_admin/effective_access.html" %}
-  <h2>修改顯示名稱</h2>
-  <form class="form" method="post" action="/account">
-    <div class="form-field">
-      <label for="display-name">顯示名稱</label>
-      <input id="display-name"
-             name="display_name"
-             value="{{ profile.display_name }}"
-             maxlength="200"
-             required>
+  <div class="page-heading">
+    <h2>本人資訊</h2>
+    <p class="muted small-text">檢視目前登入帳號的有效部門、可用功能範圍與密碼設定。</p>
+  </div>
+  <div class="department-context">
+    <span>使用者識別：<code>{{ profile.user_id }}</code></span> ·
+    <span>Email：{{ profile.email }}</span>
+  </div>
+  <section class="card">
+    <h2 class="card__title">有效部門</h2>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>代碼</th>
+            <th>部門</th>
+            <th>目前情境</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for department in effective_access.departments %}
+            <tr>
+              <td><code>{{ department.department_code }}</code></td>
+              <td>{{ department.department_name }}</td>
+              <td>
+                {% if department.department_id == effective_access.selected_department_id %}
+                  <span class="badge badge--success">目前部門</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-    <button class="btn btn--primary" type="submit">更新本人資訊</button>
-  </form>
-  <h2>變更密碼</h2>
-  <form class="form" method="post" action="/auth/password/change">
-    <div class="form-field">
-      <label for="current-password">目前密碼</label>
-      <input id="current-password"
-             type="password"
-             name="current_password"
-             autocomplete="current-password"
-             required>
-    </div>
-    <div class="form-field">
-      <label for="new-password">新密碼</label>
-      <input id="new-password"
-             type="password"
-             name="new_password"
-             autocomplete="new-password"
-             required>
-    </div>
-    <button class="btn btn--primary" type="submit">變更密碼並重新登入</button>
-  </form>
+  </section>
+  <section class="card">
+    <h2 class="card__title">可用功能與資料範圍</h2>
+    {% include "pages/e_admin/effective_access.html" %}
+  </section>
+  <div class="form-grid">
+    <section class="card">
+      <h2 class="card__title">修改顯示名稱</h2>
+      <form class="form" method="post" action="/account">
+        <div class="form-field">
+          <label for="display-name">顯示名稱</label>
+          <input id="display-name"
+                 name="display_name"
+                 value="{{ profile.display_name }}"
+                 maxlength="200"
+                 required>
+        </div>
+        <div class="toolbar__actions">
+          <button class="btn btn--primary" type="submit">更新本人資訊</button>
+        </div>
+      </form>
+    </section>
+    <section class="card">
+      <h2 class="card__title">變更密碼</h2>
+      <form class="form" method="post" action="/auth/password/change">
+        <div class="form-field">
+          <label for="current-password">目前密碼</label>
+          <input id="current-password"
+                 type="password"
+                 name="current_password"
+                 autocomplete="current-password"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="new-password">新密碼</label>
+          <input id="new-password"
+                 type="password"
+                 name="new_password"
+                 autocomplete="new-password"
+                 required>
+        </div>
+        <div class="toolbar__actions">
+          <button class="btn btn--primary" type="submit">變更密碼並重新登入</button>
+        </div>
+      </form>
+    </section>
+  </div>
 {% endblock content %}

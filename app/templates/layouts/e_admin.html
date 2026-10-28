@@ -9,13 +9,28 @@
 {% block body %}
   <div class="admin-layout">
     <aside class="app-sidebar">
-      <div class="app-sidebar__logo">{{ SITE_NAME }}</div>
+      <div class="app-sidebar__logo">
+        InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
+      </div>
       <nav aria-label="後台選單">
-        <a class="app-sidebar__link" href="/workspace">工作台</a>
-        <a class="app-sidebar__link" href="/account">本人資訊</a>
+        <div class="app-sidebar__caption">管理站工作台</div>
+        <a class="app-sidebar__link {% if request.url.path == '/workspace' %}app-sidebar__link--active{% endif %}"
+           href="/workspace">
+          <span class="app-sidebar__emoji" aria-hidden="true">📊</span>
+          <span>工作台</span>
+        </a>
+        <a class="app-sidebar__link {% if request.url.path == '/account' %}app-sidebar__link--active{% endif %}"
+           href="/account">
+          <span class="app-sidebar__emoji" aria-hidden="true">👤</span>
+          <span>本人資訊</span>
+        </a>
         {% for item in e_menu %}
           {% if item.code != "sys.department-permissions" %}
-            <a class="app-sidebar__link" href="{{ item.route }}">{{ item.name }}</a>
+            <a class="app-sidebar__link {% if request.url.path.startswith(item.route) %}app-sidebar__link--active{% endif %}"
+               href="{{ item.route }}">
+              <span class="app-sidebar__emoji" aria-hidden="true">⚙️</span>
+              <span>{{ item.name }}</span>
+            </a>
           {% endif %}
         {% endfor %}
       </nav>
@@ -23,12 +38,20 @@
     <div class="admin-layout__main">
       <header class="app-header">
         <h1 class="app-header__title">{{ self.title() }}</h1>
-        <form method="post" action="/logout">
-          <button class="btn" type="submit">登出</button>
-        </form>
+        <div class="app-header__account">
+          {% if identity is defined %}
+            <span class="app-header__user">{{ identity.display_name }}</span>
+            <span class="badge badge--gray">管理站</span>
+          {% endif %}
+          <form method="post" action="/logout">
+            <button class="btn btn--secondary btn--small" type="submit">登出</button>
+          </form>
+        </div>
       </header>
       <main class="admin-layout__content">
-        {% block content %}{% endblock %}
+        <div class="content">
+          {% block content %}{% endblock %}
+        </div>
       </main>
     </div>
   </div>

@@ -1,60 +1,129 @@
 /* ==========================================================================
    設計變數（Design Tokens）
-   所有顏色、字級、間距、圓角一律引用此處變數，禁止在元件內寫死色碼或像素值。
+   對齊 invoiceguard_final_formatted.html 原型色票、字級、間距與圓角。
+   所有元件與版型一律引用此處變數，禁止在元件內直接寫死色碼。
    ========================================================================== */
 
 :root {
-  /* ---- 品牌色 ---- */
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
+  /* ---- 原型核心色票 ---- */
+  --navy: #102c52;
+  --blue: #216de0;
+  --green: #219764;
+  --orange: #db891c;
+  --red: #d34b49;
+  --text: #23344d;
+  --muted: #718097;
+  --line: #e3eaf3;
+  --bg: #f2f6fb;
 
-  /* ---- 狀態色（對應發票風險結果）---- */
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger: #dc2626;
+  /* ---- 品牌與主色 ---- */
+  --color-primary: var(--blue);
+  --color-primary-hover: #1b5ec4;
+  --color-brand-accent: #69b7ff;
+  --color-card-title: #1d4a8f;
+
+  /* ---- 狀態色（對應發票風險與審核結果）---- */
+  --color-success: var(--green);
+  --color-warning: var(--orange);
+  --color-danger: var(--red);
 
   /* ---- 中性色 ---- */
-  --color-text: #1f2937;
-  --color-text-muted: #6b7280;
-  --color-border: #e5e7eb;
+  --color-text: var(--text);
+  --color-text-muted: var(--muted);
+  --color-border: var(--line);
   --color-bg: #ffffff;
-  --color-bg-muted: #f9fafb;
+  --color-bg-muted: var(--bg);
 
-  /* ---- 字體 ---- */
-  --font-family-base: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
-  --font-size-sm: 0.875rem;
-  --font-size-base: 1rem;
-  --font-size-lg: 1.25rem;
-  --font-size-xl: 1.5rem;
+  /* ---- 字體與字級 ---- */
+  --font-family-base: 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans TC', sans-serif;
+  --font-size-xs: 0.75rem;    /* 12px */
+  --font-size-sm: 0.8125rem;  /* 13px */
+  --font-size-md: 0.875rem;   /* 14px */
+  --font-size-base: 1rem;     /* 16px */
+  --font-size-lg: 1.125rem;   /* 18px */
+  --font-size-xl: 1.3125rem;  /* 21px */
+  --font-size-stat: 2rem;     /* 32px */
 
-  /* ---- 間距（以 4px 為單位）---- */
+  /* ---- 間距 ---- */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
 
-  /* ---- 外觀 ---- */
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 5%);
-  --content-max-width: 1200px;
+  /* ---- 圓角與陰影 ---- */
+  --radius-sm: 0.5rem;        /* 8px */
+  --radius-md: 0.5625rem;     /* 9px */
+  --radius-lg: 0.875rem;      /* 14px */
+  --radius-xl: 1rem;          /* 16px */
+  --radius-pill: 1.25rem;     /* 20px */
+  --shadow-sm: 0 3px 12px #17345b04;
+  --shadow-modal: 0 24px 80px #102c5240;
+  --content-max-width: 1320px;
+
+  /* ---- 按鈕與表單控制項色調 ---- */
+  --color-btn-secondary-bg: #eaf0f9;
+  --color-btn-secondary-text: #315175;
+  --color-btn-danger-bg: #fff0ef;
+  --color-input-border: #ced9e8;
+  --color-input-focus: #b9d4ff;
+
+  /* ---- 表格與區塊底色 ---- */
+  --color-table-th-bg: #f6f9fd;
+  --color-table-th-text: #6a7d94;
+  --color-company-bg: #edf4ff;
+  --color-company-text: #275a9b;
+  --color-dept-context-bg: #edf4ff;
+  --color-dept-context-border: #dce9fc;
+  --color-dept-context-text: #315b91;
 
   /* ---- 軟色調與背景色（標籤、提示、步驟列）---- */
-  --color-primary-soft: #eff6ff;
-  --color-neutral-soft: #f3f4f6;
-  --color-neutral-soft-text: #374151;
-  --color-success-soft: #dcfce7;
-  --color-success-soft-text: #166534;
-  --color-warning-soft: #fef3c7;
-  --color-warning-soft-text: #92400e;
-  --color-danger-soft: #fee2e2;
-  --color-danger-soft-text: #991b1b;
+  --color-primary-soft: #eef5ff;
+  --color-primary-soft-text: #42648c;
+  --color-neutral-soft: #edf2f8;
+  --color-neutral-soft-text: #60738c;
+  --color-success-soft: #e6f6ec;
+  --color-success-soft-text: #23774d;
+  --color-notice-success-bg: #eaf7ef;
+  --color-warning-soft: #fff2da;
+  --color-warning-soft-text: #9f691c;
+  --color-notice-warning-bg: #fff5e6;
+  --color-notice-warning-text: #99661c;
+  --color-danger-soft: #fff0ef;
+  --color-danger-soft-text: var(--red);
+
+  /* ---- 步驟與特殊區塊色調 ---- */
+  --color-step-bg: #e9eff7;
+  --color-step-text: #6c7f98;
+  --color-step-active-bg: #dceaff;
+  --color-step-active-text: #185bc0;
+  --color-step-done-bg: #e3f3ea;
+  --color-step-done-text: #22774d;
+  --color-dept-badge-border: #dce3ed;
+  --color-dept-badge-on-border: #b8dec8;
+  --color-dept-badge-pending-bg: #f4f6fa;
+  --color-dept-badge-pending-text: #8995a6;
+  --color-file-box-bg: #f6faff;
+  --color-file-box-border: #acc7ed;
+  --color-download-bg: #f5f9ff;
+  --color-invoice-preview-bg: #fffcf0;
+  --color-invoice-preview-border: #eadfb2;
+  --color-pre-bg: #142c48;
+  --color-pre-text: #b1e4cb;
+  --color-modal-footer-bg: #f8faff;
+  --color-modal-backdrop: #10243b80;
+  --color-progress-bg: #e8eff8;
 
   /* ---- 後台版面 ---- */
-  --header-height: 64px;
+  --header-height: 76px;
   --sidebar-width: 220px;
-  --color-sidebar-bg: #111827;
-  --color-sidebar-text: #d1d5db;
+  --sidebar-width-compact: 185px;
+  --sidebar-width-mobile: 70px;
+  --color-sidebar-bg: var(--navy);
+  --color-sidebar-text: #d3e2f5;
+  --color-sidebar-link: #cedcf0;
+  --color-sidebar-active: #244e80;
+  --color-sidebar-caption: #90aacd;
 }

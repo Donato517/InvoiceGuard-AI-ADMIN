@@ -3,32 +3,34 @@
   @description 依操作分列資料範圍，檢視許可與修改許可不可互相擴權。
   @context effective_access: SelfAccess 已驗證的本人有效功能
 #}
-<table class="table">
-  <thead>
-    <tr>
-      <th>分類</th>
-      <th>功能</th>
-      <th>操作</th>
-      <th>資料範圍</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for function in effective_access.functions %}
-      {% for grant in function.grants %}
-        <tr>
-          <td>{{ function.category }}</td>
-          <td>
-            {% if function.can_open %}
-              <a href="{{ function.route }}">{{ function.name }}</a>
-            {% else %}
-              {{ function.name }}
-            {% endif %}
-            <small>{{ function.code }}</small>
-          </td>
-          <td>{{ grant.action_label }}</td>
-          <td>{{ grant.scope_label }}</td>
-        </tr>
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>分類</th>
+        <th>功能</th>
+        <th>操作</th>
+        <th>資料範圍</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for function in effective_access.functions %}
+        {% for grant in function.grants %}
+          <tr>
+            <td>{{ function.category }}</td>
+            <td>
+              {% if function.can_open %}
+                <a href="{{ function.route }}">{{ function.name }}</a>
+              {% else %}
+                {{ function.name }}
+              {% endif %}
+              <code>{{ function.code }}</code>
+            </td>
+            <td><span class="badge badge--gray">{{ grant.action_label }}</span></td>
+            <td>{{ grant.scope_label }}</td>
+          </tr>
+        {% endfor %}
       {% endfor %}
-    {% endfor %}
-  </tbody>
-</table>
+    </tbody>
+  </table>
+</div>

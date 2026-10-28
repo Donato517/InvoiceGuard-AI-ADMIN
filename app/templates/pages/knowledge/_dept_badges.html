@@ -13,13 +13,15 @@
           hx-target="#{{ target }}"
           hx-swap="outerHTML">
       <input type="hidden" name="department_id" value="{{ badge.id }}">
-      <input type="hidden" name="enable" value="{{ 'false' if badge.state == 'on' else 'true' }}">
+      <input type="hidden"
+             name="enable"
+             value="{{ 'false' if badge.state == 'on' else 'true' }}">
       <button type="submit"
               class="dept-badge {% if badge.state == 'on' %}dept-badge--on{% elif badge.state == 'unknown' %}dept-badge--pending{% endif %}"
               aria-pressed="{{ 'true' if badge.state == 'on' else 'false' }}"
               {% if badge.state == 'unknown' or not badge.can_toggle %}disabled{% endif %}
               title="{% if badge.state == 'unknown' %}尚未確認狀態{% elif not badge.can_toggle %}此部門唯讀{% elif badge.state == 'on' %}點擊取消此部門選用{% else %}點擊讓此部門選用{% endif %}">
-        {{ badge.name }}{% if badge.state == 'unknown' %} · 待確認{% endif %}
+        {{ badge.name }}{% if badge.state == "unknown" %} · 待確認{% endif %}
       </button>
     </form>
   {% else %}

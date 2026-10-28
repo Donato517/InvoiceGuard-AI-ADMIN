@@ -8,7 +8,7 @@
     <li class="stepper__item {% if item.state == 'active' %}stepper__item--active{% elif item.state == 'done' %}stepper__item--done{% endif %}"
         {% if item.state == 'active' %}aria-current="step"{% endif %}>
       <span class="stepper__index">{{ '✓' if item.state == 'done' else item.number }}</span>
-      {% if item.state == 'locked' %}
+      {% if item.state == "locked" %}
         {{ item.label }}
       {% else %}
         <a href="{{ item.url }}">{{ item.label }}</a>

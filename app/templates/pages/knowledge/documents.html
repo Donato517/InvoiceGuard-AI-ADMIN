@@ -16,15 +16,22 @@
   <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
 {% endblock head %}
 {% block content %}
-  <div class="toolbar">
-    <a href="/knowledge" class="btn btn--secondary btn--small">← 返回知識庫管理</a>
-    <form method="get" action="/knowledge/{{ kb.id }}/documents">
+  <div class="page-heading page-heading--between">
+    <div>
+      <a href="/knowledge" class="btn btn--secondary btn--small">← 返回知識庫管理</a>
+      <h2>{{ kb.title }}</h2>
+      <p class="muted small-text">點文件名稱編輯資料；點原始檔名查看與修改內容。</p>
+    </div>
+    <form class="toolbar__actions"
+          method="get"
+          action="/knowledge/{{ kb.id }}/documents">
       <select name="department_id" aria-label="檢視部門">
         {% for dept in assigned_departments %}
-          <option value="{{ dept.id }}" {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
+          <option value="{{ dept.id }}"
+                  {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="btn btn--small">切換</button>
+      <button type="submit" class="btn btn--secondary btn--small">切換</button>
     </form>
   </div>
   <div class="alert alert--info">
@@ -32,9 +39,9 @@
     {% with badges=kb.badges, toggle_url=kb.toggle_url, target="dept-badges-" ~ kb.id %}
       {% include "pages/knowledge/_dept_badges.html" %}
     {% endwith %}
-    <p class="muted">下表「在使用部門」只列出已選用此知識庫的部門；選用文件不代表已核准或索引完成。</p>
+    <p class="muted small-text">下表「在使用部門」只列出已選用此知識庫的部門；選用文件不代表已核准或索引完成。</p>
   </div>
-  <div class="stat-grid">
+  <div class="stat-grid stat-grid--three">
     <div class="stat-card">
       <div class="stat-card__label">文件總數</div>
       <div class="stat-card__value">{{ counts.total }}</div>
@@ -51,72 +58,84 @@
   <section class="card">
     <div class="toolbar">
       <h2 class="card__title">文件清單</h2>
-      <form class="toolbar__actions" method="get" action="/knowledge/{{ kb.id }}/documents">
-        <input type="hidden" name="department_id" value="{{ department_id }}">
-        <input name="q"
-               type="search"
-               value="{{ q }}"
-               placeholder="搜尋文件名稱或原始檔名…"
-               aria-label="搜尋文件">
-        <select name="approval" aria-label="核准篩選">
-          <option value="all">全部文件</option>
-          <option value="approved" {% if approval == 'approved' %}selected{% endif %}>已核准文件</option>
-          <option value="unapproved" {% if approval == 'unapproved' %}selected{% endif %}>未核准文件</option>
-        </select>
-        <button type="submit" class="btn btn--small">篩選</button>
-      </form>
-      <button type="button"
-              class="btn btn--success btn--small"
-              data-open-dialog="upload-modal">＋ 上傳新文件（可多選）</button>
+      <div class="toolbar__actions">
+        <form class="toolbar__actions"
+              method="get"
+              action="/knowledge/{{ kb.id }}/documents">
+          <input type="hidden" name="department_id" value="{{ department_id }}">
+          <input class="search-input"
+                 name="q"
+                 type="search"
+                 value="{{ q }}"
+                 placeholder="搜尋文件名稱或原始檔名…"
+                 aria-label="搜尋文件">
+          <select name="approval" aria-label="核准篩選">
+            <option value="all">全部文件</option>
+            <option value="approved" {% if approval == 'approved' %}selected{% endif %}>已核准文件</option>
+            <option value="unapproved"
+                    {% if approval == 'unapproved' %}selected{% endif %}>未核准文件</option>
+          </select>
+          <button type="submit" class="btn btn--secondary btn--small">篩選</button>
+        </form>
+        <button type="button"
+                class="btn btn--success btn--small"
+                data-open-dialog="upload-modal">＋ 上傳新文件（可多選）</button>
+      </div>
     </div>
-    <p class="muted">搜尋結果：{{ rows | length }} / {{ counts.total }} 份文件。搜尋名稱及檔名，不搜尋全文。</p>
-    <table class="table">
-      <thead>
-        <tr>
-          <th scope="col">文件名稱（編輯）</th>
-          <th scope="col">原始檔名（內容）</th>
-          <th scope="col">文件審核</th>
-          <th scope="col">在使用部門</th>
-          <th scope="col">上傳時間</th>
-          <th scope="col">文件操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for doc in rows %}
+    <p class="muted small-text">搜尋結果：{{ rows | length }} / {{ counts.total }} 份文件。搜尋名稱及檔名，不搜尋全文。</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
           <tr>
-            <td>
-              <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/edit">{{ doc.title }}</a>
-              {% if doc.is_sample %}
-                <br>
-                <small class="muted">範例項目，未附原始內容</small>
-              {% endif %}
-            </td>
-            <td>
-              <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content">{{ doc.file_name or "查看內容" }}</a>
-            </td>
-            <td>
-              <span class="badge {% if doc.status == 'active' %}badge--success{% else %}badge--warning{% endif %}">{{ "已核准" if doc.status == "active" else "未核准" }}</span>
-            </td>
-            <td>
-              {% with badges=doc.badges, toggle_url=doc.toggle_url, target="dept-badges-doc-" ~ doc.id %}
-                {% include "pages/knowledge/_dept_badges.html" %}
-              {% endwith %}
-            </td>
-            <td>{{ doc.created_at | taipei_datetime if doc.created_at else "—" }}</td>
-            <td>
-              <form method="post" action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/status">
-                <input type="hidden" name="status" value="{{ 'hold' if doc.status == 'active' else 'active' }}">
-                <button type="submit" class="btn btn--small {% if doc.status == 'active' %}btn--secondary{% else %}btn--success{% endif %}">{{ "暫停文件" if doc.status == "active" else "核准文件" }}</button>
-              </form>
-            </td>
+            <th scope="col">文件名稱（編輯）</th>
+            <th scope="col">原始檔名（內容）</th>
+            <th scope="col">文件審核</th>
+            <th scope="col">在使用部門</th>
+            <th scope="col">上傳時間</th>
+            <th scope="col">文件操作</th>
           </tr>
-        {% else %}
-          <tr>
-            <td colspan="6" class="empty-state">沒有符合條件的文件</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for doc in rows %}
+            <tr>
+              <td>
+                <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/edit">{{ doc.title }}</a>
+                {% if doc.is_sample %}
+                  <br>
+                  <small class="muted">範例項目，未附原始內容</small>
+                {% endif %}
+              </td>
+              <td>
+                <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content">{{ doc.file_name or "查看內容" }}</a>
+              </td>
+              <td>
+                <span class="badge {% if doc.status == 'active' %}badge--success{% else %}badge--warning{% endif %}">{{ "已核准" if doc.status == "active" else "未核准" }}</span>
+              </td>
+              <td>
+                {% with badges=doc.badges, toggle_url=doc.toggle_url, target="dept-badges-doc-" ~ doc.id %}
+                  {% include "pages/knowledge/_dept_badges.html" %}
+                {% endwith %}
+              </td>
+              <td>{{ doc.created_at | taipei_datetime if doc.created_at else "—" }}</td>
+              <td>
+                <form method="post"
+                      action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/status">
+                  <input type="hidden"
+                         name="status"
+                         value="{{ 'hold' if doc.status == 'active' else 'active' }}">
+                  <button type="submit"
+                          class="btn btn--small {% if doc.status == 'active' %}btn--danger{% else %}btn--success{% endif %}">{{ "暫停文件" if doc.status == "active" else "核准文件" }}</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="6" class="empty-state">沒有符合條件的文件</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
   {% include "pages/knowledge/_upload_modal.html" %}
 {% endblock content %}

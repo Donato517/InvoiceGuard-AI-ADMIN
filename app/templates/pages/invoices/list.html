@@ -1,6 +1,6 @@
 {#
   @template pages/invoices/list.html
-  @description 發票審核列表：依狀態與關鍵字篩選，顯示發票進度與前往作業流程（步驟 4～9）。
+  @description 發票審核列表：依狀態與關鍵字篩選，顯示發票進度與前往作業流程（步驟 1～9）。
   @route GET /invoices（需管理者登入）
   @context invoices: list[dict] 發票資料清單
   @context status: str | None   篩選狀態
@@ -10,9 +10,17 @@
 {% extends "layouts/admin.html" %}
 {% block title %}發票審核{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
 {% endblock head %}
 {% block content %}
+  <div class="page-heading page-heading--between">
+    <div>
+      <h2>發票審核管理</h2>
+      <p class="muted small-text">依狀態與關鍵字篩選發票，檢視或執行發票上傳、財會檢核、申報與傳票匯出作業。</p>
+    </div>
+    <a href="/invoices/new" class="btn btn--primary">＋ 新增發票</a>
+  </div>
   <div class="stat-grid">
     <div class="stat-card">
       <div class="stat-card__label">發票總數</div>
@@ -44,6 +52,7 @@
             hx-swap="outerHTML"
             hx-push-url="true">
         <input id="inv-search"
+               class="search-input"
                name="q"
                type="search"
                value="{{ q }}"
@@ -60,7 +69,7 @@
         </noscript>
       </form>
     </div>
-    <div id="invoice-table-wrap">
+    <div id="invoice-table-wrap" class="table-wrap">
       {% if invoices %}
         <table class="table">
           <thead>
@@ -92,8 +101,8 @@
                   <span class="muted small-text">{{ "已完成" if inv.is_completed else "步驟 " ~ inv.stage }}</span>
                 </td>
                 <td>
-                  <a href="/invoices/{{ inv.id }}/flow?step={{ 9 if inv.is_completed else 4 }}"
-                     class="btn btn--secondary btn--small">{{ "檢視流程" if inv.is_completed else "審核流程 →" }}</a>
+                  <a href="/invoices/{{ inv.id }}/flow?step={{ 9 if inv.is_completed else (inv.stage if inv.stage else 4) }}"
+                     class="btn {% if inv.is_completed %}btn--secondary{% else %}btn--primary{% endif %} btn--small">{{ "檢視流程" if inv.is_completed else "審核流程 →" }}</a>
                 </td>
               </tr>
             {% endfor %}

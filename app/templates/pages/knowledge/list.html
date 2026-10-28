@@ -14,10 +14,12 @@
   <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
 {% endblock head %}
 {% block content %}
-  <p class="alert alert--info">
-    綠色部門＝已選用於問答；灰色＝未選用。部門篩選只顯示該部門目前選用的知識庫，取消選用不會刪除文件。
-  </p>
-  <div class="stat-grid">
+  <div class="page-heading">
+    <h2>全部門知識庫管理</h2>
+    <p class="muted small-text">點知識庫名稱編輯或刪除，點「查看文件」開啟文件清單。</p>
+  </div>
+  <p class="alert alert--info">綠色部門＝已選用於問答；灰色＝未選用。部門篩選只顯示該部門目前選用的知識庫，取消選用不會刪除文件。</p>
+  <div class="stat-grid stat-grid--three">
     <div class="stat-card">
       <div class="stat-card__label">知識庫總數</div>
       <div class="stat-card__value">{{ counts.total }}</div>
@@ -31,44 +33,49 @@
       <div class="stat-card__value">{{ counts.inactive }}</div>
     </div>
   </div>
-  <p class="muted">
+  <p class="muted small-text">
     至少一個部門選用即計為在使用中；所有部門未選用才計為未使用。
     {% if counts.unknown %}另有 {{ counts.unknown }} 個尚未確認。{% endif %}
   </p>
   <section class="card">
     <div class="toolbar">
       <h2 class="card__title">知識庫清單</h2>
-      <form class="toolbar__actions"
-            method="get"
-            action="/knowledge"
-            hx-get="/knowledge"
-            hx-trigger="change, input delay:300ms from:#kb-search"
-            hx-target="#kb-table"
-            hx-select="#kb-table"
-            hx-swap="outerHTML"
-            hx-push-url="true">
-        <input id="kb-search"
-               name="q"
-               type="search"
-               value="{{ q }}"
-               placeholder="搜尋知識庫名稱…"
-               aria-label="搜尋知識庫名稱">
-        <select name="department_id" aria-label="部門篩選">
-          <option value="all">全部部門</option>
-          {% for dept in departments %}
-            <option value="{{ dept.id }}" {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
-          {% endfor %}
-        </select>
-        <noscript>
-          <button type="submit" class="btn">篩選</button>
-        </noscript>
-      </form>
-      <button type="button"
-              class="btn btn--success btn--small"
-              data-open-dialog="upload-modal">＋ 新增知識庫及文件</button>
+      <div class="toolbar__actions">
+        <button type="button"
+                class="btn btn--success btn--small"
+                data-open-dialog="upload-modal">＋ 新增知識庫及文件</button>
+        <form class="toolbar__actions"
+              method="get"
+              action="/knowledge"
+              hx-get="/knowledge"
+              hx-trigger="change, input delay:300ms from:#kb-search"
+              hx-target="#kb-table"
+              hx-select="#kb-table"
+              hx-swap="outerHTML"
+              hx-push-url="true">
+          <input id="kb-search"
+                 class="search-input"
+                 name="q"
+                 type="search"
+                 value="{{ q }}"
+                 placeholder="搜尋知識庫名稱…"
+                 aria-label="搜尋知識庫名稱">
+          <select name="department_id" aria-label="部門篩選">
+            <option value="all">全部部門</option>
+            {% for dept in departments %}
+              <option value="{{ dept.id }}"
+                      {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
+            {% endfor %}
+          </select>
+          <noscript>
+            <button type="submit" class="btn">篩選</button>
+          </noscript>
+        </form>
+        <a href="/knowledge" class="btn btn--secondary btn--small">重新載入</a>
+      </div>
     </div>
-    <p class="muted">搜尋結果：{{ rows | length }} 個，只搜尋名稱，不搜尋文件全文。</p>
-    <div id="kb-table">
+    <p class="muted small-text">搜尋結果：{{ rows | length }} 個，只搜尋名稱，不搜尋文件全文。</p>
+    <div id="kb-table" class="table-wrap">
       <table class="table">
         <thead>
           <tr>
@@ -89,7 +96,8 @@
                 {% endwith %}
               </td>
               <td>
-                <a href="/knowledge/{{ kb.id }}/documents" class="btn btn--secondary btn--small">查看文件</a>
+                <a href="/knowledge/{{ kb.id }}/documents"
+                   class="btn btn--secondary btn--small">查看文件</a>
               </td>
             </tr>
           {% else %}

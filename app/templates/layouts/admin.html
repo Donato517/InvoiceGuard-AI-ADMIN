@@ -10,17 +10,22 @@
     <div class="admin-layout__main">
       <header class="app-header">
         <h1 class="app-header__title">{{ self.title() }}</h1>
-        {% if request.state.admin is defined %}
-          <span class="app-header__user">{{ request.state.admin.display_name }}</span>
-        {% endif %}
-        {% if request.state.admin is defined %}
-          <form method="post" action="/logout" data-confirm="確定要登出嗎？">
-            <button type="submit" class="btn">登出</button>
-          </form>
-        {% endif %}
+        <div class="app-header__account">
+          {% if request.state.admin is defined %}
+            <span class="app-header__user">{{ request.state.admin.display_name }}</span>
+            <span class="badge badge--gray">工程師</span>
+          {% endif %}
+          {% if request.state.admin is defined %}
+            <form method="post" action="/logout" data-confirm="確定要登出嗎？">
+              <button type="submit" class="btn btn--secondary btn--small">登出</button>
+            </form>
+          {% endif %}
+        </div>
       </header>
       <main class="admin-layout__content">
-        {% block content %}{% endblock %}
+        <div class="content">
+          {% block content %}{% endblock %}
+        </div>
       </main>
     </div>
   </div>

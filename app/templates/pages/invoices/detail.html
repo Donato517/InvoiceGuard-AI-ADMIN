@@ -8,7 +8,8 @@
 {% extends "layouts/admin.html" %}
 {% block title %}發票審核詳情 — {{ invoice.invoice_number }}{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
 {% endblock head %}
 {% block content %}
   <div class="toolbar">
@@ -92,7 +93,10 @@
       {% if not invoice.is_completed %}
         <div class="toolbar__actions">
           <button type="submit" name="decision" value="passed" class="btn btn--success">確認核准</button>
-          <button type="submit" name="decision" value="rejected" class="btn btn--danger">退回修正</button>
+          <button type="submit"
+                  name="decision"
+                  value="rejected"
+                  class="btn btn--danger">退回修正</button>
         </div>
       {% else %}
         <p class="alert alert--success">此發票作業已完成（唯讀模式）。</p>

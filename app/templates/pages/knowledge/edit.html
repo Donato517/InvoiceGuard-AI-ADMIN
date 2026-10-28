@@ -15,11 +15,18 @@
   <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
 {% endblock head %}
 {% block content %}
-  <a href="{{ '/knowledge' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents' }}"
-     class="btn btn--secondary btn--small">← 返回</a>
+  <div class="page-heading">
+    <a href="{{ '/knowledge' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents' }}"
+       class="btn btn--secondary btn--small">← 返回{{ "知識庫清單" if mode == "kb_name" else "文件清單" }}</a>
+    <h2>{% if mode == "kb_name" %}編輯知識庫{% elif mode == "doc_name" %}編輯文件{% else %}文件內容與編輯{% endif %}</h2>
+    <p class="muted small-text">{{ kb.title if mode == "kb_name" else doc.title }}</p>
+  </div>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   {% if not can_edit %}
     <p class="alert alert--warning">此文件為其他部門所有、已被其他部門選用，或後端未授權；共用文件請聯絡工程師。</p>
+  {% endif %}
+  {% if mode == "doc_content" %}
+    <p class="alert alert--warning">內容變更後會重設為未核准並重新建立索引。TXT／Markdown 可直接改文字；PDF／DOCX 可替換原檔。</p>
   {% endif %}
   <section class="card">
     {% if mode != "doc_content" %}
@@ -36,7 +43,11 @@
                  {% if not can_edit %}disabled{% endif %}
                  required>
         </div>
-        <button type="submit" class="btn btn--success" {% if not can_edit %}disabled{% endif %}>儲存名稱</button>
+        <div class="toolbar__actions">
+          <button type="submit"
+                  class="btn btn--success"
+                  {% if not can_edit %}disabled{% endif %}>儲存名稱</button>
+        </div>
       </form>
       {% if can_edit %}
         <form method="post"
@@ -45,7 +56,7 @@
           <button type="submit" class="btn btn--danger">{{ "刪除知識庫" if mode == "kb_name" else "刪除文件" }}</button>
         </form>
       {% endif %}
-      <p class="muted">
+      <p class="muted small-text">
         {% if mode == "kb_name" %}
           重新命名影響所有部門；刪除會移除知識庫、部門配置及其中的文件。
         {% else %}
@@ -54,7 +65,6 @@
       </p>
     {% else %}
       {# ---- 內容 ---- #}
-      <p class="alert alert--warning">內容變更後會重設為未核准並重新建立索引。</p>
       <form method="post"
             action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content"
             enctype="multipart/form-data"

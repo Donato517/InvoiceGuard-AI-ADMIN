@@ -1,16 +1,17 @@
 {#
   @template pages/invoices/flow.html
-  @description 發票作業流程（ADMIN 負責步驟 4～9：系統檢核、財務審核、申報檔、匯入、傳票、匯出）。步驟 1～3 在前台。
+  @description 發票作業流程（步驟 1～9：上傳、OCR 預覽、資料核對、系統檢核、財務審核、申報檔、匯入、傳票、匯出）。
   @route GET /invoices/{invoice_id}/flow?step=4（需管理者登入）
   @context invoice: dict      發票資料
-  @context step: int          目前步驟（4～9）
-  @context steps: list[dict]  九個步驟 [{number, label, state, url}]；1～3 的 state 為 done 或 locked
+  @context step: int          目前步驟（1～9）
+  @context steps: list[dict]  九個步驟 [{number, label, state, url}]
   @context error: str | None  上一次送出失敗的訊息
 #}
 {% extends "layouts/admin.html" %}
 {% block title %}發票作業流程{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
 {% endblock head %}
 {% block content %}
   <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票審核</a>
@@ -19,7 +20,13 @@
   <section class="card" id="flow-step">
     <h2 class="card__title">{{ steps[step - 1].label }}</h2>
     {% if invoice.is_completed %}<p class="alert alert--success">已完成，目前為檢視模式。</p>{% endif %}
-    {% if step == 4 %}
+    {% if step == 1 %}
+      {% include "pages/invoices/_flow_step_upload.html" %}
+    {% elif step == 2 %}
+      {% include "pages/invoices/_flow_step_ocr.html" %}
+    {% elif step == 3 %}
+      {% include "pages/invoices/_flow_step_correct.html" %}
+    {% elif step == 4 %}
       {% include "pages/invoices/_flow_step_check.html" %}
     {% elif step == 5 %}
       {% include "pages/invoices/_flow_step_review.html" %}
@@ -34,8 +41,12 @@
     {% endif %}
   </section>
   <div class="flow-footer">
-    <a href="/invoices/{{ invoice.id }}/flow?step={{ step - 1 }}"
-       class="btn btn--secondary">← 上一步</a>
+    {% if step > 1 %}
+      <a href="/invoices/{{ invoice.id }}/flow?step={{ step - 1 }}"
+         class="btn btn--secondary">← 上一步</a>
+    {% else %}
+      <a href="/invoices" class="btn btn--secondary">← 返回列表</a>
+    {% endif %}
     {% if step < 9 %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
         <input type="hidden" name="from_step" value="{{ step }}">

@@ -44,7 +44,10 @@
   {% if not invoice.is_completed %}
     <div class="toolbar__actions">
       <button type="submit" name="decision" value="passed" class="btn btn--success">確認核准</button>
-      <button type="submit" name="decision" value="rejected" class="btn btn--danger">退回修正</button>
+      <button type="submit"
+              name="decision"
+              value="rejected"
+              class="btn btn--danger">退回修正</button>
     </div>
   {% endif %}
 </form>

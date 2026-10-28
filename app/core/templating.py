@@ -35,7 +35,11 @@ def static_url(path: str) -> str:
     Returns:
         例如 "/static/css/main.css?v=a1b2c3d"。
     """
-    return f"/static/{path}?v={settings.static_version}"
+    version = settings.static_version
+    static_file = BASE_DIR / "app" / "static" / path
+    if version == "dev" and static_file.is_file():
+        version = f"dev-{int(static_file.stat().st_mtime)}"
+    return f"/static/{path}?v={version}"
 
 
 def current_year() -> int:

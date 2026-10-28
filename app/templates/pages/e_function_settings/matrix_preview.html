@@ -10,53 +10,63 @@
 {% block content %}
   <section data-permission-page
            data-unsaved="{{ 'true' if changes else 'false' }}">
-    <h2>{{ matrix.department_code }} — {{ matrix.department_name }}</h2>
-    <p class="alert">目前只是預覽，尚未儲存；確認後會修改共用正式資料庫。只處理本次提交的功能，不會變更其他頁或部門。</p>
-    {% if changes %}
-      <p role="status">本次將變更 {{ changes | length }} 個功能。</p>
-      <table class="table">
-        <thead>
-          <tr>
-            <th scope="col">功能</th>
-            <th scope="col">原設定</th>
-            <th scope="col">變更後</th>
-            <th scope="col">新增操作</th>
-            <th scope="col">撤銷操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for change in changes %}
-            <tr>
-              <td>
-                {{ change.function.function_name }}
-                <br>
-                <code>{{ change.function.function_code }}</code>
-              </td>
-              {% for actions in [change.before, change.after, change.added, change.removed] %}
-                <td>{% for action, label in labels.items() %}{% if action in actions %}{{ label }} {% endif %}{% endfor %}{% if not actions %}無{% endif %}</td>
+    <div class="page-heading">
+      <h2>{{ matrix.department_code }} — {{ matrix.department_name }}</h2>
+    </div>
+    <p class="alert alert--warning">目前只是預覽，尚未儲存；確認後會修改共用正式資料庫。只處理本次提交的功能，不會變更其他頁或部門。</p>
+    <div class="card">
+      {% if changes %}
+        <p role="status">本次將變更 {{ changes | length }} 個功能。</p>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">功能</th>
+                <th scope="col">原設定</th>
+                <th scope="col">變更後</th>
+                <th scope="col">新增操作</th>
+                <th scope="col">撤銷操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for change in changes %}
+                <tr>
+                  <td>
+                    {{ change.function.function_name }}
+                    <br>
+                    <code>{{ change.function.function_code }}</code>
+                  </td>
+                  {% for actions in [change.before, change.after, change.added, change.removed] %}
+                    <td>{% for action, label in labels.items() %}{% if action in actions %}{{ label }} {% endif %}{% endfor %}{% if not actions %}無{% endif %}</td>
+                  {% endfor %}
+                </tr>
               {% endfor %}
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <form method="post"
-            action="/department-functions/{{ matrix.department_id }}"
-            data-permission-transition
-            data-confirm="確定儲存上述部門權限變更？此操作會修改共用正式資料庫。">
-        {% include "pages/e_function_settings/_matrix_payload.html" %}
-        <input type="hidden" name="confirmed" value="true">
-        <button class="btn btn--primary" type="submit">確認儲存</button>
-      </form>
-    {% else %}
-      <p class="empty-state">沒有權限變更，不需要儲存。</p>
-    {% endif %}
-    <form method="post"
-          action="/department-functions/{{ matrix.department_id }}/draft"
-          data-permission-transition>
-      {% include "pages/e_function_settings/_matrix_payload.html" %}
-      <button class="btn" type="submit">返回修改（保留勾選）</button>
-    </form>
-    <p><a class="btn" href="{{ reload_url }}">放棄變更／重新載入</a></p>
+            </tbody>
+          </table>
+        </div>
+        <div class="filter-bar">
+          <form method="post"
+                action="/department-functions/{{ matrix.department_id }}"
+                data-permission-transition
+                data-confirm="確定儲存上述部門權限變更？此操作會修改共用正式資料庫。">
+            {% include "pages/e_function_settings/_matrix_payload.html" %}
+            <input type="hidden" name="confirmed" value="true">
+            <button class="btn btn--success" type="submit">確認儲存</button>
+          </form>
+        </div>
+      {% else %}
+        <p class="empty-state">沒有權限變更，不需要儲存。</p>
+      {% endif %}
+      <div class="filter-bar">
+        <form method="post"
+              action="/department-functions/{{ matrix.department_id }}/draft"
+              data-permission-transition>
+          {% include "pages/e_function_settings/_matrix_payload.html" %}
+          <button class="btn btn--secondary" type="submit">返回修改（保留勾選）</button>
+        </form>
+        <a class="btn btn--secondary" href="{{ reload_url }}">放棄變更／重新載入</a>
+      </div>
+    </div>
   </section>
 {% endblock content %}
 {% block scripts %}

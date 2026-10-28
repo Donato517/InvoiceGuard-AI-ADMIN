@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.deps import require_admin
 from app.core.templating import templates
-from app.routers.invoices import _INVOICE_STORE
+from app.routers.invoices import _DRAFT_INVOICE_STORE, _INVOICE_STORE
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(require_admin)])
 
@@ -23,6 +23,7 @@ def index() -> RedirectResponse:
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request) -> HTMLResponse:
     """儀表板：今日上傳數、待複核數、高風險發票數、最近待處理發票。"""
+    _DRAFT_INVOICE_STORE.clear()
     pending = [i for i in _INVOICE_STORE if not i["is_completed"]]
     completed = [i for i in _INVOICE_STORE if i["is_completed"]]
     flagged = [i for i in _INVOICE_STORE if i["status"] == "flagged"]

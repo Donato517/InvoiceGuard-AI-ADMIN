@@ -41,13 +41,17 @@
     {% endif %}
   </section>
   <div class="flow-footer">
-    {% if step > 1 %}
+    {% if step > 1 and (step > 3 or invoice.file_bytes) %}
       <a href="/invoices/{{ invoice.id }}/flow?step={{ step - 1 }}"
          class="btn btn--secondary">← 上一步</a>
     {% else %}
       <a href="/invoices" class="btn btn--secondary">← 返回列表</a>
     {% endif %}
-    {% if step < 9 %}
+    {% if step == 1 %}
+      <button type="submit" form="flow-upload-form" class="btn btn--primary">上傳並開始辨識 →</button>
+    {% elif step == 3 %}
+      <button type="submit" form="flow-correct-form" class="btn btn--primary">完成核對並儲存進度 →</button>
+    {% elif step < 9 %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
         <input type="hidden" name="from_step" value="{{ step }}">
         <button type="submit" class="btn btn--primary">確認並繼續 →</button>

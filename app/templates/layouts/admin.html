@@ -1,7 +1,7 @@
 {#
   @template layouts/admin.html
-  @description 後台預設版型：左側選單 + 頁首（頁面標題、管理者名稱、登出）+ 內容。需登入的頁面繼承此檔。
-  @block content 頁面主要內容（頁首標題沿用 title block）
+  @description 後台預設版型：左側選單 + 頁首（管理者名稱、工程師標籤、登出）+ 內容。需登入的頁面繼承此檔。
+  @block content 頁面主要內容
 #}
 {% extends "base.html" %}
 {% block body %}
@@ -9,7 +9,6 @@
     {% include "partials/sidebar.html" %}
     <div class="admin-layout__main">
       <header class="app-header">
-        <h1 class="app-header__title">{{ self.title() }}</h1>
         <div class="app-header__account">
           {% if request.state.admin is defined %}
             <span class="app-header__user">{{ request.state.admin.display_name }}</span>

@@ -12,6 +12,7 @@ let currentInvoicePreviewUrl = null
  */
 function renderInvoiceFilePreview(file) {
   const nameLabel = document.getElementById('invoice-file-name')
+  const dropIcon = document.getElementById('invoice-drop-icon')
   const previewWrap = document.getElementById('invoice-file-preview')
   const previewImg = document.getElementById('invoice-preview-image')
   const previewFrame = document.getElementById('invoice-preview-frame')
@@ -42,6 +43,9 @@ function renderInvoiceFilePreview(file) {
   const isPdf =
     (file.type && file.type.includes('application/pdf')) || /\.pdf$/i.test(file.name)
 
+  if (dropIcon) {
+    dropIcon.hidden = true
+  }
   previewWrap.hidden = false
 
   if (isPdf) {

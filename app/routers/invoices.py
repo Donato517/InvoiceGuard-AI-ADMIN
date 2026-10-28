@@ -130,31 +130,46 @@ _INVOICE_STORE: list[dict[str, Any]] = [
 ]
 
 
+# 暫存尚未完成「步驟 3：採購核對修正」的新增發票草稿（不會寫入發票清單與資料庫）
+_DRAFT_INVOICE_STORE: dict[int, dict[str, Any]] = {}
+
+
 def _find_invoice(invoice_id: int) -> dict[str, Any] | None:
     return next((i for i in _INVOICE_STORE if i["id"] == invoice_id), None)
 
 
+def _find_flow_invoice(invoice_id: int) -> dict[str, Any] | None:
+    return _find_invoice(invoice_id) or _DRAFT_INVOICE_STORE.get(invoice_id)
+
+
 def _build_flow_steps(
-    current_step: int, invoice_id: int, is_completed: bool
+    current_step: int,
+    invoice_id: int,
+    is_completed: bool,
+    *,
+    max_stage: int = 9,
+    has_file_bytes: bool = False,
 ) -> list[dict[str, Any]]:
     """建立發票作業 9 個步驟的中繼資料。"""
     steps = []
     for idx, label in enumerate(INVOICE_FLOW_STEPS, start=1):
         if is_completed:
             state = "active" if idx == current_step else "done"
-        elif idx < current_step:
-            state = "done"
         elif idx == current_step:
             state = "active"
+        elif idx <= max_stage:
+            state = "done"
         else:
             state = "locked"
 
+        # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1、2 僅顯示完成勾號不再連結返回
+        can_navigate = state != "locked" and (has_file_bytes or idx >= 3)
         steps.append(
             {
                 "number": idx,
                 "label": label,
                 "state": state,
-                "url": f"/invoices/{invoice_id}/flow?step={idx}",
+                "url": f"/invoices/{invoice_id}/flow?step={idx}" if can_navigate else None,
             }
         )
     return steps
@@ -209,6 +224,7 @@ def invoice_list(
     q: Annotated[str, Query()] = "",
 ) -> HTMLResponse:
     """發票審核列表：分頁、狀態篩選、關鍵字搜尋。"""
+    _DRAFT_INVOICE_STORE.clear()
     invoices = _INVOICE_STORE
 
     if status and status in INVOICE_STATUS_LABEL:
@@ -248,7 +264,8 @@ def invoice_list(
 
 @router.get("/new")
 def create_new_invoice() -> RedirectResponse:
-    """建立新發票草稿並進入步驟 1（上傳發票）。"""
+    """建立暫存發票草稿並進入步驟 1（上傳發票）；未完成步驟 3 採購核對修正前不寫入發票清單。"""
+    _DRAFT_INVOICE_STORE.clear()
     new_id = max((int(i["id"]) for i in _INVOICE_STORE), default=0) + 1
     new_invoice: dict[str, Any] = {
         "id": new_id,
@@ -272,7 +289,7 @@ def create_new_invoice() -> RedirectResponse:
         "import_confirmed_at": None,
         "filing_preview": None,
     }
-    _INVOICE_STORE.insert(0, new_invoice)
+    _DRAFT_INVOICE_STORE[new_id] = new_invoice
     return RedirectResponse(f"/invoices/{new_id}/flow?step=1", status_code=303)
 
 
@@ -293,18 +310,21 @@ def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
     )
 
 
-@router.get("/{invoice_id}/flow", response_class=HTMLResponse)
-def invoice_flow(
+def _render_flow_page(
     request: Request,
-    invoice_id: int,
-    step: Annotated[int, Query(ge=1, le=9)] = 4,
+    invoice: dict[str, Any],
+    step: int,
+    *,
+    error: str | None = None,
 ) -> HTMLResponse:
-    """發票作業流程（步驟 1～9）。"""
-    invoice = _find_invoice(invoice_id)
-    if not invoice:
-        raise HTTPException(status_code=404, detail="找不到指定發票")
-
-    steps = _build_flow_steps(step, invoice_id, invoice["is_completed"])
+    invoice_id = int(invoice["id"])
+    steps = _build_flow_steps(
+        step,
+        invoice_id,
+        invoice["is_completed"],
+        max_stage=int(invoice.get("stage", step)),
+        has_file_bytes=bool(invoice.get("file_bytes")),
+    )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
 
@@ -325,18 +345,33 @@ def invoice_flow(
             "checks": checks,
             "voucher": voucher,
             "filing": filing,
-            "error": None,
+            "error": error,
         },
     )
 
 
-@router.post("/{invoice_id}/flow/upload")
+@router.get("/{invoice_id}/flow", response_class=HTMLResponse)
+def invoice_flow(
+    request: Request,
+    invoice_id: int,
+    step: Annotated[int, Query(ge=1, le=9)] = 4,
+) -> HTMLResponse:
+    """發票作業流程（步驟 1～9）。"""
+    invoice = _find_flow_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+
+    return _render_flow_page(request, invoice, step)
+
+
+@router.post("/{invoice_id}/flow/upload", response_model=None)
 async def upload_invoice_file(
+    request: Request,
     invoice_id: int,
     file: Annotated[UploadFile | None, File()] = None,
-) -> RedirectResponse:
-    """步驟 1：上傳發票檔案並進入步驟 2（OCR 辨識預覽）。"""
-    invoice = _find_invoice(invoice_id)
+) -> Response:
+    """步驟 1：上傳發票檔案並進入步驟 2（OCR 辨識預覽）；此時僅暫存於記憶體，尚未寫入發票清單。"""
+    invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
@@ -351,20 +386,40 @@ async def upload_invoice_file(
             invoice["file_media_type"] = "image/png"
         else:
             invoice["file_media_type"] = "image/jpeg"
+
+    if not invoice.get("file_name"):
+        return _render_flow_page(
+            request,
+            invoice,
+            1,
+            error="請先選擇或拖曳發票檔案後再進行 AI OCR 辨識。",
+        )
+
     invoice["stage"] = max(invoice.get("stage", 1), 2)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
 
 
 @router.get("/{invoice_id}/file")
 def get_invoice_file(invoice_id: int) -> Response:
-    """取得已上傳發票檔案預覽內容。"""
-    invoice = _find_invoice(invoice_id)
+    """取得當次作業暫存之發票檔案預覽內容。"""
+    invoice = _find_flow_invoice(invoice_id)
     if not invoice or not invoice.get("file_bytes"):
         raise HTTPException(status_code=404, detail="找不到發票檔案")
     return Response(
         content=invoice["file_bytes"],
         media_type=invoice.get("file_media_type", "image/jpeg"),
     )
+
+
+def _commit_draft_after_correction(invoice_id: int, invoice: dict[str, Any]) -> None:
+    """完成步驟 3 採購核對修正後，清除暫存影像並將發票正式寫入發票清單。"""
+    invoice.pop("file_bytes", None)
+    invoice.pop("file_media_type", None)
+    invoice["stage"] = max(invoice.get("stage", 3), 4)
+    if invoice_id in _DRAFT_INVOICE_STORE:
+        _DRAFT_INVOICE_STORE.pop(invoice_id, None)
+        if not _find_invoice(invoice_id):
+            _INVOICE_STORE.insert(0, invoice)
 
 
 @router.post("/{invoice_id}/flow/correct")
@@ -377,8 +432,8 @@ def correct_invoice_fields(
     item_description: Annotated[str | None, Form()] = None,
     net_amount: Annotated[int, Form()] = 0,
 ) -> RedirectResponse:
-    """步驟 3：核對修正發票資料並進入步驟 4（系統自動檢核）。"""
-    invoice = _find_invoice(invoice_id)
+    """步驟 3：核對修正發票資料、清除暫存影像、正式寫入發票清單並進入步驟 4（系統自動檢核）。"""
+    invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
@@ -391,7 +446,7 @@ def correct_invoice_fields(
     invoice["net_amount"] = max(0, net_amount)
     invoice["tax_amount"] = round(invoice["net_amount"] * 0.05)
     invoice["total_amount"] = invoice["net_amount"] + invoice["tax_amount"]
-    invoice["stage"] = max(invoice.get("stage", 3), 4)
+    _commit_draft_after_correction(invoice_id, invoice)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
 
@@ -400,11 +455,17 @@ def advance_flow_step(
     invoice_id: int,
     from_step: Annotated[int, Form()],
 ) -> RedirectResponse:
-    """前往下一步驟。"""
+    """前往下一步驟；若尚未完成步驟 3 採購核對修正則不寫入發票清單。"""
+    invoice = _find_flow_invoice(invoice_id)
+    if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
+
     next_step = min(9, from_step + 1)
-    invoice = _find_invoice(invoice_id)
     if invoice:
-        invoice["stage"] = max(invoice.get("stage", 4), next_step)
+        if from_step == 3:
+            _commit_draft_after_correction(invoice_id, invoice)
+        else:
+            invoice["stage"] = max(invoice.get("stage", next_step), next_step)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step={next_step}", status_code=303)
 
 

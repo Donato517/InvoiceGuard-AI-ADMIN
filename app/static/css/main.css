@@ -180,9 +180,9 @@ pre {
 .app-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   min-height: var(--header-height);
-  padding: 0.875rem 1.5rem;
+  padding: 0.4375rem 1.5rem;
   gap: var(--space-3);
   background-color: var(--color-bg);
   border-bottom: 1px solid var(--color-border);
@@ -200,6 +200,7 @@ pre {
   display: flex;
   align-items: center;
   gap: 0.625rem;
+  margin-left: auto;
 }
 
 .app-header__user {
@@ -218,7 +219,7 @@ pre {
 
 /* ---- 頁面標題與共用區塊 ---- */
 .page-heading {
-  margin-bottom: 1.375rem;
+  margin-bottom: 0.6875rem;
 }
 
 .page-heading h2 {

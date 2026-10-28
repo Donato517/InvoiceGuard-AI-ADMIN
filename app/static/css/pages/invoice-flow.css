@@ -69,9 +69,26 @@
   border-color: var(--color-primary);
 }
 
+.dropzone input[type="file"] {
+  display: none;
+}
+
 .dropzone__icon {
   margin-bottom: 0.625rem;
   font-size: 2.5rem;
+}
+
+.dropzone__preview {
+  width: 100%;
+  max-width: 38rem;
+  margin-bottom: 0.625rem;
+}
+
+.dropzone__preview[hidden],
+.dropzone__icon[hidden],
+.invoice-file-preview__img[hidden],
+.invoice-file-preview__frame[hidden] {
+  display: none;
 }
 
 /* ---- 發票檔案即時預覽 ---- */

@@ -5,16 +5,19 @@
 相依模組：app.services.company_profile_service
 注意事項：
     - 本模組不存取資料庫；資料表欄位對應集中在 build_record_from_snapshot()，
-      資料表結構變更時只需修改該函式。
+      依 Schema v1.4 的 public.invoices，資料表結構變更時只需修改該函式。
     - 任一筆檢核失敗即整批不產生申報檔，避免匯入金額與 401 對不上。
     - 欄位位置依「營業稅電子資料申報繳稅作業要點」第 20 點整理，正式使用前
       須與附件五逐欄核對，並以財政部申報軟體實測匯入。
+    - 字軌對照表為同目錄的 invoice_tracks.csv，每年新增 12 列，於模組載入時讀入。
 """
 
+import csv
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from pathlib import Path
 
 from app.services.company_profile_service import CompanyProfile, CompanyProfileProvider
 
@@ -26,26 +29,43 @@ RECORD_LENGTH = 81
 # NOTE: 換行符號待附件五與申報軟體實測確認
 LINE_ENDING = "\r\n"
 
-# 系統內部課稅別 → 官方代碼；已是官方代碼的值也接受
+# Schema v1.4 課稅別 → 官方代碼；已是官方代碼的值也接受
 TAX_TYPE_CODES = {
     "taxable": "1",
     "zero_rated": "2",
-    "exempt": "3",
+    "tax_exempt": "3",
     "1": "1",
     "2": "2",
     "3": "3",
 }
 
-# 甲種（三聯式）字軌：(民國年, 期別起始月) → 字軌
-# TODO(StacieChen): 確認字軌組 1／2 各對應哪一種三聯式發票，並改為由資料庫或設定檔匯入
-TRACKS: dict[tuple[int, int], set[str]] = {
-    (115, 1): {"VT", "VU"},
-    (115, 3): {"XV", "XW"},
-    (115, 5): {"ZX", "ZY"},
-    (115, 7): {"CA", "CB"},
-    (115, 9): {"EC", "ED"},
-    (115, 11): {"GE", "GF"},
-}
+# 只有已核准的請款單可匯出
+EXPORTABLE_STATUS = "approved"
+
+TRACKS_CSV = Path(__file__).with_name("invoice_tracks.csv")
+
+
+def load_tracks(path: Path) -> dict[tuple[int, int], set[str]]:
+    """讀取甲種（三聯式）字軌對照表。
+
+    CSV 欄位為 year、period（例如 01-02）、invoice_class、track_group、track_code。
+
+    Args:
+        path: 字軌 CSV 路徑。
+
+    Returns:
+        (民國年, 期別起始月) → 該期字軌集合。
+    """
+    # TODO(StacieChen): 確認字軌組 1／2 各對應哪一種三聯式發票
+    tracks: dict[tuple[int, int], set[str]] = {}
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        for row in csv.DictReader(file):
+            key = (int(row["year"]), int(row["period"].split("-")[0]))
+            tracks.setdefault(key, set()).add(row["track_code"].strip().upper())
+    return tracks
+
+
+TRACKS = load_tracks(TRACKS_CSV)
 
 # 81 字元欄位配置：(欄位名稱, 長度)，依序串接
 LAYOUT = [
@@ -244,6 +264,27 @@ def validate_profile(profile: CompanyProfile) -> list[Format21Issue]:
     return issues
 
 
+def validate_snapshot(snapshot: dict, profile: CompanyProfile) -> list[Format21Issue]:
+    """檢核請款單是否可匯出，這些欄位不寫入申報檔，故不在 validate_record() 檢查。
+
+    Args:
+        snapshot: 請款單資料（Schema v1.4 invoices 欄位）。
+        profile: 公司基本資料。
+
+    Returns:
+        問題清單；空清單代表通過。
+    """
+    issues = []
+    if snapshot.get("status") != EXPORTABLE_STATUS:
+        issues.append(Format21Issue("status", "NOT_APPROVED", "請款單未核准，不可匯出"))
+    buyer_tax_id = str(snapshot.get("buyer_tax_id") or "")
+    if buyer_tax_id and buyer_tax_id != profile.ban:
+        issues.append(
+            Format21Issue("buyer_tax_id", "BUYER_BAN_MISMATCH", "發票買受人統編不是本公司統編")
+        )
+    return issues
+
+
 # ---- 轉檔與彙總 ----
 
 
@@ -333,30 +374,31 @@ def _to_decimal(value: object) -> Decimal:
 def build_record_from_snapshot(
     snapshot: dict, profile: CompanyProfile, report_period: str
 ) -> Format21Record:
-    """將一筆核准快照與公司資料組成申報資料。
+    """將一筆請款單資料與公司資料組成申報資料。
 
     資料表欄位名稱只在此函式出現，資料表結構變更時只需修改這裡。
 
     Args:
-        snapshot: 核准快照；invoice_number 為字軌加號碼共 10 碼，
-            deduction_code 來自財務審核。
+        snapshot: 請款單資料，欄位依 Schema v1.4 public.invoices：invoice_track（2 碼）、
+            invoice_number（8 碼）、invoice_date、seller_tax_id、sales_amount、
+            tax_amount、tax_type；deduction_code 來自財務審核。
         profile: 公司基本資料。
         report_period: 申報所屬年月（民國 5 碼）。
 
     Returns:
         申報資料。
     """
-    # TODO(StacieChen): 資料表結構確定後，改為接收 ORM Model 或 schema，並同步調整欄位對應
-    invoice_number = str(snapshot.get("invoice_number") or "").replace(" ", "").replace("-", "")
+    # TODO(StacieChen): v1.4 尚無 deduction_code 欄位，Schema 補上後改讀資料表；
+    #   並改為接收 ORM Model 或 schema
     tax_type = str(snapshot.get("tax_type") or "")
     return Format21Record(
         tax_reg_no=profile.tax_reg_no,
         buyer_ban=profile.ban,
         report_period=report_period,
         issue_year_month=to_roc_year_month(date.fromisoformat(snapshot["invoice_date"])),
-        track=invoice_number[:2],
-        number=invoice_number[2:],
-        seller_ban=str(snapshot.get("seller", {}).get("tax_id") or ""),
+        track=str(snapshot.get("invoice_track") or "").strip().upper(),
+        number=str(snapshot.get("invoice_number") or "").strip(),
+        seller_ban=str(snapshot.get("seller_tax_id") or ""),
         sales_amount=_to_decimal(snapshot.get("sales_amount")),
         tax_type=TAX_TYPE_CODES.get(tax_type, tax_type),
         tax_amount=_to_decimal(snapshot.get("tax_amount")),
@@ -367,12 +409,12 @@ def build_record_from_snapshot(
 def build_format21_file(
     snapshots: list[dict], provider: CompanyProfileProvider, report_period: str
 ) -> Format21BuildResult:
-    """整批檢核核准快照並產生格式 21 申報檔內容。
+    """整批檢核請款單並產生格式 21 申報檔內容。
 
     任一筆有問題即整批不產檔；同批內以「銷售人統編＋字軌號碼」去重。
 
     Args:
-        snapshots: 核准快照清單。
+        snapshots: 請款單資料清單，問題以 invoice_id 分組。
         provider: 公司基本資料來源。
         report_period: 申報所屬年月（民國 5 碼）。
 
@@ -390,20 +432,20 @@ def build_format21_file(
     records: list[Format21Record] = []
     seen: dict[tuple[str, str], str] = {}
     for snapshot in snapshots:
-        case_id = str(snapshot.get("case_id", "unknown"))
+        invoice_id = str(snapshot.get("invoice_id", "unknown"))
         record = build_record_from_snapshot(snapshot, profile, report_period)
-        found = validate_record(record)
+        found = validate_snapshot(snapshot, profile) + validate_record(record)
         key = (record.seller_ban, record.track + record.number)
         if key in seen:
             found.append(
                 Format21Issue(
-                    "invoice_number", "DUPLICATE_IN_BATCH", f"與案件 {seen[key]} 的發票重複"
+                    "invoice_number", "DUPLICATE_IN_BATCH", f"與請款單 {seen[key]} 的發票重複"
                 )
             )
         else:
-            seen[key] = case_id
+            seen[key] = invoice_id
         if found:
-            issues[case_id] = found
+            issues[invoice_id] = found
         records.append(record)
 
     if issues:

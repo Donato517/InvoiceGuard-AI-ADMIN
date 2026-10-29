@@ -3,7 +3,7 @@
 功能說明：格式 21 申報檔的檢核規則、轉檔與 401 彙總單元測試。
 相依模組：app.services.format21_service、app.services.company_profile_service
 注意事項：
-    - 不連線資料庫；資料取自 fixtures/sample_approved_snapshots.json（虛構資料）。
+    - 不連線資料庫；資料取自 fixtures/sample_approved_snapshots.json（虛構資料，欄位依 Schema v1.4）。
 """
 
 import json
@@ -14,8 +14,10 @@ from pathlib import Path
 
 from app.services.company_profile_service import CompanyProfile, HardcodedCompanyProfileProvider
 from app.services.format21_service import (
+    TRACKS,
     Format21Record,
     build_format21_file,
+    build_record_from_snapshot,
     format_record_line,
     is_valid_ban,
     summarize_401,
@@ -40,6 +42,9 @@ VALID_RECORD = Format21Record(
     tax_amount=Decimal("300"),
     deduction_code="1",
 )
+
+
+PROFILE = HardcodedCompanyProfileProvider().get_profile()
 
 
 class InvalidProfileProvider:
@@ -99,6 +104,18 @@ def test_validate_record_rejects_wrong_period_track():
     assert "TRACK_PERIOD_MISMATCH" in _issue_codes(replace(VALID_RECORD, track="VT"))
 
 
+def test_tracks_loaded_from_csv_cover_114_and_115():
+    assert TRACKS[(114, 11)] == {"TT", "TV"}
+    assert TRACKS[(115, 9)] == {"EC", "ED"}
+    assert len(TRACKS) == 12
+
+
+def test_validate_record_accepts_114_track_with_next_period_in_115():
+    record = replace(VALID_RECORD, issue_year_month="11411", track="VT")
+
+    assert "TRACK_PERIOD_MISMATCH" not in _issue_codes(record)
+
+
 def test_validate_record_rejects_unknown_deduction_code():
     assert "BAD_DEDUCTION_CODE" in _issue_codes(replace(VALID_RECORD, deduction_code="5"))
 
@@ -130,6 +147,27 @@ def test_summarize_401_splits_by_deduction_code():
     assert totals["31"] == 1000
 
 
+# ---- 從請款單組出申報資料 ----
+
+
+def test_build_record_from_snapshot_maps_v14_columns():
+    record = build_record_from_snapshot(SNAPSHOTS[0], PROFILE, "11510")
+
+    assert (record.track, record.number) == ("EC", "08904069")
+    assert record.seller_ban == "27601907"
+    assert record.sales_amount == 6000
+
+
+def test_build_record_from_snapshot_maps_tax_exempt_to_code_3():
+    assert build_record_from_snapshot(SNAPSHOTS[3], PROFILE, "11510").tax_type == "3"
+
+
+def test_build_record_from_snapshot_rejects_legacy_exempt():
+    record = build_record_from_snapshot(dict(SNAPSHOTS[3], tax_type="exempt"), PROFILE, "11510")
+
+    assert "BAD_TAX_TYPE" in _issue_codes(record)
+
+
 # ---- 整批產檔 ----
 
 
@@ -144,9 +182,11 @@ def test_build_format21_file_valid_snapshots_returns_txt():
 
     assert result.issues == {}
     assert result.filename == "04595252.TXT"
-    assert len(lines) == 2
+    assert len(lines) == 4
     assert all(len(line) == 81 for line in lines)
     assert lines[1][11:18] == "0000002"
+    assert result.totals_401["28"] == 7000
+    assert result.totals_401["48"] == 5000
 
 
 def test_build_format21_file_invalid_profile_blocks_export():
@@ -164,14 +204,32 @@ def test_build_format21_file_one_bad_record_blocks_batch():
     )
 
     assert result.content is None
-    assert "case-0002" in result.issues
+    assert SNAPSHOTS[1]["invoice_id"] in result.issues
 
 
 def test_build_format21_file_duplicate_in_batch_rejected():
-    duplicate = dict(SNAPSHOTS[0], case_id="case-0003")
+    duplicate = dict(SNAPSHOTS[0], invoice_id="00000000-0000-0000-0000-000000000099")
 
     result = build_format21_file(
         [SNAPSHOTS[0], duplicate], HardcodedCompanyProfileProvider(), "11510"
     )
 
-    assert result.issues["case-0003"][0].code == "DUPLICATE_IN_BATCH"
+    assert result.issues[duplicate["invoice_id"]][0].code == "DUPLICATE_IN_BATCH"
+
+
+def test_build_format21_file_not_approved_blocks_export():
+    pending = dict(SNAPSHOTS[0], status="pending_accounting_approval")
+
+    result = build_format21_file([pending], HardcodedCompanyProfileProvider(), "11510")
+
+    assert result.content is None
+    assert [i.code for i in result.issues[pending["invoice_id"]]] == ["NOT_APPROVED"]
+
+
+def test_build_format21_file_other_buyer_ban_blocks_export():
+    other_buyer = dict(SNAPSHOTS[0], buyer_tax_id="27601907")
+
+    result = build_format21_file([other_buyer], HardcodedCompanyProfileProvider(), "11510")
+
+    assert result.content is None
+    assert [i.code for i in result.issues[other_buyer["invoice_id"]]] == ["BUYER_BAN_MISMATCH"]

@@ -12,7 +12,7 @@ import re
 from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from psycopg import pq
 from pydantic import Field, SecretStr
@@ -91,8 +91,31 @@ class Settings(BaseSettings):
     S3_REGION: str = ""
     S3_ACCESS_KEY_ID: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
     S3_SECRET_ACCESS_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
-    GEMINI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
     OPENAI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+
+    # ---- AI 模組（與 API 同版的 Document AI／Gemini／Groq 模組；2026-10-29 使用者核定 ADMIN 可使用）----
+    # 只提供模組與設定，尚未接線任何功能；本機由 START 經 Vercel CLI 注入，雲端由 Vercel ADMIN 專案提供。
+    GEMINI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    # Gemini 對話模型名稱；不是機密，未設定時用預設值（與 API 相同）
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    # Groq 對話（gpt-oss）；預設與識別用 20B，RAG／討論與進階備用用 120B（與 API 相同）
+    GROQ_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    GROQ_DEFAULT_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_ADVANCED_MODEL: str = "openai/gpt-oss-120b"
+    # Google Document AI（OCR）
+    GOOGLE_CLOUD_PROJECT_ID: str = ""
+    GOOGLE_CLOUD_LOCATION: str = ""
+    DOCUMENT_AI_PROCESSOR_ID: str = ""
+    GOOGLE_SERVICE_ACCOUNT_JSON: SecretStr = Field(
+        default_factory=lambda: SecretStr(""), repr=False
+    )
+
+    # START 經 Vercel CLI 注入本機 ADMIN 程序的雲端設定：值只在該程序記憶體，不視為本機禁用機密
+    # （DATABASE_URL 2026-10-25；AI 模組的 Gemini、Google 服務帳號、Groq 2026-10-29 使用者核定）。
+    # 其他公司機密（SESSION_SECRET_KEY、SUPABASE_SECRET_KEY、OPENAI_API_KEY 等）在本機仍拒絕。
+    LOCAL_INJECTED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"DATABASE_URL", "GEMINI_API_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON", "GROQ_API_KEY"}
+    )
 
     # ---- 登入狀態 ----
     SESSION_SECRET_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
@@ -172,7 +195,11 @@ class Settings(BaseSettings):
                 "GEMINI_API_KEY",
                 "OPENAI_API_KEY",
             ):
-                if getattr(self, name).get_secret_value():
+                # START 經 Vercel CLI 注入的核定設定可在本機使用
+                if (
+                    name not in self.LOCAL_INJECTED_FIELDS
+                    and getattr(self, name).get_secret_value()
+                ):
                     issues.append(
                         ConfigurationIssue(name, "cloud_secret_in_local", "本機不應載入公司機密")
                     )
@@ -266,12 +293,15 @@ class Settings(BaseSettings):
         return ConfigurationReport(scope, tuple(unique_issues.values()))
 
     def check_environment(self) -> dict[str, Any]:
-        """驗證本站邊界；依核定允許本機 DATABASE_URL，其他機密規則不變。"""
+        """驗證本站邊界；START 注入的核定雲端設定（LOCAL_INJECTED_FIELDS）可在本機使用，其他機密規則不變。"""
         report = environment_report(self, "admin")
         report["issues"] = [
             issue
             for issue in report["issues"]
-            if not (issue["field"] == "DATABASE_URL" and issue["code"] == "cloud_secret_in_local")
+            if not (
+                issue["field"] in self.LOCAL_INJECTED_FIELDS
+                and issue["code"] == "cloud_secret_in_local"
+            )
         ]
         if (
             self.APP_ENV == "local"

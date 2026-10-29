@@ -1203,3 +1203,12 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - Ruff lint／format、djLint（49 樣板、0 errors）、跨站專案契約檢查通過；Git 合併沒有文字衝突。來源 main 的 JS 尾端多餘空白行已清理，無功能變動。
 - 保留來源 main 1105460 的發票流程、知識庫及儀表板；移除舊固定本機 Session 金鑰預設，E 登入維持核定的目前部門授權流程。
 - 準備上傳 codex/06e-login-department-20261028，PR 目標 main。上傳／PR／合併實際結果以 GitHub 為準；未修改正式資料或雲端環境設定。
+
+## 2026-10-29 Claude：ADMIN 加入 AI 模組（START 注入）
+
+- 使用者核定：ADMIN 也使用 AI 模組，START 必須注入 ADMIN。範圍只有模組與設定，不建任何功能或端點。
+- 程式：app/integrations/document_ai.py、gemini.py、groq.py、chat_models.py 自 API 複製（逐位元組相同）；config.py 新增 GEMINI_MODEL、GROQ_API_KEY、GROQ_DEFAULT_MODEL、GROQ_ADVANCED_MODEL、GOOGLE_CLOUD_PROJECT_ID、GOOGLE_CLOUD_LOCATION、DOCUMENT_AI_PROCESSOR_ID、GOOGLE_SERVICE_ACCOUNT_JSON，以及 LOCAL_INJECTED_FIELDS（DATABASE_URL、GEMINI_API_KEY、GOOGLE_SERVICE_ACCOUNT_JSON、GROQ_API_KEY），本機能力檢查與啟動檢查都只放行這四項，SESSION_SECRET_KEY／SUPABASE_SECRET_KEY／OPENAI_API_KEY 仍拒絕；共用 environment.py 未修改。requirements 加 httpx==0.28.1、google-auth==2.62.0；.env.example 同步。
+- ADMIN venv 安裝 google-auth 2.62.0（帶入 cryptography 50.0.2），實際 import 與 google.auth.crypt 載入成功，Smart App Control 未封鎖。
+- 測試：自 API 複製 test_document_ai／test_gemini／test_groq（合成值、MockTransport，不連網）；test_module_config 新增 START 注入的 AI 設定可在本機使用、模型預設值、Groq／服務帳號不外洩，原「本機拒絕機密」改為不含 GEMINI_API_KEY；test_environment 的繼承機密測試改以 LOCAL_INJECTED_FIELDS 判斷；conftest 設定名稱清單補 AI 欄位；新增與 API 相同的 test_shared_integrations（五個共用 integration 檔兩站逐位元組比對，單站 checkout 時 skip）。
+- 驗證：check_project（--project-root）PASS；pytest 1304 passed、9 skipped；ruff check／format --check、environment --check 通過。
+- 未驗證：實際呼叫 Google／Groq（ADMIN 尚無功能，也未注入真實值測試）；Vercel ADMIN 專案尚未設定六項 AI 設定（需使用者在 Vercel 設定）；ADMIN 函式上限仍為 30 秒。

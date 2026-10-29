@@ -709,3 +709,18 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 原因：來源 main 在 app/main.py 啟動時寫入固定本機 Session 金鑰，會使舊登入 Cookie 可以預測簽署來源，並改變核定的本機設定邊界。結論：移除此舊預設值及不再使用的匯入；E 登入仍由目前程序隨機金鑰簽章，雲端沿用既有設定，不新增環境變數。
 - 主頁仍由 auth 導向 /welcome；固定選單保留知識庫項目，但 E 登入側欄依目前部門授權投影。來源業務頁的舊 require_admin 不因合入而宣稱完成部門權限接線。
 - 自動 Git 合併沒有文字衝突；整合後完整離線回歸與格式／契約檢查另記結果。尚未修改遠端 main 或正式 DB。
+
+## 2026-10-28 Claude：共同規範「本機例外」擴充（Google Document AI／Gemini）
+
+- 依使用者核定：START 注入站程序的雲端設定是必要設定，不視為本機禁用機密；API 另注入 GOOGLE_CLOUD_PROJECT_ID、GOOGLE_CLOUD_LOCATION、DOCUMENT_AI_PROCESSOR_ID、GOOGLE_SERVICE_ACCOUNT_JSON、GEMINI_API_KEY。本站未注入這些值，程式未改。
+- 同步：AGENTS.md 共同區塊、docs/DEVELOPMENT_STATUS.md「本機雲端設定」、docs/ENVIRONMENT_ISOLATION.md；共同區塊 SHA-256 依 PROJECT_CHECKS.md 寫入 contracts/project-contract.json 的 agent_rules_sha256（三站相同）。
+- 驗證：check_project（--project-root）PASS；本站完整 pytest 通過（見同日 API REVIEW_FIX_LOG 數字）。
+- Codex 檢驗 P3（同日）：ENVIRONMENT_ISOLATION.md 補列 API 的五項 Google 設定（只給 API），並把「ADMIN 本機無法登入」限縮為依 SESSION_SECRET_KEY 簽署的舊 require_admin cookie 登入。
+- 2026-10-28 續：共同規範「本機例外」加入 START 只注入 API 的 GROQ_API_KEY；DEVELOPMENT_STATUS、ENVIRONMENT_ISOLATION 同步，agent_rules_sha256 更新（三站相同）。本站程式未改。
+
+## 2026-10-29 Claude：Codex 檢驗 ADMIN AI 模組與 START 注入
+
+- Codex 結論：AI 模組、設定、START 注入、重建與完整性均通過；三站完整 pytest 通過，STARTUP 先前在 Claude 環境失敗的 3 個 Reload／Ctrl+C 案例在 Codex 一般權限下全部通過（484 passed）。
+- **P2（未修改程式）｜共用清單中本站不讀的機密名稱只警告**：例如 CRON_SECRET、JWT_SECRET_KEY 出現在 ADMIN 本機程序環境時只回 `inherited_secret_unused` 警告、不阻擋啟動。這是三站共用 environment.py 的既有兩級設計（ENVIRONMENT_ISOLATION「本機機密檢查分兩級」：本站會讀的機密欄位拒絕；本站沒有的名稱值不會載入，只警告，避免開發者 shell 的個人 Key 讓網站無法啟動），本次未放寬也未改變。Codex 依據的是 Claude 檢驗指令中「共用清單其他機密仍拒絕」的不精確寫法；正確範圍是「ADMIN 會讀取的機密欄位（SESSION_SECRET_KEY、SUPABASE_SECRET_KEY、OPENAI_API_KEY）仍拒絕」，Codex 已確認這三項確實拒絕。若要把未讀名稱也改為拒絕，屬三站共用行為變更，需另行決定。
+- **P3｜文件舊敘述**：ARCHITECTURE.md 的 integrations 清單補上四個 AI 模組。API 的 AGENTS 現況與 DEVELOPMENT_STATUS 同步修正（記在 API 紀錄）。
+- 驗證：check_project（--project-root）PASS；test_project_governance、test_shared_integrations 181 passed、9 skipped。

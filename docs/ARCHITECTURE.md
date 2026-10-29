@@ -98,7 +98,7 @@ InvoiceGuard-AI-ADMIN/
 │   │   └── dev_files.py          #   /dev/files 示範 Vercel 模組（圖片／RAG 檔案；僅本機）
 │   ├── services/                 # 商業邏輯層（auth / invoice_review / user / system / db_inspection；dev_account / dev_file 供 /dev 示範；data / file 為第一階段契約，未接線）
 │   ├── schemas/                  # Pydantic 資料契約（account / data / files / db_inspection / common）
-│   ├── integrations/             # supabase_storage（Vercel 模組：檔案存取，與 API 相同）、storage_client（第一階段契約，未接線）、remote_admin_client（無呼叫端）、vercel（執行環境資訊與設定檢查）
+│   ├── integrations/             # supabase_storage（Vercel 模組：檔案存取，與 API 相同）、AI 模組 document_ai（Document AI OCR）／gemini／groq／chat_models（與 API 相同，2026-10-29 起；尚未接線功能）、storage_client（第一階段契約，未接線）、remote_admin_client（無呼叫端）、vercel（執行環境資訊與設定檢查）
 │   ├── db/                       # ★ 資料庫模組（說明見 app/db/README.md）
 │   │   ├── README.md             #   Schema 總覽、與 API 的同步流程、存取規則
 │   │   ├── base.py               #   Base、約束命名規則、共用欄位 Mixin

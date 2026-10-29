@@ -51,12 +51,38 @@ def test_dotenv_is_not_loaded_by_default(tmp_path: Path, monkeypatch: pytest.Mon
     assert Settings().DATABASE_URL.get_secret_value() == ""
 
 
+@pytest.mark.parametrize("name", ["GEMINI_API_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON", "GROQ_API_KEY"])
+def test_local_allows_ai_settings_injected_by_start(name: str) -> None:
+    # 2026-10-29 使用者核定：START 也把 AI 模組設定注入本機 ADMIN，與 API 相同不視為本機禁用機密
+    configuration = make_settings(**{name: "synthetic-secret"})
+
+    local_report = configuration.check_configuration("local")
+    environment_report = configuration.check_environment()
+
+    assert not any(issue.field == name for issue in local_report.issues)
+    assert not any(issue["field"] == name for issue in environment_report["issues"])
+    assert "synthetic-secret" not in json.dumps(local_report.as_dict())
+    assert (
+        frozenset({"DATABASE_URL", "GEMINI_API_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON", "GROQ_API_KEY"})
+        == Settings.LOCAL_INJECTED_FIELDS
+    )
+
+
+def test_ai_settings_default_to_api_models() -> None:
+    configuration = make_settings()
+
+    assert configuration.GEMINI_MODEL == "gemini-3.8-flash"
+    assert configuration.GROQ_DEFAULT_MODEL == "openai/gpt-oss-20b"
+    assert configuration.GROQ_ADVANCED_MODEL == "openai/gpt-oss-120b"
+    assert configuration.GROQ_API_KEY.get_secret_value() == ""
+    assert configuration.GOOGLE_SERVICE_ACCOUNT_JSON.get_secret_value() == ""
+
+
 @pytest.mark.parametrize(
     "name",
     [
         "SESSION_SECRET_KEY",
         "SUPABASE_SECRET_KEY",
-        "GEMINI_API_KEY",
         "OPENAI_API_KEY",
     ],
 )
@@ -181,7 +207,10 @@ def test_cloud_checks_each_required_capability(field: str, value: str) -> None:
 
 def test_settings_and_reports_do_not_print_secrets() -> None:
     configuration = cloud_settings(
-        GEMINI_API_KEY="synthetic-gemini", OPENAI_API_KEY="synthetic-openai"
+        GEMINI_API_KEY="synthetic-gemini",
+        OPENAI_API_KEY="synthetic-openai",
+        GROQ_API_KEY="synthetic-groq",
+        GOOGLE_SERVICE_ACCOUNT_JSON='{"private_key": "synthetic-private-key"}',
     )
     output = (
         repr(configuration)
@@ -194,6 +223,8 @@ def test_settings_and_reports_do_not_print_secrets() -> None:
         "synthetic-session-key",
         "synthetic-gemini",
         "synthetic-openai",
+        "synthetic-groq",
+        "synthetic-private-key",
     ):
         assert secret not in output
 

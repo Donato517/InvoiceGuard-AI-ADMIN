@@ -51,15 +51,13 @@ def rename(department_id: UUID, name: str) -> Department:
 
 
 def set_active(department_id: UUID, active: bool) -> Department:
-    """停用前檢查預設部門、主要部門、成員關係及外鍵。"""
+    """停用部門權限並保留成員；所有代碼共用主要部門及外鍵檢查。"""
 
     def operation(db: Session) -> Department:
         current = repository.lock_department(db, department_id)
         if current is None:
             raise DepartmentError("找不到此部門，請重新整理列表")
         if not active:
-            if current.department_code == "UNASSIGNED":
-                raise DepartmentError("UNASSIGNED 是新增帳號使用的預設部門，無法停用")
             blocker = repository.disable_blocker(db, department_id)
             if blocker:
                 raise DepartmentError(blocker)

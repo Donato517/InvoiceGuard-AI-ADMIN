@@ -724,3 +724,48 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - **P2（未修改程式）｜共用清單中本站不讀的機密名稱只警告**：例如 CRON_SECRET、JWT_SECRET_KEY 出現在 ADMIN 本機程序環境時只回 `inherited_secret_unused` 警告、不阻擋啟動。這是三站共用 environment.py 的既有兩級設計（ENVIRONMENT_ISOLATION「本機機密檢查分兩級」：本站會讀的機密欄位拒絕；本站沒有的名稱值不會載入，只警告，避免開發者 shell 的個人 Key 讓網站無法啟動），本次未放寬也未改變。Codex 依據的是 Claude 檢驗指令中「共用清單其他機密仍拒絕」的不精確寫法；正確範圍是「ADMIN 會讀取的機密欄位（SESSION_SECRET_KEY、SUPABASE_SECRET_KEY、OPENAI_API_KEY）仍拒絕」，Codex 已確認這三項確實拒絕。若要把未讀名稱也改為拒絕，屬三站共用行為變更，需另行決定。
 - **P3｜文件舊敘述**：ARCHITECTURE.md 的 integrations 清單補上四個 AI 模組。API 的 AGENTS 現況與 DEVELOPMENT_STATUS 同步修正（記在 API 紀錄）。
 - 驗證：check_project（--project-root）PASS；test_project_governance、test_shared_integrations 181 passed、9 skipped。
+
+
+## 2026-10-29 功能列表精簡與部門列表狀態開關
+
+- 原因：PM 要求移除功能列表「程式對應」欄，並在部門列表編輯操作右側直接切換啟用／停用。使用者確認停用資料仍留在部門管理，其部門授權不再生效。
+- 結論：移除該列表整欄；部門列表增加具原生鍵盤操作與 aria-checked 的等寬狀態開關，使用既有 POST /department/{UUID}/status。HTMX 提供確認、送出期間停用按鈕；狀態由伺服器回應，不採樂觀切換。
+- POST 成功及失敗均保留搜尋條件；停用列仍保留，可再次啟用。失敗顯示既有原因且恢復真實狀態。不刪部門、授權或成員資料，不自動更改任何帳號主要部門。
+- 延用既有部門修改許可、同源、交易重驗、UNASSIGNED／主要部門／成員及外鍵保護。停用可能因關聯被拒絕，不保證每個部門均可立即停用。既有登入與部門許可來源均過濾 d.is_active，停用不再成為有效工作部門或提供功能許可。
+- 只移除功能列表欄位；未移除固定路由／操作 allowlist 或其他未接線入口的保護。帳號維護中既有停用關聯的歷史保留行為不改寫；它不代表可取得該部門有效授權。
+- 基準為本機 main 070af1b；保留原有未提交的 SQL 參考檔與紀錄。未執行正式 DB 寫入、部署、Commit 或 Push。
+- 驗證：部門、登入、功能、矩陣相關 204 passed（14.54s）；帳號部門與登入閘門另 100 passed（5.14s），兩批均只有既有 Starlette/httpx warning。合計 304 項相關測試，非完整專案全測。
+- 離線實際瀏覽器：1440px／390px 共 12 項檢查通過，涵蓋等寬等高、44px 點擊高度、取消不送出、啟停來回、停用列保留、Space 鍵、被拒維持狀態及五欄功能列表。已檢視合成截圖，不含真實帳號或資料；手機寬表格在容器內橫向捲動。
+- Ruff lint／139 檔格式、djLint 53 樣板（0 errors）、跨站離線專案檢查及 diff --check 通過。瀏覽器測試為本機合成資料驗證，正式資料操作由使用者驗收。
+
+
+## 2026-10-29 部門停用：修正正常外鍵被誤判為未知關聯
+
+- 問題：列表停用被 public.department_permissions(department_id) 的「尚未核對」訊息擋住。舊 disable_blocker 僅認得帳號單欄與 user_departments 外鍵，未對齊既有 v1.3/v1.4。
+- 核對：沿用 START 的 ADMIN 來源，只在 READ ONLY／REPEATABLE READ 交易查 FK metadata 與目標部門關聯彙總，結束 rollback。實際六項外鍵與 SQL 相符：user_departments、department_permissions、invoices、rag_department_access、user_sessions、user_accounts 複合主要部門外鍵。未讀密碼、未建立登入或寫正式資料。
+- 修正：app/db/repositories/department_repository.py 精確補認 schema／表／來源與目標欄位組合。UUID 授權及歷史參照不再因存在外鍵而誤擋；主要部門複合外鍵改進入原有實際帳號關聯檢查。未任意放行未知外鍵、未刪除關聯、未改 DB schema；列表與內容頁共用此修正。
+- 仍待確認：回報部門不是任何帳號的主要部門，但仍有一筆有效成員關聯。現有「仍有成員就拒絕停用」規則保留；已詢問使用者是否允許保留成員並停用部門。尚未核定，不宣稱該部門已能停用，也不代操作正式資料。
+- 驗證：新測試修正前重現 15 failed／3 passed；修正後 test_departments、test_department_login、test_e_matrix_pages 合計 133 passed（12.27s），僅既有 Starlette/httpx warning。涵蓋各已知外鍵、主要部門／成員阻擋、未知與變形外鍵拒絕，以及完整外鍵集合下只 UPDATE 部門狀態、不刪改授權。測試使用替身並禁止外部連線；非正式 DB 寫入驗收。
+- 未 Commit／Push；保留前一批 UI 與 SQL 參考檔的未提交修改。
+
+
+## 2026-10-29 核定修正：停用部門權限，保留公司成員與部門歸屬
+
+- 使用者釐清：停用部門是停止該部門提供的權限；不是停用員工帳號或移除公司成員。此核定取代同日前段「成員存在即拒絕／尚待確認」紀錄。
+- 實作：department_repository.disable_blocker 不再因 membership_used 拒絕停用，原有成員、授權及資料關聯完全保留；同一方法供列表開關與部門編輯頁共用。只更新 departments.is_active／updated_at，未改帳號、員工或成員關聯；重新啟用依原設定判斷。
+- 邊界：UNASSIGNED 與主要部門保護保留。現有 user_accounts_primary_department_enabled_fk 要求主要部門為啟用狀態，所以仍被任一帳號設為主要部門時，須先在帳號管理調整主要部門；不自動搬移或停用帳號、不改 Schema。使用者回報部門在唯讀核對當時沒有主要部門引用，只有一筆有效成員。
+- 登入核對：admin_login_repository.departments／functions 既有 SQL 均以 d.is_active 排除停用部門。權限每次伺服器重讀；其他有效部門與公司成員資格不因本操作改寫。登入仍使用既有主要部門，本批未新增登入、角色或工作台邏輯。
+- 介面：列表提示與編輯頁錯誤改為新規則，不再把單純成員存在當成禁止停用的理由。狀態開關外觀、順序、搜尋與確認流程保留。
+- 離線驗證：test_departments、test_department_login、test_e_matrix_pages 共 133 passed（12.74s）；test_account_departments、test_e_login_access 另 100 passed（4.85s），合計 233 passed。僅既有 Starlette/httpx warning。測試涵蓋有／無成員的完整 FK 停用流程、只更新部門狀態、主要部門與未知 FK 拒絕，以及登入與帳號部門既有回歸；新規則已取代舊測試的成員阻擋預期。
+- Ruff 異動檔檢查與部門列表 djLint 通過。測試禁止外部連線，不代表正式 DB 已寫入；本批未對正式 DB 執行停用、資料修改或 migration，未 Commit／Push。
+
+
+## 2026-10-29 UNASSIGNED 共用停用規則
+
+- 原因：列表 department_service.set_active 與內容頁 department_detail_service.save_detail 各有一處依代碼 UNASSIGNED 直接拒絕停用，早於共用 FK／主要部門檢查；上一批移除的是全部部門的成員阻擋，未曾針對 IGTEST UUID 特判。
+- 修正：移除這兩處專屬停用限制，UNASSIGNED 與任何其他代碼使用同一主要部門／未知外鍵檢查。部門、成員、帳號、授權均保留；下方新增部門功能不變，既有代碼保留／不可改名規則不在本批變更。
+- 實際唯讀核對：沿用 START ADMIN 的 READ ONLY 交易，UNASSIGNED 仍被一筆已停用帳號設為主要部門。DB 的主要部門啟用複合 FK 也約束該保留指標，因此需由使用者先在帳號管理調整該帳號主要部門，無須重新啟用帳號。帳號 UUID 僅回覆使用者，不納入版控文件。不自動搬移或修改正式資料。
+- 提示：列表及內容頁共用明確原因，說明已停用帳號也可能保留主要部門指標，並指向帳號管理處理。
+- 新帳號：/accounts/new 本來就要求所屬與主要部門，停用 UNASSIGNED 後可選其他啟用部門；新增部門與新增帳號是兩個流程。舊 /dev/accounts 若繼續依賴被停用的 UNASSIGNED，既有程式會回預設部門不可用，不偷偷重新啟用或改指其他部門。本批不另改舊示範流程。
+- 回歸：修正前新案例重現 5 failed／5 passed；修正後六份相關測試 292 passed（20.13s），僅既有 Starlette/httpx warning。涵蓋預設／測試／一般代碼啟停、兩入口一致、主要部門／未知 FK 拒絕、授權保留及帳號登入回歸；錯誤提示補強後重跑同六份測試，最終仍為 292 passed（20.53s）；Ruff lint／5 檔格式、跨站 check_project（0 issues）與 diff --check 通過。
+- 正式 DB 僅唯讀檢查；未寫入、migration、Commit 或 Push。前段記錄中 UNASSIGNED 固定不能停用的敘述自此被取代。

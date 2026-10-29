@@ -145,7 +145,7 @@ def test_rename(db: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     db.commit.assert_called_once()
 
 
-@pytest.mark.parametrize("blocker", ["仍是主要部門", "仍有成員", "未知外鍵"])
+@pytest.mark.parametrize("blocker", ["仍是主要部門", "未知外鍵"])
 def test_referenced_department_rejected(
     db: MagicMock, monkeypatch: pytest.MonkeyPatch, blocker: str
 ) -> None:
@@ -170,14 +170,41 @@ def test_status_commit(db: MagicMock, monkeypatch: pytest.MonkeyPatch, active: b
     db.commit.assert_called_once()
 
 
-def test_default_department_protected(db: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("code", ["UNASSIGNED", "IGTEST_81d56327f9e647be", "finance_d"])
+@pytest.mark.parametrize("active", [False, True])
+def test_all_department_codes_use_shared_status_rules(
+    db: MagicMock, monkeypatch: pytest.MonkeyPatch, code: str, active: bool
+) -> None:
+    """預設代碼與一般部門共用啟停流程；只變更目標狀態。"""
+    row = ROW.model_copy(update={"department_code": code})
+    monkeypatch.setattr(repository, "lock_department", lambda *args: row)
+    blocker = MagicMock(return_value=None)
+    monkeypatch.setattr(repository, "disable_blocker", blocker)
+    setter = MagicMock(return_value=row.model_copy(update={"is_active": active}))
+    monkeypatch.setattr(repository, "set_active", setter)
+    result = service.set_active(ID, active)
+    setter.assert_called_once_with(db, ID, active)
+    assert result.department_code == code and result.is_active == active
+    assert blocker.call_count == (0 if active else 1)
+    db.commit.assert_called_once()
+
+
+@pytest.mark.parametrize("reason", ["仍是帳號主要部門", "尚未核對的外鍵"])
+def test_unassigned_keeps_shared_database_protections(
+    db: MagicMock, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
     monkeypatch.setattr(
         repository,
         "lock_department",
         lambda *args: ROW.model_copy(update={"department_code": "UNASSIGNED"}),
     )
-    with pytest.raises(service.DepartmentError, match="預設部門"):
+    monkeypatch.setattr(repository, "disable_blocker", lambda *args: reason)
+    setter = MagicMock()
+    monkeypatch.setattr(repository, "set_active", setter)
+    with pytest.raises(service.DepartmentError, match=reason):
         service.set_active(ID, False)
+    setter.assert_not_called()
+    db.rollback.assert_called_once()
     db.commit.assert_not_called()
 
 
@@ -192,7 +219,7 @@ def test_database_error_is_sanitized(db: MagicMock, monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.parametrize(
     "primary,membership,expected",
-    [(True, False, "主要部門"), (False, True, "使用者部門"), (False, False, None)],
+    [(True, False, "主要部門"), (False, True, None), (False, False, None)],
 )
 def test_repository_reference_checks(primary: bool, membership: bool, expected: str | None) -> None:
     session = MagicMock()
@@ -299,3 +326,200 @@ def test_change_code_sql_updates_no_other_business_fields() -> None:
     assert "SET department_code = :code, updated_at = now()" in str(statement)
     assert "SET department_name" not in str(statement)
     assert params == {"id": ID, "code": "finance_d"}
+
+
+def test_list_status_roundtrip_retains_disabled_row(
+    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真實 HTTP 送出停用與啟用；同筆資料留在列表，搜尋與顯示狀態保持一致。"""
+    current = [ROW]
+    queries = []
+
+    def search(q: str = "") -> list[Department]:
+        queries.append(q)
+        return current
+
+    def set_active(department_id: UUID, active: bool) -> Department:
+        assert department_id == ID
+        current[0] = current[0].model_copy(update={"is_active": active})
+        return current[0]
+
+    monkeypatch.setattr(service, "search", search)
+    monkeypatch.setattr(service, "set_active", set_active)
+    headers = {"Origin": "http://invoiceguard-ai-admin.localhost:8080"}
+    page = local_client.get("/department", params={"q": "虛構"})
+    assert 'role="switch"' in page.text and 'aria-checked="true"' in page.text
+    assert '<th scope="col" class="e-department-list__state">啟用／停用</th>' in page.text
+    for active in [False, True]:
+        response = local_client.post(
+            f"/department/{ID}/status",
+            headers=headers,
+            data={"active": str(active).lower(), "q": "虛構"},
+        )
+        assert response.status_code == 200
+        assert ("已啟用部門" if active else "已停用部門") in response.text
+        assert f'aria-checked="{str(active).lower()}"' in response.text
+        assert 'value="虛構"' in response.text and queries[-1] == "虛構"
+        assert f'href="/department/{ID}/edit"' in response.text
+        assert current[0].department_code == ROW.department_code
+        assert current[0].created_at == ROW.created_at
+
+
+def test_status_rejected_keeps_actual_state_and_search(
+    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setter = MagicMock(side_effect=service.DepartmentError("此部門仍是帳號的主要部門，無法停用"))
+    monkeypatch.setattr(service, "set_active", setter)
+    response = local_client.post(
+        f"/department/{ID}/status",
+        headers={"Origin": "http://invoiceguard-ai-admin.localhost:8080"},
+        data={"active": "false", "q": "虛構"},
+    )
+    assert "無法停用" in response.text and "已停用部門" not in response.text
+    assert 'aria-checked="true"' in response.text and 'value="虛構"' in response.text
+    setter.assert_called_once_with(ID, False)
+
+
+def test_status_cross_origin_rejected_before_service(
+    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setter = MagicMock()
+    monkeypatch.setattr(service, "set_active", setter)
+    response = local_client.post(
+        f"/department/{ID}/status",
+        headers={"Origin": "https://example.invalid"},
+        data={"active": "false"},
+    )
+    assert response.status_code == 403
+    setter.assert_not_called()
+
+
+# v1.3/v1.4 既有關聯：只變更 is_active，不刪除 UUID 或授權／歷史資料。
+_SCHEMA_DEPARTMENT_KEYS = [
+    ("public", "department_permissions", ["department_id"], ["department_id"]),
+    ("invoiceguard_identity", "user_sessions", ["selected_department_id"], ["department_id"]),
+    ("public", "invoices", ["department_id"], ["department_id"]),
+    ("public", "rag_department_access", ["department_id"], ["department_id"]),
+    (
+        "invoiceguard_identity",
+        "user_accounts",
+        ["primary_department_id", "primary_department_active"],
+        ["department_id", "is_active"],
+    ),
+]
+
+
+@pytest.mark.parametrize("schema,table,source_columns,target_columns", _SCHEMA_DEPARTMENT_KEYS)
+@pytest.mark.parametrize(
+    "primary,membership,expected",
+    [(False, False, None), (True, False, "主要部門"), (False, True, None)],
+)
+def test_schema_fk_reaches_actual_account_reference_check(
+    schema: str,
+    table: str,
+    source_columns: list[str],
+    target_columns: list[str],
+    primary: bool,
+    membership: bool,
+    expected: str | None,
+) -> None:
+    """正常授權／歷史關聯不誤擋；主要部門仍保護，成員存在不阻擋。"""
+    session = MagicMock()
+    keys = MagicMock()
+    keys.mappings.return_value = [
+        dict(
+            schema_name=schema,
+            table_name=table,
+            source_columns=source_columns,
+            target_columns=target_columns,
+        )
+    ]
+    used = MagicMock()
+    used.mappings.return_value.one.return_value = {
+        "primary_used": primary,
+        "membership_used": membership,
+    }
+    session.execute.side_effect = [None, None, None, keys, used]
+    result = repository.disable_blocker(session, ID)
+    assert (expected in result) if expected else result is None
+    session.execute.assert_any_call(repository.REFERENCES, {"id": ID})
+    assert session.execute.call_count == 5
+    session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "schema,table,source_columns,target_columns",
+    [
+        (
+            "public",
+            "department_permissions",
+            ["department_id", "active"],
+            ["department_id", "is_active"],
+        ),
+        ("other_schema", "department_permissions", ["department_id"], ["department_id"]),
+        ("public", "department_permissions", ["department_id"], ["department_code"]),
+    ],
+)
+def test_known_table_with_unreviewed_fk_signature_still_rejected(
+    schema: str, table: str, source_columns: list[str], target_columns: list[str]
+) -> None:
+    """不能僅憑表名放行不同 schema 或引用啟用狀態／代碼的未知外鍵。"""
+    session = MagicMock()
+    keys = MagicMock()
+    keys.mappings.return_value = [
+        dict(
+            schema_name=schema,
+            table_name=table,
+            source_columns=source_columns,
+            target_columns=target_columns,
+        )
+    ]
+    session.execute.side_effect = [None, None, None, keys]
+    assert "尚未核對" in repository.disable_blocker(session, ID)
+    session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("has_members", [False, True])
+def test_disable_with_full_schema_fk_set_only_changes_department_status(
+    db: MagicMock, monkeypatch: pytest.MonkeyPatch, has_members: bool
+) -> None:
+    """有無成員均可停用；整套已核對外鍵存在時也只更新狀態、不刪關聯。"""
+    monkeypatch.setattr(repository, "lock_department", lambda *args: ROW)
+    keys = MagicMock()
+    keys.mappings.return_value = [
+        dict(
+            schema_name=schema,
+            table_name=table,
+            source_columns=source_columns,
+            target_columns=target_columns,
+        )
+        for schema, table, source_columns, target_columns in _SCHEMA_DEPARTMENT_KEYS
+    ] + [
+        dict(
+            schema_name="public",
+            table_name="user_departments",
+            source_columns=["department_id"],
+            target_columns=["department_id"],
+        )
+    ]
+    used = MagicMock()
+    used.mappings.return_value.one.return_value = {
+        "primary_used": False,
+        "membership_used": has_members,
+    }
+    updated = MagicMock()
+    updated.mappings.return_value.one.return_value = ROW.model_copy(
+        update={"is_active": False}
+    ).model_dump()
+    db.execute.side_effect = [None, None, None, keys, used, updated]
+    result = service.set_active(ID, False)
+    assert result.department_id == ID and not result.is_active
+    assert db.execute.call_args.args == (repository.STATUS, {"id": ID, "active": False})
+    writes = [
+        str(call.args[0]).strip()
+        for call in db.execute.call_args_list
+        if str(call.args[0]).strip().split()[0].upper() in {"UPDATE", "INSERT", "DELETE"}
+    ]
+    assert writes == [str(repository.STATUS).strip()]
+    db.commit.assert_called_once()
+    db.rollback.assert_not_called()

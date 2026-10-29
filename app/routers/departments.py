@@ -88,14 +88,17 @@ def department_rename(
 
 @router.post("/{department_id}/status", response_class=HTMLResponse, dependencies=WRITE_CHECKS)
 def department_status(
-    request: Request, department_id: UUID, active: Annotated[bool, Form()]
+    request: Request,
+    department_id: UUID,
+    active: Annotated[bool, Form()],
+    q: Annotated[str, Form(max_length=200)] = "",
 ) -> HTMLResponse:
-    """啟用或停用部門，不刪除資料。"""
+    """沿用停用限制及驗權，保留列表搜尋；資料與授權不刪除。"""
     try:
         service.set_active(department_id, active)
     except service.DepartmentError as error:
-        return _render(request, error=str(error))
-    return _render(request, message="已啟用部門" if active else "已停用部門")
+        return _render(request, q=q, error=str(error))
+    return _render(request, q=q, message="已啟用部門" if active else "已停用部門")
 
 
 @router.post("/{department_id}/code", response_class=HTMLResponse, dependencies=WRITE_CHECKS)

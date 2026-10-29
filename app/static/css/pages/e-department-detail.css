@@ -44,3 +44,20 @@
 .e-permission-choice__note { min-height: 18px; font-size: 12px; line-height: 18px; color: #64748b; white-space: nowrap; }
 .e-permission-choice__fixed { font-size: 14px; line-height: 24px; color: #64748b; }
 .e-permission-choice--disabled label { color: #94a3b8; }
+
+
+/* 部門列表：狀態開關與編輯按鈕同高，固定欄寬，狀態由伺服器成功回應決定。 */
+.e-department-list__actions { white-space: nowrap; }
+.table th.e-department-list__state,
+.table td.e-department-list__state { width: 156px; min-width: 156px; text-align: center; vertical-align: middle; }
+.e-department-status { display: flex; justify-content: center; margin: 0; }
+.e-department-status__button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-width: 112px; min-height: 44px; margin: 0; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg); color: var(--color-text-muted); font: inherit; font-size: 14px; line-height: 24px; cursor: pointer; }
+.e-department-status__track { position: relative; display: block; flex: 0 0 42px; width: 42px; height: 24px; border-radius: 12px; background: #94a3b8; }
+.e-department-status__thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(15 23 42 / 18%); }
+.e-department-status__button[aria-checked="true"] { color: #187252; border-color: #bfe2d4; background: #f3fbf6; }
+.e-department-status__button[aria-checked="true"] .e-department-status__track { background: #248963; }
+.e-department-status__button[aria-checked="true"] .e-department-status__thumb { left: 21px; }
+.e-department-status__label { min-width: 28px; white-space: nowrap; }
+.e-department-status__button:hover { border-color: var(--color-primary); }
+.e-department-status__button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.e-department-status__button:disabled { opacity: 0.6; cursor: wait; }

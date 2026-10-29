@@ -92,10 +92,9 @@ def save_detail(
             if departments.code_change_blocker(db):
                 raise DetailRuleError("部門代碼有外鍵引用，請先由資料庫維護者確認")
         if current.is_active and not data.is_active:
-            if current.department_code == "UNASSIGNED":
-                raise DetailRuleError("預設部門不能停用")
-            if departments.disable_blocker(db, department_id):
-                raise DetailRuleError("部門仍有帳號、成員或其他關聯，無法停用")
+            blocker = departments.disable_blocker(db, department_id)
+            if blocker:
+                raise DetailRuleError(blocker)
         if (current.department_code, current.department_name, current.is_active) != (
             data.department_code,
             data.department_name,

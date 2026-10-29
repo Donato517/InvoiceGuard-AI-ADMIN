@@ -575,3 +575,21 @@ def test_header_switch_department_updates_primary_and_session(
     assert after_page.status_code == 200
     assert SidebarNavigation(after_page.text).entries == ["/welcome", "/logout"]
     assert browser.get("/functions").status_code == 403
+
+
+def test_department_status_requires_explicit_edit(
+    browser: TestClient, state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """登入但僅能查看部門時，列表開關仍無法繞過原有修改權限。"""
+    from app.services import department_service
+
+    for row in state["functions"]:
+        if row["function_code"] == "department":
+            row["can_edit"] = False
+    calls = []
+    monkeypatch.setattr(department_service, "set_active", lambda *args: calls.append(args))
+    login(browser)
+    response = browser.post(
+        f"/department/{DEPARTMENT}/status", headers=ORIGIN, data={"active": "false"}
+    )
+    assert response.status_code == 403 and calls == []

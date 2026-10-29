@@ -818,7 +818,10 @@ def test_active_unregistered_catalog_still_cannot_be_a_formal_capability(
     current = replace(FUNCTIONS[0], function_code="accounts", is_active=True)
     monkeypatch.setattr(repository, "page_functions", lambda *args: (current,))
     page = browser.get("/functions")
-    assert "目錄狀態" in page.text and "程式對應" in page.text and "待接線" in page.text
+    assert "目錄狀態" in page.text
+    assert "程式對應" not in page.text
+    content = re.search(r"<main\b[^>]*>(.*?)</main>", page.text, re.DOTALL)
+    assert content is not None and "待接線" not in content.group(1)
     assert supported_actions("accounts") == frozenset()
     with pytest.raises(DeniedError):
         capability("accounts")

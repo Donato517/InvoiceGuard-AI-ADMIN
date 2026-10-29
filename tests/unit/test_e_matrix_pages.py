@@ -320,7 +320,7 @@ def test_joint_revision_covers_all_resources(kind: str) -> None:
     assert service.revision(current) != service.revision(changed)
 
 
-@pytest.mark.parametrize("kind", ["reserved", "code_reference", "active_members"])
+@pytest.mark.parametrize("kind", ["reserved", "code_reference", "primary_department"])
 def test_existing_department_protections_also_block_permission_changes(
     browser: TestClient, db: MagicMock, kind: str
 ) -> None:
@@ -330,9 +330,9 @@ def test_existing_department_protections_also_block_permission_changes(
     if kind == "code_reference":
         data["department_code"] = "NEW"
         departments.code_change_blocker.return_value = "referenced"
-    if kind == "active_members":
+    if kind == "primary_department":
         data["is_active"] = "false"
-        departments.disable_blocker.return_value = "members"
+        departments.disable_blocker.return_value = "primary"
     assert browser.post(PATH, data=data, headers=ORIGIN).status_code == 400
     departments.update_details.assert_not_called()
     permissions.write_permission.assert_not_called()
@@ -485,3 +485,30 @@ def test_bulk_controls_are_local_only_and_not_successful_form_fields(
     permissions.write_permission.assert_not_called()
     departments.update_details.assert_not_called()
     db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_unassigned_detail_status_uses_shared_rules_and_preserves_grants(
+    browser: TestClient, db: MagicMock, blocked: bool
+) -> None:
+    """同頁停用預設部門不另擋代碼；主要部門限制仍阻擋整筆交易。"""
+    current = ROW.model_copy(update={"department_code": "UNASSIGNED"})
+    departments.get_department.return_value = current
+    departments.lock_department.return_value = current
+    departments.disable_blocker.return_value = "主要部門" if blocked else None
+    data = Form(browser.get(PATH).text).values
+    data["is_active"] = ["false"]
+    response = browser.post(PATH, data=data, headers=ORIGIN)
+    departments.disable_blocker.assert_called_once_with(db, DEPT)
+    permissions.write_permission.assert_not_called()
+    if blocked:
+        assert response.status_code == 400
+        departments.update_details.assert_not_called()
+        db.commit.assert_not_called()
+        assert db.rollback.called
+    else:
+        assert response.status_code == 303
+        departments.update_details.assert_called_once_with(
+            db, DEPT, current.department_code, current.department_name, False
+        )
+        db.commit.assert_called_once()

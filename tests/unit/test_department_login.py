@@ -428,7 +428,7 @@ def test_removed_session_department_does_not_remove_remaining_primary_membership
     page = browser.get("/welcome")
     assert page.status_code == 200
     navigation = SidebarNavigation(page.text)
-    assert navigation.entries == ["/welcome", "/logout"]
+    assert navigation.entries == ["/welcome", "/invoices/upload", "/invoices", "/logout"]
     assert browser.get("/accounts").status_code == 403
 
 
@@ -453,14 +453,14 @@ def test_catalog_sidebar_tracks_live_department_grants(
         response = browser.get(url)
         assert response.status_code == 200
         sidebar = response.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
-        assert "(21)三聯式統一發票" in sidebar and "尚未接線" in sidebar
-        assert 'href="/invoices"' not in sidebar
+        assert "發票上傳" in sidebar and 'href="/invoices"' in sidebar
+        assert "future-feature" in sidebar and "尚未接線" in sidebar
         assert 'aria-disabled="true"' in sidebar
         navigation = SidebarNavigation(response.text)
         assert navigation.entries[navigation.entries.index("/accounts") + 1] == "/logout"
     row = state["functions"][-1]
     row.update(can_view=False, can_create=False, can_edit=False, can_delete=False)
-    assert "(21)三聯式統一發票" not in browser.get("/welcome").text
+    assert 'href="/invoices"' not in browser.get("/welcome").text
     assert state["login_updates"] == 1 and state["commits"] == 1
     assert not any("Triplicate Uniform Invoice" in sql for sql, _ in state["queries"])
 
@@ -593,3 +593,99 @@ def test_department_status_requires_explicit_edit(
         f"/department/{DEPARTMENT}/status", headers=ORIGIN, data={"active": "false"}
     )
     assert response.status_code == 403 and calls == []
+
+
+def test_procurement_department_invoice_upload_landing_and_four_step_limit(
+    browser: TestClient, state: dict[str, Any]
+) -> None:
+    """非財務部門僅顯示「📤 發票上傳」與「🗂️ 發票管理」且不顯示步驟 5～9；財務部額外開放財會檢核、申報資料、會計傳票及步驟 5～9。"""
+    invoice_grant = [
+        dict(
+            function_code="Triplicate Uniform Invoice",
+            function_name="(21)三聯式統一發票",
+            app_scope="both",
+            is_active=True,
+            can_view=True,
+            can_create=True,
+            can_edit=True,
+            can_delete=False,
+        )
+    ]
+    state["departments"] = [
+        {
+            "department_id": DEPARTMENT,
+            "department_code": "PROC",
+            "department_name": "採購部",
+            "is_active": True,
+        },
+        {
+            "department_id": OTHER,
+            "department_code": "FIN",
+            "department_name": "財務部",
+            "is_active": True,
+        },
+    ]
+    state["functions"] = invoice_grant
+    state["department_functions"] = {
+        DEPARTMENT: invoice_grant,
+        OTHER: invoice_grant,
+    }
+    login(browser)
+    welcome_page = browser.get("/welcome")
+    assert welcome_page.status_code == 200
+    sidebar = welcome_page.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
+    assert "發票上傳" in sidebar and 'href="/invoices/upload"' in sidebar
+    assert "發票管理" in sidebar and 'href="/invoices"' in sidebar
+    assert "財會檢核" not in sidebar
+    assert "申報資料" not in sidebar
+    assert "會計傳票" not in sidebar
+
+    list_page = browser.get("/invoices")
+    assert list_page.status_code == 200
+    assert "發票管理" in list_page.text
+    assert "/invoices/1/flow?step=4" in list_page.text
+    assert "/invoices/1/flow?step=9" not in list_page.text
+    assert "前四步核對已完成／待財務接續" in list_page.text
+
+    step4_page = browser.get("/invoices/1/flow?step=4")
+    assert step4_page.status_code == 200
+    assert "系統自動檢核" in step4_page.text
+    assert "完成前四步，返回待處理發票" in step4_page.text
+    for finance_step_label in [
+        "財務審核",
+        "產生申報檔",
+        "匯入國稅局軟體",
+        "自動產生傳票",
+        "匯出結果",
+    ]:
+        assert finance_step_label not in step4_page.text
+
+    for forbidden_route in ["/invoices/review", "/invoices/filing", "/invoices/voucher"]:
+        assert browser.get(forbidden_route).status_code == 403
+    for forbidden_step in range(5, 10):
+        assert browser.get(f"/invoices/1/flow?step={forbidden_step}").status_code == 403
+    assert (
+        browser.post("/invoices/1/flow/advance", headers=ORIGIN, data={"from_step": 4}).status_code
+        == 403
+    )
+    assert (
+        browser.post("/invoices/1/review", headers=ORIGIN, data={"decision": "passed"}).status_code
+        == 403
+    )
+
+    # 切換至財務部後，開放 🔍 財會檢核、📑 申報資料、🧾 會計傳票 與步驟 5～9
+    browser.post(
+        "/switch-department",
+        headers=ORIGIN,
+        data={"switch_department_id": str(OTHER), "next": "/invoices"},
+    )
+    fin_welcome = browser.get("/welcome")
+    fin_sidebar = fin_welcome.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
+    for finance_tab in ["發票上傳", "發票管理", "財會檢核", "申報資料", "會計傳票"]:
+        assert finance_tab in fin_sidebar
+    assert browser.get("/invoices/review").status_code == 200
+    assert browser.get("/invoices/filing").status_code == 200
+    assert browser.get("/invoices/voucher").status_code == 200
+    fin_step5 = browser.get("/invoices/1/flow?step=5")
+    assert fin_step5.status_code == 200
+    assert "財務審核" in fin_step5.text and "匯出結果" in fin_step5.text

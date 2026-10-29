@@ -17,8 +17,57 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
 from app.core.templating import templates
+from app.routers.e_admin import session_evidence
+from app.schemas.e_admin import Action, DeniedError, Target, UnauthenticatedError
+from app.services.e_admin_service import INVOICES, EModule, get_e_module
 
-router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(require_admin)])
+Module = Annotated[EModule, Depends(get_e_module)]
+
+
+def _is_finance_department(departments: tuple[Any, ...], selected_department_id: Any) -> bool:
+    for dept in departments:
+        if getattr(dept, "department_id", None) == selected_department_id:
+            name = getattr(dept, "department_name", "") or ""
+            code = (getattr(dept, "department_code", "") or "").upper()
+            if "財務" in name or code in {"FINANCE", "FIN", "ACCOUNTING", "ACC"}:
+                return True
+    return False
+
+
+def require_invoice_access(request: Request, module: Module) -> None:
+    """驗證發票作業存取權限（僅財務部開放步骤 5～9 及財會檢核／申報資料／會計傳票，其餘部門僅開放前 4 步驟）。"""
+    override = request.app.dependency_overrides.get(require_admin)
+    if override is not None:
+        override(request)
+        request.state.is_finance_workspace = True
+        request.state.invoice_max_step = 9
+        return
+    token = session_evidence(request)
+    if token is not None and module.access is not None:
+        identity = module.identity(token)
+        module.check(
+            identity,
+            INVOICES,
+            Action.VIEW,
+            Target(identity.selected_department_id),
+        )
+        request.state.e_configuration_authenticated = True
+        request.state.e_configuration_menu = module.sidebar_menu(identity)
+        departments = module.departments(identity)
+        request.state.header_departments = departments
+        request.state.header_selected_department_id = identity.selected_department_id
+        is_finance = _is_finance_department(departments, identity.selected_department_id)
+        request.state.is_finance_workspace = is_finance
+        request.state.invoice_max_step = 9 if is_finance else 4
+        return
+    raise UnauthenticatedError
+
+
+router = APIRouter(
+    prefix="/invoices",
+    tags=["invoices"],
+    dependencies=[Depends(require_invoice_access)],
+)
 
 # 示範發票資料庫（對應原型 seedInvoices）
 _INVOICE_STORE: list[dict[str, Any]] = [
@@ -149,10 +198,11 @@ def _build_flow_steps(
     *,
     max_stage: int = 9,
     has_file_bytes: bool = False,
+    allowed_max_step: int = 9,
 ) -> list[dict[str, Any]]:
-    """建立發票作業 9 個步驟的中繼資料。"""
+    """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9）。"""
     steps = []
-    for idx, label in enumerate(INVOICE_FLOW_STEPS, start=1):
+    for idx, label in enumerate(INVOICE_FLOW_STEPS[:allowed_max_step], start=1):
         if is_completed:
             state = "active" if idx == current_step else "done"
         elif idx == current_step:
@@ -163,7 +213,9 @@ def _build_flow_steps(
             state = "locked"
 
         # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1、2 僅顯示完成勾號不再連結返回
-        can_navigate = state != "locked" and (has_file_bytes or idx >= 3)
+        can_navigate = (
+            state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
+        )
         steps.append(
             {
                 "number": idx,
@@ -217,15 +269,35 @@ def _build_voucher(invoice: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@router.get("", response_class=HTMLResponse)
-def invoice_list(
+def _render_invoice_list_view(
     request: Request,
-    status: Annotated[str | None, Query()] = None,
-    q: Annotated[str, Query()] = "",
+    *,
+    section: str = "invoices",
+    status: str | None = None,
+    q: str = "",
 ) -> HTMLResponse:
-    """發票審核列表：分頁、狀態篩選、關鍵字搜尋。"""
     _DRAFT_INVOICE_STORE.clear()
-    invoices = _INVOICE_STORE
+    section_config = {
+        "invoices": ("發票管理", "/invoices", lambda i: True),
+        "review": (
+            "財會檢核",
+            "/invoices/review",
+            lambda i: not i["is_completed"] and 3 <= int(i.get("stage", 4)) <= 5,
+        ),
+        "filing": (
+            "申報資料",
+            "/invoices/filing",
+            lambda i: not i["is_completed"] and 6 <= int(i.get("stage", 4)) <= 7,
+        ),
+        "voucher": (
+            "會計傳票",
+            "/invoices/voucher",
+            lambda i: int(i.get("stage", 4)) >= 8,
+        ),
+    }
+    section_title, active_route, section_filter = section_config[section]
+    request.state.active_sidebar_route = active_route
+    invoices = [i for i in _INVOICE_STORE if section_filter(i)]
 
     if status and status in INVOICE_STATUS_LABEL:
         invoices = [i for i in invoices if i["status"] == status]
@@ -258,8 +330,62 @@ def invoice_list(
             "status": status,
             "q": q,
             "counts": counts,
+            "section_title": section_title,
+            "max_flow_step": getattr(request.state, "invoice_max_step", 9),
         },
     )
+
+
+@router.get("", response_class=HTMLResponse)
+def invoice_list(
+    request: Request,
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str, Query()] = "",
+) -> HTMLResponse:
+    """🗂️ 發票管理列表：分頁、狀態篩選、關鍵字搜尋。"""
+    return _render_invoice_list_view(request, section="invoices", status=status, q=q)
+
+
+@router.get("/upload")
+def invoice_upload_entry() -> RedirectResponse:
+    """📤 發票上傳入口：建立暫存發票草稿並進入步驟 1（採購上傳發票）。"""
+    return create_new_invoice()
+
+
+@router.get("/review", response_class=HTMLResponse)
+def invoice_review_list(
+    request: Request,
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str, Query()] = "",
+) -> HTMLResponse:
+    """🔍 財會檢核列表（僅財務部工作區開放）。"""
+    if getattr(request.state, "invoice_max_step", 9) < 9:
+        raise DeniedError
+    return _render_invoice_list_view(request, section="review", status=status, q=q)
+
+
+@router.get("/filing", response_class=HTMLResponse)
+def invoice_filing_list(
+    request: Request,
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str, Query()] = "",
+) -> HTMLResponse:
+    """📑 申報資料列表（僅財務部工作區開放）。"""
+    if getattr(request.state, "invoice_max_step", 9) < 9:
+        raise DeniedError
+    return _render_invoice_list_view(request, section="filing", status=status, q=q)
+
+
+@router.get("/voucher", response_class=HTMLResponse)
+def invoice_voucher_list(
+    request: Request,
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str, Query()] = "",
+) -> HTMLResponse:
+    """🧾 會計傳票列表（僅財務部工作區開放）。"""
+    if getattr(request.state, "invoice_max_step", 9) < 9:
+        raise DeniedError
+    return _render_invoice_list_view(request, section="voucher", status=status, q=q)
 
 
 @router.get("/new")
@@ -318,12 +444,22 @@ def _render_flow_page(
     error: str | None = None,
 ) -> HTMLResponse:
     invoice_id = int(invoice["id"])
+    max_flow_step = getattr(request.state, "invoice_max_step", 9)
+    if max_flow_step < 9 or step <= 3:
+        request.state.active_sidebar_route = "/invoices/upload"
+    elif step <= 5:
+        request.state.active_sidebar_route = "/invoices/review"
+    elif step <= 7:
+        request.state.active_sidebar_route = "/invoices/filing"
+    else:
+        request.state.active_sidebar_route = "/invoices/voucher"
     steps = _build_flow_steps(
         step,
         invoice_id,
         invoice["is_completed"],
         max_stage=int(invoice.get("stage", step)),
         has_file_bytes=bool(invoice.get("file_bytes")),
+        allowed_max_step=max_flow_step,
     )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
@@ -346,6 +482,7 @@ def _render_flow_page(
             "voucher": voucher,
             "filing": filing,
             "error": error,
+            "max_flow_step": max_flow_step,
         },
     )
 
@@ -356,7 +493,10 @@ def invoice_flow(
     invoice_id: int,
     step: Annotated[int, Query(ge=1, le=9)] = 4,
 ) -> HTMLResponse:
-    """發票作業流程（步驟 1～9）。"""
+    """發票作業流程（步驟 1～9；採購部僅開放步驟 1～4）。"""
+    max_flow_step = getattr(request.state, "invoice_max_step", 9)
+    if step > max_flow_step:
+        raise DeniedError
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -452,15 +592,19 @@ def correct_invoice_fields(
 
 @router.post("/{invoice_id}/flow/advance")
 def advance_flow_step(
+    request: Request,
     invoice_id: int,
     from_step: Annotated[int, Form()],
 ) -> RedirectResponse:
     """前往下一步驟；若尚未完成步驟 3 採購核對修正則不寫入發票清單。"""
+    max_flow_step = getattr(request.state, "invoice_max_step", 9)
+    if from_step >= max_flow_step and max_flow_step < 9:
+        raise DeniedError
     invoice = _find_flow_invoice(invoice_id)
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
 
-    next_step = min(9, from_step + 1)
+    next_step = min(max_flow_step, from_step + 1)
     if invoice:
         if from_step == 3:
             _commit_draft_after_correction(invoice_id, invoice)
@@ -469,9 +613,23 @@ def advance_flow_step(
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step={next_step}", status_code=303)
 
 
+@router.post("/{invoice_id}/flow/finish-first-four")
+def finish_first_four_steps(invoice_id: int) -> RedirectResponse:
+    """非財務部門完成前四步發票核對，標記待財務部接續處理並返回發票管理列表。"""
+    invoice = _find_flow_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _commit_draft_after_correction(invoice_id, invoice)
+    invoice["first_four_checked"] = True
+    invoice["stage"] = max(int(invoice.get("stage", 4)), 4)
+    return RedirectResponse("/invoices", status_code=303)
+
+
 @router.post("/{invoice_id}/flow/complete")
-def complete_invoice_flow(invoice_id: int) -> RedirectResponse:
+def complete_invoice_flow(request: Request, invoice_id: int) -> RedirectResponse:
     """確認發票作業完成。"""
+    if getattr(request.state, "invoice_max_step", 9) < 9:
+        raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -483,6 +641,7 @@ def complete_invoice_flow(invoice_id: int) -> RedirectResponse:
 
 @router.post("/{invoice_id}/review")
 def review_invoice(
+    request: Request,
     invoice_id: int,
     decision: Annotated[str, Form()],
     purpose: Annotated[str | None, Form()] = None,
@@ -491,6 +650,8 @@ def review_invoice(
     tax_type: Annotated[str | None, Form()] = None,
 ) -> RedirectResponse:
     """步驟 5：財務審核——核准、退回與更新會計欄位。"""
+    if getattr(request.state, "invoice_max_step", 9) < 5:
+        raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -515,8 +676,10 @@ def review_invoice(
 
 
 @router.post("/{invoice_id}/filing")
-def generate_filing(invoice_id: int) -> RedirectResponse:
+def generate_filing(request: Request, invoice_id: int) -> RedirectResponse:
     """步驟 6：產生示範申報檔。"""
+    if getattr(request.state, "invoice_max_step", 9) < 6:
+        raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -531,8 +694,10 @@ def generate_filing(invoice_id: int) -> RedirectResponse:
 
 
 @router.post("/{invoice_id}/import-confirm")
-def confirm_import(invoice_id: int) -> RedirectResponse:
+def confirm_import(request: Request, invoice_id: int) -> RedirectResponse:
     """步驟 7：確認手動匯入國稅局軟體。"""
+    if getattr(request.state, "invoice_max_step", 9) < 7:
+        raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -542,8 +707,10 @@ def confirm_import(invoice_id: int) -> RedirectResponse:
 
 
 @router.get("/{invoice_id}/export/{kind}")
-def export_invoice_data(invoice_id: int, kind: str) -> Response:
+def export_invoice_data(request: Request, invoice_id: int, kind: str) -> Response:
     """步驟 9：匯出結果檔案（申報檔 TXT、進項資料 CSV、傳票 CSV）。"""
+    if getattr(request.state, "invoice_max_step", 9) < 9:
+        raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")

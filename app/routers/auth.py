@@ -5,6 +5,7 @@
 """
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -125,6 +126,48 @@ def logout(request: Request, module: Module) -> RedirectResponse:
     return response
 
 
+@router.post("/switch-department", dependencies=[Depends(require_e_origin)])
+async def switch_department(request: Request, module: Module) -> RedirectResponse:
+    """切換頁首目前部門，同步更新主要部門與網站 Session。"""
+    form = await request.form()
+    raw_dept = form.get("switch_department_id", "")
+    raw_next = form.get("next", WELCOME_PATH)
+    try:
+        department_id = UUID(str(raw_dept))
+    except ValueError:
+        raise EError from None
+    issued = module.switch_department(session_evidence(request), department_id)
+    target = WELCOME_PATH
+    if isinstance(raw_next, str) and raw_next.startswith("/") and not raw_next.startswith("//"):
+        try:
+            identity = module.identity(issued.token)
+            allowed_routes = {
+                entry.route for entry in module.sidebar_menu(identity) if entry.route
+            } | {WELCOME_PATH, "/workspace", "/account"}
+            for route in allowed_routes:
+                if raw_next == route or raw_next.startswith(route + "/"):
+                    if route in {"/workspace", "/account"}:
+                        module.workspace_access(identity)
+                    target = raw_next
+                    break
+        except EError:
+            target = WELCOME_PATH
+    response = RedirectResponse(
+        target,
+        status_code=303,
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        issued.token.get_secret_value(),
+        path="/",
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+    return response
+
+
 @router.get("/")
 def admin_index() -> RedirectResponse:
     """網站入口固定先到歡迎頁，再由歡迎頁檢查身分。"""
@@ -142,6 +185,8 @@ def welcome(request: Request, module: Module) -> HTMLResponse:
         identity = module.identity(session_evidence(request))
         module.check(identity, WELCOME_CODE, Action.VIEW)
         request.state.e_welcome_authenticated = True
+        request.state.header_departments = module.departments(identity)
+        request.state.header_selected_department_id = identity.selected_department_id
         # 選單屬可選投影；不能因無業務功能或 G 暫時不可用而封鎖唯讀問候。
         try:
             request.state.e_welcome_menu = module.sidebar_menu(identity)

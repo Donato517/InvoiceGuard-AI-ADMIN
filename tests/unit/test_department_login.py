@@ -99,15 +99,28 @@ class Database:
         if "SET last_login_at=" in sql:
             self.pending_login = True
             return Result([USER])
+        if "SET primary_department_id=" in sql:
+            self.state["account"]["primary_department_id"] = values["department_id"]
+            return Result([USER])
         if "FROM invoiceguard_identity.user_accounts a" in sql:
             if values.get("email", EMAIL) != EMAIL or values.get("user_id", USER) != USER:
                 return Result([])
             return Result([dict(self.state["account"])])
         if "CROSS JOIN public.app_functions" in sql:
-            if values["department_id"] != DEPARTMENT or not self.state["membership"]:
+            if not self.state["membership"]:
+                return Result([])
+            if "department_functions" in self.state:
+                return Result(
+                    list(self.state["department_functions"].get(values["department_id"], []))
+                )
+            if values["department_id"] != DEPARTMENT:
                 return Result([])
             return Result(list(self.state["functions"]))
         if "SELECT d.department_id" in sql:
+            if not self.state["membership"]:
+                return Result([])
+            if "departments" in self.state:
+                return Result(list(self.state["departments"]))
             return Result(
                 [
                     {
@@ -117,8 +130,6 @@ class Database:
                         "is_active": True,
                     }
                 ]
-                if self.state["membership"]
-                else []
             )
         raise AssertionError("未預期 SQL；測試不允許新增資料表、角色、授權或 DB Session")
 
@@ -514,3 +525,53 @@ def test_catalog_only_member_keeps_welcome_and_authorized_sidebar(
     assert page.status_code == 200 and "僅授權的業務功能" in page.text
     assert SidebarNavigation(page.text).entries == ["/welcome", "/logout"]
     assert browser.get("/accounts").status_code == 403
+
+
+def test_header_switch_department_updates_primary_and_session(
+    browser: TestClient, module: EModule, state: dict[str, Any]
+) -> None:
+    """頁首切換部門選單位於登出左側，切換後更新主要部門與網站 Session 並反映該部門選單。"""
+    state["departments"] = [
+        {
+            "department_id": DEPARTMENT,
+            "department_code": "TEST",
+            "department_name": "測試部門",
+            "is_active": True,
+        },
+        {
+            "department_id": OTHER,
+            "department_code": "FIN",
+            "department_name": "財務部",
+            "is_active": True,
+        },
+    ]
+    state["department_functions"] = {
+        DEPARTMENT: state["functions"],
+        OTHER: [],
+    }
+    login(browser)
+    welcome_page = browser.get("/welcome")
+    assert welcome_page.status_code == 200
+    assert 'action="/switch-department"' in welcome_page.text
+    assert "切換部門" in welcome_page.text
+    assert "FIN－財務部" in welcome_page.text
+    assert welcome_page.text.index('action="/switch-department"') < welcome_page.text.index(
+        'button type="submit" class="btn btn--secondary btn--small">登出'
+    )
+
+    switched = browser.post(
+        "/switch-department",
+        headers=ORIGIN,
+        data={"switch_department_id": str(OTHER), "next": "/functions"},
+    )
+    assert switched.status_code == 303
+    assert switched.headers["location"] == "/welcome"
+    assert state["account"]["primary_department_id"] == OTHER
+    data = module.auth.session_data(SecretStr(browser.cookies.get(SESSION_COOKIE_NAME)))
+    assert data["department"] == str(OTHER)
+    assert data["functions"] == {}
+
+    after_page = browser.get("/welcome")
+    assert after_page.status_code == 200
+    assert SidebarNavigation(after_page.text).entries == ["/welcome", "/logout"]
+    assert browser.get("/functions").status_code == 403

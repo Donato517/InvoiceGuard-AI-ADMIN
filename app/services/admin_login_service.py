@@ -91,6 +91,7 @@ class DepartmentLoginAdapter:
     ) -> None:
         self.registry = registry
         self.session_factory = session_factory
+        self._departments_by_user: dict[UUID, tuple[EffectiveDepartment, ...]] = {}
 
     def _run[T](self, operation: Callable[[Session], T], *, write: bool = False) -> T:
         db = self.session_factory()
@@ -221,11 +222,68 @@ class DepartmentLoginAdapter:
         row = repository.current_account(db, identity.user_id)
         if not _valid_account(row) or row["credential_version"] != identity.credential_version:
             raise UnauthenticatedError
+        departments = tuple(
+            EffectiveDepartment(**item) for item in repository.departments(db, identity.user_id)
+        )
         if identity.expires_at <= datetime.now(UTC) or identity.selected_department_id not in {
-            item["department_id"] for item in repository.departments(db, identity.user_id)
+            item.department_id for item in departments
         }:
             raise UnauthenticatedError
+        self._departments_by_user[identity.user_id] = departments
         return identity
+
+    def departments(self, identity: Identity) -> tuple[EffectiveDepartment, ...]:
+        """回傳本人目前已驗證的有效所屬部門清單。"""
+        cached = self._departments_by_user.get(identity.user_id)
+        if cached is not None:
+            return cached
+
+        def operation(db: Session) -> tuple[EffectiveDepartment, ...]:
+            repository.prepare(db)
+            current = self.current(db, identity)
+            return self._departments_by_user.get(current.user_id, ())
+
+        return self._run(operation)
+
+    def switch_department(self, token: SecretStr | None, department_id: UUID) -> IssuedSession:
+        """切換目前登入帳號的主要／活動部門並簽發更新後的網站 Session。"""
+        if token is None:
+            raise UnauthenticatedError
+        data = self.session_data(token)
+        if data is None:
+            raise UnauthenticatedError
+        user_id = UUID(data["uid"])
+
+        def operation(db: Session) -> IssuedSession:
+            repository.prepare(db)
+            row = repository.current_account(db, user_id)
+            if not _valid_account(row) or row["credential_version"] != data["cv"]:
+                raise UnauthenticatedError
+            departments = repository.departments(db, user_id)
+            if department_id not in {item["department_id"] for item in departments}:
+                raise DeniedError
+            repository.switch_primary_department(
+                db, user_id, department_id, row["credential_version"]
+            )
+            flags = self._flags(repository.functions(db, user_id, department_id))
+            payload = {
+                "v": 1,
+                "uid": str(user_id),
+                "sid": data["sid"],
+                "department": str(department_id),
+                "cv": row["credential_version"],
+                "expires": data["expires"],
+                "functions": {code: flag for code, flag in flags.items() if flag},
+            }
+            new_token = _serializer().dumps(payload)
+            if len(new_token) > 3500:
+                raise UnavailableError
+            self._departments_by_user[user_id] = tuple(
+                EffectiveDepartment(**item) for item in departments
+            )
+            return IssuedSession(user_id, SecretStr(new_token))
+
+        return self._run(operation, write=True)
 
     def decision(
         self,

@@ -125,6 +125,22 @@ def update_login_record(db: Session, user_id: UUID, version: int) -> None:
         raise UnauthenticatedError
 
 
+def switch_primary_department(
+    db: Session, user_id: UUID, department_id: UUID, version: int
+) -> None:
+    """切換目前使用者的主要部門；僅限本人有效所屬部門，不異動密碼或權限資料。"""
+    updated = db.execute(
+        text("""
+        UPDATE invoiceguard_identity.user_accounts SET primary_department_id=:department_id
+        WHERE user_id=:user_id AND credential_version=:version AND account_status='active'
+        RETURNING user_id
+    """),
+        {"user_id": user_id, "department_id": department_id, "version": version},
+    ).scalar_one_or_none()
+    if updated is None:
+        raise UnauthenticatedError
+
+
 def profile(db: Session, user_id: UUID) -> dict[str, Any]:
     """本人資訊白名單，不輸出認證雜湊。"""
     return dict(

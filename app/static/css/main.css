@@ -246,6 +246,28 @@ pre {
   color: var(--color-text-muted);
 }
 
+.department-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: 0.625rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.department-picker label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.department-picker select {
+  width: auto;
+  min-width: 6.875rem;
+  padding: 0.25rem 0.5rem;
+  font-size: var(--font-size-sm);
+  background-color: var(--color-modal-footer-bg);
+}
+
 .app-header__company {
   padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-sm);

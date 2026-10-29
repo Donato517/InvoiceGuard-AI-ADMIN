@@ -6,7 +6,13 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
-from app.schemas.e_access import NoAdminFunctionsError, SelfAccess, SelfProfile, SidebarEntry
+from app.schemas.e_access import (
+    EffectiveDepartment,
+    NoAdminFunctionsError,
+    SelfAccess,
+    SelfProfile,
+    SidebarEntry,
+)
 from app.schemas.e_admin import (
     Action,
     ChangeEvent,
@@ -88,6 +94,25 @@ class EModule:
             for item in self.workspace_access(identity).functions
             if item.can_open
         )
+
+    def departments(self, identity: Identity) -> tuple[EffectiveDepartment, ...]:
+        """回傳本人目前已驗證的有效所屬部門清單。"""
+        from app.services.admin_login_service import DepartmentLoginAdapter
+
+        if isinstance(self.access, DepartmentLoginAdapter):
+            return self.access.departments(identity)
+        try:
+            return self.workspace_access(identity).departments
+        except EError:
+            return ()
+
+    def switch_department(self, token: SecretStr | None, department_id: UUID) -> IssuedSession:
+        """切換目前登入帳號的活動／主要部門並更新網站 Session。"""
+        from app.services.admin_login_service import DepartmentLoginAdapter
+
+        if not isinstance(self.access, DepartmentLoginAdapter):
+            raise UnavailableError
+        return self.access.switch_department(token, department_id)
 
     def list_departments(self, identity: Identity) -> list[Department]:
         """只查詢核定部門範圍。"""

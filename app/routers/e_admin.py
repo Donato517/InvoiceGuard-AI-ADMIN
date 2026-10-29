@@ -84,6 +84,8 @@ def current_identity(request: Request, module: Module) -> Identity:
     """不經舊 int Cookie 驗證器；所有 E 頁每次重新向共用 adapter 驗證。"""
     identity = module.identity(session_evidence(request))
     request.state.e_access = module.workspace_access(identity)
+    request.state.header_departments = request.state.e_access.departments
+    request.state.header_selected_department_id = identity.selected_department_id
     return identity
 
 

@@ -129,9 +129,17 @@ document.addEventListener('click', (event) => {
 })
 
 /**
- * 檔案選取變更（知識庫多檔上傳與發票單檔上傳預覽）
+ * 檔案選取變更（知識庫多檔上傳與發票單檔上傳預覽）及自動送出選單
  */
 document.addEventListener('change', (event) => {
+  if (event.target && event.target.hasAttribute('data-auto-submit')) {
+    const form = event.target.closest('form')
+    if (form) {
+      form.submit()
+    }
+    return
+  }
+
   if (event.target && event.target.id === 'document-files') {
     const summary = document.getElementById('fileSummary')
     if (summary) {

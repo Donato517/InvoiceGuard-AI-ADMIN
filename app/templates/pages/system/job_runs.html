@@ -8,65 +8,74 @@
 {% extends "layouts/admin.html" %}
 {% block title %}排程紀錄{% endblock %}
 {% block content %}
-  {# 選擇工作後由 HTMX 取回整頁，只替換 #job-run-table；不支援 JS 時以按鈕送出 #}
-  <form class="filter-bar"
-        method="get"
-        action="/system/job-runs"
-        hx-get="/system/job-runs"
-        hx-trigger="change"
-        hx-target="#job-run-table"
-        hx-select="#job-run-table"
-        hx-swap="outerHTML"
-        hx-push-url="true">
-    <label for="job_name">工作</label>
-    <select id="job_name" name="job_name">
-      <option value="">全部</option>
-      {% for value, label in JOB_NAME_LABEL.items() %}
-        <option value="{{ value }}" {% if value == job_name %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-    <noscript>
-      <button type="submit" class="btn">篩選</button>
-    </noscript>
-  </form>
-  <div id="job-run-table">
-    {% if job_runs %}
-      <table class="table">
-        <thead>
-          <tr>
-            <th scope="col">工作</th>
-            <th scope="col">觸發</th>
-            <th scope="col">狀態</th>
-            <th scope="col">開始時間</th>
-            <th scope="col">結束時間</th>
-            <th scope="col">摘要 / 失敗原因</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for run in job_runs %}
-            <tr>
-              <td>{{ JOB_NAME_LABEL.get(run.job_name, run.job_name) }}</td>
-              <td>{{ JOB_TRIGGER_LABEL.get(run.trigger, run.trigger) }}</td>
-              <td>
-                <span class="badge badge--{{ run.status }}">{{ JOB_STATUS_LABEL.get(run.status, run.status) }}</span>
-              </td>
-              <td>{{ run.started_at | taipei_datetime }}</td>
-              <td>{{ run.finished_at | taipei_datetime }}</td>
-              <td>
-                {% if run.error_message %}
-                  {{ run.error_message }}
-                {% elif run.summary %}
-                  <code>{{ run.summary | tojson }}</code>
-                {% else %}
-                  -
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="empty-state">目前沒有排程紀錄</p>
-    {% endif %}
+  <div class="page-heading">
+    <h2>排程執行紀錄</h2>
+    <p class="muted small-text">檢視背景排程工作執行狀態、觸發方式、起訖時間與執行摘要。</p>
   </div>
+  <section class="card">
+    <div class="toolbar">
+      <h3 class="card__title">排程清單</h3>
+      {# 選擇工作後由 HTMX 取回整頁，只替換 #job-run-table；不支援 JS 時以按鈕送出 #}
+      <form class="filter-bar"
+            method="get"
+            action="/system/job-runs"
+            hx-get="/system/job-runs"
+            hx-trigger="change"
+            hx-target="#job-run-table"
+            hx-select="#job-run-table"
+            hx-swap="outerHTML"
+            hx-push-url="true">
+        <label for="job_name">工作</label>
+        <select id="job_name" name="job_name">
+          <option value="">全部</option>
+          {% for value, label in JOB_NAME_LABEL.items() %}
+            <option value="{{ value }}" {% if value == job_name %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <noscript>
+          <button type="submit" class="btn">篩選</button>
+        </noscript>
+      </form>
+    </div>
+    <div id="job-run-table" class="table-wrap">
+      {% if job_runs %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">工作</th>
+              <th scope="col">觸發</th>
+              <th scope="col">狀態</th>
+              <th scope="col">開始時間</th>
+              <th scope="col">結束時間</th>
+              <th scope="col">摘要 / 失敗原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in job_runs %}
+              <tr>
+                <td>{{ JOB_NAME_LABEL.get(run.job_name, run.job_name) }}</td>
+                <td>{{ JOB_TRIGGER_LABEL.get(run.trigger, run.trigger) }}</td>
+                <td>
+                  <span class="badge badge--{{ run.status }}">{{ JOB_STATUS_LABEL.get(run.status, run.status) }}</span>
+                </td>
+                <td>{{ run.started_at | taipei_datetime }}</td>
+                <td>{{ run.finished_at | taipei_datetime }}</td>
+                <td>
+                  {% if run.error_message %}
+                    {{ run.error_message }}
+                  {% elif run.summary %}
+                    <code>{{ run.summary | tojson }}</code>
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty-state">目前沒有排程紀錄</p>
+      {% endif %}
+    </div>
+  </section>
 {% endblock content %}

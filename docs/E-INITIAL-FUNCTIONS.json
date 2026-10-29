@@ -1,0 +1,51 @@
+{
+  "contract_version": "e-initial-functions/1",
+  "schema_baseline": "v1.3 PortableAuth",
+  "status": "review_required",
+  "functions": [
+    {
+      "function_code": "sys.departments",
+      "function_name": "部門管理",
+      "category": "系統管理",
+      "route": "/system/departments",
+      "actions": [
+        "create",
+        "edit",
+        "view"
+      ],
+      "app_scope": "admin",
+      "is_active": false
+    },
+    {
+      "function_code": "sys.features",
+      "function_name": "功能目錄",
+      "category": "系統管理",
+      "route": "/system/features",
+      "actions": [
+        "create",
+        "edit",
+        "view"
+      ],
+      "app_scope": "admin",
+      "is_active": false
+    },
+    {
+      "function_code": "sys.department-permissions",
+      "function_name": "部門功能設定",
+      "category": "系統管理",
+      "route": "/system/departments/{department_id}/permissions",
+      "actions": [
+        "edit",
+        "view"
+      ],
+      "app_scope": "admin",
+      "is_active": false
+    }
+  ],
+  "pending_domains": [
+    "finance",
+    "procurement",
+    "accounts",
+    "knowledge"
+  ]
+}

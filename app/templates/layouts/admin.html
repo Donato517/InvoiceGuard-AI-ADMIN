@@ -1,7 +1,7 @@
 {#
   @template layouts/admin.html
-  @description 後台預設版型：左側選單 + 頁首（頁面標題、管理者名稱、登出）+ 內容。需登入的頁面繼承此檔。
-  @block content 頁面主要內容（頁首標題沿用 title block）
+  @description 後台預設版型：左側選單 + 頁首（管理者名稱、工程師標籤、登出）+ 內容。需登入的頁面繼承此檔。
+  @block content 頁面主要內容
 #}
 {% extends "base.html" %}
 {% block body %}
@@ -9,16 +9,28 @@
     {% include "partials/sidebar.html" %}
     <div class="admin-layout__main">
       <header class="app-header">
-        <h1 class="app-header__title">{{ self.title() }}</h1>
-        {% if request.state.admin is defined %}
-          <span class="app-header__user">{{ request.state.admin.display_name }}</span>
-        {% endif %}
-        <form method="post" action="/logout" data-confirm="確定要登出嗎？">
-          <button type="submit" class="btn">登出</button>
-        </form>
+        <div class="app-header__account">
+          <span class="app-header__user">{{ request.state.admin.display_name if request.state.admin is defined else "樣式預覽管理員" }}</span>
+          <span class="badge badge--gray">工程師</span>
+          {% include "partials/header_department_picker.html" %}
+          {% if request.state.admin is defined or request.state.e_welcome_authenticated is defined or request.state.e_configuration_authenticated is defined %}
+            <form method="post" action="/logout" data-confirm="確定要登出嗎？">
+              <button type="submit" class="btn btn--secondary btn--small">登出</button>
+            </form>
+          {% endif %}
+        </div>
       </header>
       <main class="admin-layout__content">
-        {% block content %}{% endblock %}
+        <div class="content">
+          {% block setup_notice %}
+            {% if request.state.e_local_setup is defined and request.state.e_local_setup %}
+              <p class="alert alert--danger" role="status">
+                本機初始化設定：暫免登入及職務權限檢查。儲存會修改 START 連接的資料庫；目前為團隊正式 DB。這不是已完成正式登入或主管授權的狀態。
+              </p>
+            {% endif %}
+          {% endblock setup_notice %}
+          {% block content %}{% endblock %}
+        </div>
       </main>
     </div>
   </div>

@@ -1,0 +1,33 @@
+/* 歡迎頁：柔和暖色、留白與簡單問候，僅此頁載入。 */
+.e-welcome {
+  min-height: 65vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 0;
+}
+.e-welcome__card {
+  width: 100%;
+  max-width: 800px;
+  padding: clamp(32px, 7vw, 80px) 24px;
+  border: 1px solid #eee9df;
+  border-radius: 28px;
+  text-align: center;
+  background: linear-gradient(155deg, #fffdf8, #f5f8f3);
+}
+.e-welcome__sun { display: block; margin: 0 auto 24px; }
+.e-welcome h2 {
+  margin-bottom: 16px;
+  color: #3f594b;
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.e-welcome__greeting { color: #55645b; line-height: 1.9; }
+.e-welcome__note { margin-top: 12px; color: #6c756e; font-size: 14px; }
+@media (max-width: 700px) {
+  .admin-layout { grid-template-columns: minmax(0, 1fr); }
+  .admin-layout__content { padding: 16px; }
+  .app-sidebar nav { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .app-sidebar__link { padding: 12px 16px; }
+  .e-welcome { min-height: 55vh; }
+}

@@ -1,0 +1,80 @@
+{#
+  @template pages/accounts/list.html
+  @description 正式帳號列表：搜尋、分頁，新增與修改導向獨立內容頁。
+  @route GET /accounts（目前限本機）
+  @context accounts: list[AccountSummary] 當頁帳號資料，不含密碼
+  @context q: str 搜尋文字
+  @context page: int 目前頁碼
+  @context pages: int 總頁數
+  @context total: int 符合總筆數
+  @context message: str 操作成功提示
+  @context error: str 操作失敗提示
+  @context previous_url: str 上一頁網址
+  @context next_url: str 下一頁網址
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}帳號管理{% endblock %}
+{% block content %}
+  <div class="page-heading page-heading--between">
+    <div>
+      <h2>帳號管理</h2>
+      <p class="muted small-text">搜尋與管理系統正式帳號、密碼重設及所屬部門關聯。</p>
+    </div>
+    <a class="btn btn--primary" href="/accounts/new">＋ 新增帳號</a>
+  </div>
+  {% if message %}<p class="alert alert--success" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <section class="card">
+    <div class="toolbar">
+      <h3 class="card__title">帳號清單</h3>
+      <form class="filter-bar" method="get" action="/accounts">
+        <label for="q">Email 或完整 UUID</label>
+        <input id="q"
+               class="search-input"
+               name="q"
+               type="search"
+               value="{{ q }}"
+               maxlength="320"
+               placeholder="輸入 Email 或 UUID…">
+        <button class="btn btn--primary btn--small" type="submit">搜尋</button>
+        <a class="btn btn--secondary btn--small" href="/accounts">清除</a>
+      </form>
+    </div>
+    {% if accounts %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">UUID</th>
+              <th scope="col">Email</th>
+              <th scope="col">狀態</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for account in accounts %}
+              <tr>
+                <td><code>{{ account.user_id }}</code></td>
+                <td>{{ account.email }}</td>
+                <td>
+                  <span class="badge {% if account.account_status == 'active' %}badge--success{% elif account.account_status == 'disabled' %}badge--gray{% endif %}">
+                    {{ '啟用' if account.account_status == 'active' else ('停用' if account.account_status == 'disabled' else account.account_status) }}
+                  </span>
+                </td>
+                <td><a class="btn btn--secondary btn--small"
+   href="/accounts/{{ account.user_id }}/edit">檢視／修改</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <nav class="pagination" aria-label="帳號列表分頁">
+        {% if page > 1 %}<a class="pagination__item" href="{{ previous_url }}">上一頁</a>{% endif %}
+        <span>第 {{ page }}／{{ pages }} 頁，共 {{ total }} 筆</span>
+        {% if page < pages %}<a class="pagination__item" href="{{ next_url }}">下一頁</a>{% endif %}
+      </nav>
+    {% elif not error %}
+      <p class="empty-state">沒有符合的帳號</p>
+    {% endif %}
+  </section>
+{% endblock content %}

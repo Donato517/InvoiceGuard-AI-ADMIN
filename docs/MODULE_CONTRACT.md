@@ -17,6 +17,7 @@ AI 入口見 [AGENTS.md](../AGENTS.md)／[CLAUDE.md](../CLAUDE.md)；
 | 檔案 / CRUD 輸入輸出與 Protocol | 已實作契約，尚無實際業務操作 |
 | 第一階段契約：Storage / FileService / DataService 工廠 | 尚未接線，明確拋出 `ModuleNotReadyError`，不假裝成功 |
 | Vercel 模組（檔案存取） | `integrations/supabase_storage.py`：上傳、下載、列表、移動、刪除；`/dev/files` 為示範 |
+| AI 模組 | `integrations/document_ai.py`：`DocumentAIClient.from_settings().process(content, mime_type, timeout_seconds=None)`；`integrations/gemini.py`：`GeminiClient.from_settings().chat(...)`；`integrations/groq.py`：`GroqClient.from_settings().chat(messages, purpose=..., advanced=..., json_output=..., timeout_seconds=...)`；與 API 相同檔案（2026-10-29），只負責呼叫與解析、不寫 DB，錯誤為固定代碼。ADMIN 尚未接線任何功能 |
 | 遠端 ADMIN 用戶端 | `remote_admin_client.py` 保留，目前沒有呼叫端 |
 | ADMIN 唯讀盤點 JSON 路由 | GET /system/db-inspection，沿用既有登入；本機無法登入，只能在雲端使用（尚未部署），見 [DB_READONLY_PROBE.md](DB_READONLY_PROBE.md) |
 | 業務 JSON 路由、身分接續、部門授權 | 尚未實作；既有登入保護保留 |
@@ -68,7 +69,10 @@ Pydantic 的 SecretStr 遮罩 repr / JSON，不等於加密儲存；勿記錄 `g
 | S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | Supabase S3 金鑰；本機由 START 注入，不在本機機密拒絕清單。`check_configuration("storage")` 仍驗證 SUPABASE_URL／SUPABASE_STORAGE_BUCKET／SUPABASE_SECRET_KEY，不驗證 S3_*；這是第一階段靜態檢查，不是另一個 Storage 模組 |
 | SESSION_SECRET_KEY | ADMIN 雲端 Session 必填機密；至少 32 字元。本機屬禁用機密，因此本機無法登入 |
 | SESSION_MAX_AGE_SECONDS | 1–86400 秒；預設 28800 秒 |
-| GEMINI_API_KEY / OPENAI_API_KEY | 雲端選填；模型服務尚未串接 |
+| GEMINI_API_KEY / GEMINI_MODEL | AI 模組 `integrations/gemini.py` 使用；Key 本機由 START 注入（2026-10-29 核定，LOCAL_INJECTED_FIELDS），模型預設 gemini-3.8-flash |
+| GROQ_API_KEY / GROQ_DEFAULT_MODEL / GROQ_ADVANCED_MODEL | AI 模組 `integrations/groq.py` 使用；Key 本機由 START 注入，模型預設 openai/gpt-oss-20b／openai/gpt-oss-120b |
+| GOOGLE_CLOUD_PROJECT_ID / GOOGLE_CLOUD_LOCATION / DOCUMENT_AI_PROCESSOR_ID / GOOGLE_SERVICE_ACCOUNT_JSON | AI 模組 `integrations/document_ai.py` 使用；服務帳號 JSON 是機密，本機由 START 注入（多行壓成單行） |
+| OPENAI_API_KEY | 雲端選填；未使用，本機仍屬禁用機密 |
 | VERCEL / VERCEL_GIT_COMMIT_SHA | 平台自動提供，不是使用者授權憑證 |
 
 `VERCEL=1` 是部署標記，並非安全認證；不能靠此旗標保護公開端點。

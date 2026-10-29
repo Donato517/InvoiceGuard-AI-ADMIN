@@ -1,5 +1,31 @@
 # AI 協作規範測試報告
 
+## 2026-10-27 ADMIN 登入與取消匿名例外（本批最新）
+
+- 使用者核定 ADMIN 共用桌機／手機登入頁，B／G 尚未提供時先交付 UI 與接點測試；取消 /accounts、/department、/functions、/department-functions 的本機免登入。此決定取代下列早期匿名開放紀錄，部門／主管授權規則不變。
+- 已依附件完成藍色漸層白卡片、手機響應式與安全錯誤回填，未採示範帳密、工程師全權或 web storage 自動登入。四入口及子路由先驗身分／操作，資料 scope、G 可授上限與交易內重驗／journal 未完成仍保持 503，不能以單純登入成功開放原完整資料服務。
+- 初輪全套 1 failed、1062 passed、9 skipped：舊的無效表單測試未給 Origin，新流程先拒絕來源而回 403。補上可信同源前提以驗 400，並另測缺 Origin 仍 403，未放寬正式檢查。
+- 最終完整回歸 1065 passed、9 skipped、1 個既有 TestClient／httpx warning（104.78s，exit 0）；新增 56 個登入／閘門案例。初輪相關 378 passed，補測登入與一般頁面 71 passed（3.53s）。Node 未儲存提醒 7 passed；Ruff lint／121 檔格式、djLint 35 樣板（0 errors）、environment 靜態檢查均通過（connectivity_checked=false）。離線 headless 瀏覽器驗證 1440×900、390×844、320×568 及手機 503 畫面，無橫向溢出、按鈕高度至少 44px、密碼空白，已檢視桌機與手機截圖；不是正式站台端到端驗收。
+- 本批未 Commit／Push、部署、migration 或正式資料操作。正式 B／G／寄信／資料隔離端到端仍未完成，見 [E-LOGIN-ACCESS.md](E-LOGIN-ACCESS.md)。較早匿名操作與驗收紀錄保留為歷史。
+
+
+## 2026-10-27 單一部門權限內容頁（本批最新）
+
+- 原因：原矩陣欠缺搜尋分頁、原因提示、未儲存提醒與儲存前摘要。結論：沿用 /department-functions，完成編輯 → 預覽 → 確認儲存；返回修改保留當頁勾選，提交只更新選定部門的提交列。
+- 預覽與寫入共用驗證，確認時重新取鎖及檢原內容指紋；失敗不假成功、不自動更新舊稿版本。停用／未實作操作可顯示原因，原許可保留並可撤銷；部門停用只讀。
+- 複查發現原儲存確認放在 button，既有 main.js 讀的是 form.dataset.confirm；新流程改放確認表單並以 7 項 Node DOM 替身案例驗證未儲存及取消確認行為。未修改共用 main.js。
+- 相關 Python 測試 114 passed、1 個既有 warning（10.27s）；完整回歸 1009 passed、9 skipped、1 個既有 TestClient／httpx warning（104.11s，exit 0）。新增 32 個 Python 案例；Node 未儲存提醒 7 passed、0 failed（DOM 替身）。跨三站 check_project PASS（0 issues）、Ruff lint／119 檔格式、djLint 34 樣板（0 errors）、environment 靜態檢查通過（connectivity_checked=false）。不連真實 DB 或網路。
+- 本批未 Commit／Push、部署、Schema／migration 變更或正式 DB 讀寫；不新增角色／scope 核心。人工瀏覽器與正式 DB 仍待驗。操作、POST 契約與限制見 [E-DEPARTMENT-PERMISSIONS.md](E-DEPARTMENT-PERMISSIONS.md)。
+
+
+## 2026-10-27 功能管理列表／內容頁（本批最新）
+
+- 原因：舊 /functions 混合新增及逐筆修改，缺少列表操作與內容頁。結論：拆成搜尋／平台與狀態篩選／二十筆分頁列表，以及新增、編輯、獨立停用／恢復的內容頁；儲存與取消保留列表條件。
+- 字典代碼固定、衝突拒絕覆寫，停用保留授權。只改功能管理；原有部門、帳號、矩陣與 B／G 規則沒有新增變更。本批未 Commit／Push、部署或操作正式 DB。
+- 功能管理 82 passed、1 個既有 warning（3.18s）；完整回歸 977 passed、9 skipped、1 個既有 TestClient／httpx warning（102.01s，exit 0）。跨三站 check_project PASS（0 issues）、Ruff lint／118 檔格式、djLint 32 樣板（0 errors）、environment 靜態檢查均通過；connectivity_checked=false。未連正式 DB／網路、未升級套件；實際瀏覽器及正式資料操作仍待人工驗收。
+- 入口、路由、限制及人工待驗見 [E-FUNCTION-LIST-DETAIL.md](E-FUNCTION-LIST-DETAIL.md)。較早紀錄保留為歷史。
+
+
 ## 2026-10-23 範圍
 
 本輪建立三站 AI 規範入口、文件對齊、標準函式庫契約／分層檢查與無密鑰測試。保留既有未提交變更；未實作 CRUD／Storage、未啟動服務／Tunnel、未部署／migration／操作正式資料、未 Commit／Merge／Push。
@@ -1045,3 +1071,144 @@ STARTUP 42 筆清單只在讀取時處理 CRLF 並核對路徑與雜湊，原檔
 
 - `tests/unit/test_dev_files.py` 40 個：AWS SigV4 get-vanilla 參考向量、path-style 簽章與 payload hash、列表分頁與 XML、下載／移動（複製失敗不刪原檔）／刪除、403／404／415／500 與網路錯誤代碼、缺設定；service 兩類別不同路徑、各種拒絕、名稱與資料夾不可越界；路由 404（雲端）、兩個上傳表單、上傳→下載→移動→刪除、錯誤重繪、跨站寫入 403。
 - 完整 pytest 629 passed／9 skipped（含先前受 Smart App Control 影響的 3 個測試）；check_project 單站／跨站 PASS；Ruff check／format 83 檔、djLint 16 檔 0 錯誤。真 START 實測見 STARTUP TEST_REPORT。
+
+## 2026-10-27 06_E 第一批程式
+
+ADMIN 基準 2b69083，本機 codex/06e-admin-v13。全套 pytest：731 passed、9 skipped、1 warning，98.00s；相較基準新增 70 個 E 離線案例。另通過跨站 check_project（0 issues）、Ruff lint／format（99 檔）、djLint（23 檔、0 errors）、環境靜態驗證（connectivity_checked=false）。
+
+原始 E-T01～T10 的本批替身證據與正式未驗範圍見 [E-IMPLEMENTATION-RESULTS.md](E-IMPLEMENTATION-RESULTS.md)。沒有正式 DB／網路連線、寄信或部署驗證；既有 TestClient／httpx 警告保留，不把 9 skipped 算通過。
+
+## 2026-10-27｜06_E 第二批最新更新
+
+依使用者指定四項優先順序完成 E02 有效部門／功能／逐操作 scope、E01 零功能拒絕與完整 registry 接點、E04／E05 失敗情境補驗及 E07 初始審查清單。細節與限制見 [E-PHASE2-RESULTS.md](E-PHASE2-RESULTS.md)；新增的 AccessPort.effective_access 必要方法及接入規範見 [E-ACCESS-CONTRACT.md](E-ACCESS-CONTRACT.md)；清單見 [E-INITIAL-FUNCTIONS.json](E-INITIAL-FUNCTIONS.json)。
+
+E 專屬 126 passed（新增 56）；完整回歸 787 passed、9 skipped、1 warning，99.75s。跨三站 checker PASS、0 issues；Ruff lint／102 檔格式、djLint 24 樣板及 environment 靜態檢查通過。只用合成資料與封鎖外部服務 fixture，未驗正式 PostgreSQL／寄信／B／G；get_e_module 未接線仍拒絕，登入 503 並未因本批補強而解除。
+
+本人仍只改顯示名稱；職務必須明確允許、系統管理資格與 scope 分開驗。財務專用 Capability 只在測試提供，未新增正式財務權限。目錄負例涵蓋修改重複代碼、查無資料、輸入、停用、版本、回滾與去敏；完整 E-T01～T10 正式整合及其他組初始功能仍待共同接點，未將離線通過改列正式驗收。
+
+本批以目前 D:\2026102001 的 codex/06e-admin-v13／dcad25e 為起點。使用者隨後授權本機 Commit 保存成果並整合 feature/admin-accounts-departments，且先封閉該分支的本機匿名入口；不 Push、不操作正式資料。後續整合狀態另記，不覆蓋前述歷史證據。
+
+## 2026-10-27｜整合最新 main，保留 E 與暫停匿名入口
+
+使用者最終指定 main；fetch 後為 cee8dd8，已含帳號／部門與多部門設定。先以 b392653 保存 E 第二批，再在暫存目錄準備 main 合併；唯一狀態文件衝突保留雙方歷史。使用者另明確核定：來源 /accounts 與 /department 匿名入口暫停，核定本機亦回 503，雲端／不可信來源原 404 保留；真實身分／職務／scope／journal 接妥前不開放。
+
+E 與來源程式、模板、repository 及交易測試保留。新增 12 個未覆寫閘門的預設拒絕案例，確認不呼叫業務服務；來源業務測試 fixture 明確且僅於測試覆寫待接線閘門，仍測本機／同源限制，沒有更改共用封網 fixture。
+
+暫存 E＋來源案例 228 passed；完整離線 888 passed、10 skipped、1 warning，135.37s。Ruff 113 檔、djLint 28 樣板、靜態 checker／environment 通過；main 暫存版本與已測試版本的程式／測試／設定逐檔核對相同。D 槽最終結果另更新。
+
+沒有操作正式資料、部署或 Push。合併取得的是程式，不會自動解決登入 503，亦不代表角色來源、DB schema、RLS、正式多部門或 E-T01～T10 已驗收。後續接點及 E／來源部門規則差異見 [E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md](E-INTEGRATION-ACCOUNTS-DEPARTMENTS.md)。
+
+### main 合併最終確認（2026-10-27）
+
+D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit 0；跨三站 checker PASS（0 issues），Ruff lint／113 個檔案格式、djLint 28 樣板及環境靜態檢查通過。所有測試使用既有封網 fixture；未執行正式 DB 操作。
+
+目前工作分支仍是 codex/06e-admin-v13，origin/main（cee8dd8）已包含在本機歷史。E 成果保留，新帳號／部門匿名入口封閉；未 Push。登入 503 仍須正式 B／G／journal 接線，不能以此次 Git 合併宣稱解除。
+
+## 2026-10-27｜E 本機功能頁與部門模式（第三批）
+
+- 使用基準：目前 D:\2026102001 的 codex/06e-admin-v13、0ddca22（已含 main）。保留目前分支；本批不 Commit／Push／Merge，不操作正式資料。
+- 使用者新核定：目前指定頁暫免登入；限本機 loopback／Host／模式，雲端 404。使用正式 DB，由使用者點擊操作；代理只用封網替身。有效部門成員繼承所選部門基本功能，不聯集多部門。主管可管理本部門與外部部門，但限負責或明確委派功能，操作及資料 scope 分開。
+- 新增 /functions 與 /department-functions 的 schema、固定 SQL repository、交易服務、SSR／表單；重開 main 的 /accounts、/department 本機入口，保留原 Host／peer／同源限制；部門列表加入功能設定連結。不是 /dev 串接，沒有另建會員或角色核心。
+- 字典新增不授權；未知能力只存停用草稿。矩陣只更新提交列、保留其他列；撤銷保存 false 不硬刪除。短交易檢內容指紋、完整可見性與鎖定；任何失敗 rollback，機密例外固定化。指紋不冒充正式 audit／journal CAS。
+- Decision 增 department_effect，預設 unresolved 拒絕。一般功能依所選部門，管理能力另驗明確 role_effect／scope；系統部門／字典維護仍須 system_management。部門功能授權的固定 Capability.system_only=False，讓受委派主管無須系統管理資格，但仍受 G delegable 上限及目標限制。
+- 實測：相關 249 passed、1 warning，6.84s；主管邊界補測 E／新頁／registry 159 passed、1 warning，9.81s。最終完整回歸：936 passed、9 skipped、1 warning，126.10s，exit 0。跨三站 checker PASS（0 issues）、Ruff lint／118 檔格式、djLint 30 樣板（0 errors）、environment configuration_valid=true、connectivity_checked=false。
+- 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
+- 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
+
+
+## 2026-10-28 本機初始化設定與歡迎頁
+驗證完成（2026-10-28）：完整離線回歸 1107 passed、9 skipped、1 個既有 TestClient/httpx warning（124.13s）；新增 42 項本機模式案例。三站 checker PASS（0 issues）、Ruff lint 及 122 檔格式檢查通過，36 個樣板 lint 0 errors。本機 /welcome 實測 HTTP 200、設定模式提示及固定連結正常，no-store；此頁不查 DB。正式 DB 的功能列表／儲存留由使用者操作，未由代理讀寫。初輪新增測試誤用布林 VERCEL，已改為設定模型要求的字串；補齊歡迎頁新增功能捷徑後完整回歸通過。未 Commit／Push。
+
+## 2026-10-28 部門內容與授權整合
+驗證完成（2026-10-28）：相關回歸 247 passed；最終完整離線回歸 1109 passed、9 skipped、1 個既有 TestClient/httpx warning（116.61s，exit 0）。跨三站 checker PASS（0 issues）、Ruff lint 通過、124 檔格式通過、34 個樣板 lint 0 errors。以合成資料及封鎖外部服務的 fixture 產生內容頁，再用全請求攔截／offline headless 驗證 1440、900、390 寬度：整頁無橫向溢出、8 個獨立操作控制項、無舊入口、儲存按鈕至少44px；已檢視 panel/mobile 截圖。僅為離線視覺與替身交易驗證，未操作正式 DB／帳號或儲存；未 Commit／Push。
+
+## 2026-10-28 功能目錄啟用修正
+驗證完成（2026-10-28）：相關回歸 263 passed；完整離線回歸 1116 passed、9 skipped、1 個既有 TestClient/httpx warning（110.54s，exit 0）。新增 accounts 三平台啟用／停用及正式 registry 仍拒絕案例；保留版本、同源、雲端關閉與不自動授權測試。三站 checker PASS（0 issues）、Ruff lint 及格式檢查通過、34 個樣板 lint 0 errors。未對正式 DB 重現或自動啟用任何資料，由使用者重新開啟內容頁後操作；未 Commit／Push。
+
+## 2026-10-28 內建歡迎頁與固定登入首頁
+驗證完成（2026-10-28）：相關離線回歸 379 passed；加入全域資料／自訂寫入能力拒絕案例後，完整回歸 1142 passed、9 skipped、1 個既有 TestClient/httpx warning（115.03s，exit 0）。Ruff lint 通過，三站 checker PASS（0 issues），34 個樣板 lint 0 errors。部門內容頁以合成資料及封鎖外部服務的 fixture 重繪，離線 headless 驗證 1440／900／390 寬度均無整頁橫向溢出，已檢視面板版固定歡迎列。維持 LOCAL_SETUP_ENABLED=True，未指定或自動建立管理員，未驗證正式 B／G、未操作正式 DB，未 Commit／Push。
+
+## 2026-10-28 部門授權批次勾選
+驗證完成（2026-10-28）：相關 Python 回歸 122 passed、1 個既有 TestClient/httpx warning；實際 DOM 離線瀏覽器測試 9 passed、0 skipped（19.76s），涵蓋部分勾選同步、整列／整頁、disabled、reset／pageshow、JS 關閉、blocked 表單及無自動送出。1000／390 寬度六欄對齊、整頁無橫向溢出，已檢視合成畫面。三站 checker PASS（0 issues）、Ruff lint／125 檔格式通過、34 樣板 lint 0 errors。未重跑全套業務回歸；本次只改前端互動，原後端授權／交易不變。未讀寫正式 DB、未 Commit／Push。
+
+## 2026-10-28 系統管理獨立指派契約
+
+- 範圍：Decision.authorization_basis、共用逐操作 guard 與有效權限投影、AccessPort 接點文件及合成回歸案例。管理指派不受部門矩陣限制；業務功能仍依所選部門，沒有全權布林捷徑。
+- 相關離線：240 passed、1 個既有 Starlette/httpx warning，6.72s。
+- 完整離線：1154 passed、9 skipped、1 個既有 Starlette/httpx warning，118.40s，exit 0。
+- Ruff lint 與 125 個 Python 檔格式檢查通過；三站結構 checker PASS（0 issues）；git diff --check 無問題。未修改樣板，未重跑視覺驗證。
+- 使用既有阻擋正式 DB／網路 fixture；未建 Session、未做真實登入／交接、未寫入正式資格或變更 Schema，LOCAL_SETUP_ENABLED 仍為 True。系統管理持久來源與交接流程未實作，不能將本結果視為已上線。
+- 規格與跨組待辦：E-SYSTEM-MANAGEMENT.md。無 Commit／Push／部署。
+
+## 2026-10-28 登入至歡迎頁的管理資格生命週期驗證
+
+原因：使用者詢問是否可繼續登入權限開發，需驗證前批獨立管理指派在真實 E 路由是否一致。結論：補測 POST /login 發 Cookie／固定 /welcome、管理選單依獨立指派呈現、同 Cookie 管理資格撤銷後歡迎頁仍可讀但管理入口 403、B 撤銷後重新登入、僅查看不得 POST 修改。既有無功能登入案例改用沒有系統管理資格的合成有效員工。未覆寫配置 pending guard，不把其 503 當作正式功能開通。
+
+相關離線回歸 242 passed、1 個既有 Starlette/httpx warning（6.57s）；測試檔 Ruff lint 通過。本批僅修改 tests/unit/test_e_login_access.py 與文件，應用程式不變；未重跑完整套件（前批完整結果為 1154 passed、9 skipped）。沒有真實登入、正式 DB 操作、Session 建立或資格指派，LOCAL_SETUP_ENABLED=True 不變；未 Commit／Push。正式接線前置仍為 B ADMIN Session 用途與撤銷、G 明確管理指派／逐操作 scope、交易內重驗與稽核，見 E-SYSTEM-MANAGEMENT.md。
+
+## 2026-10-28 最新簡單登入流程（取代前批角色設計）
+
+- 完整離線：1170 passed、9 skipped、1 個既有 Starlette/httpx warning；117.69s，exit 0。
+- 相關第一次新規格回歸 26 failed／409 passed：舊角色資格與未組裝來源假設已被使用者否決；更新相應案例後相關 446 passed（19.56s）。獨立勾選調整後登入核心 210 passed（8.73s），再執行以上完整回歸。
+- 質量檢查：Ruff lint、129 檔格式、三站 checker PASS（0 issues）、34 個樣板 lint（0 errors）、git diff --check 通過。
+- 新實際 repository SQL／Session／HTTP 整合測試使用合成資料，驗證帳密成功／錯誤、停用與離職、無部門、無功能僅歡迎、勾選變更、前台限定／停用功能、獨立新增、Session 竄改／到期／憑證版本變更、登出。實際配置頁以本批 adapter 通過 guard，保留交易內重驗；沒有把 guard 覆寫成成功。
+- SQL 行為證據：登入成功只更新 last_login_at，未 INSERT／UPDATE user_sessions、角色、授權或其他表；失敗及登出沒有 DB 寫入。Cookie 不包含密碼／雜湊／密鑰，不使用 web storage。
+- 團隊來源唯讀：7 有效員工中 6 有目前配置許可、1 僅歡迎，另 1 帳號停用。真正 READ ONLY 交易，沒有驗正式密碼、發 Cookie 或更新登入紀錄。
+- 本機 HTTP：透過 127.0.0.1:8080 與原 ADMIN Host 驗證 /login=200、no-store；/welcome、/accounts、/department、/functions 都是 303 至登入。初次 OS 解析 .localhost 未成功，loopback＋Host 驗證正常；沒有變更 DNS／hosts。
+- LOCAL_SETUP_ENABLED=False，初始管理員與個別管理指派設計已移除；API 沒有遺留本批 Schema 草案。未改 Schema、部署、Commit 或 Push。正式帳密登入及操作留由使用者以自己的密碼驗證，不要求提供密碼。
+
+## 2026-10-28 側欄登出
+
+- 在「帳號管理」下一項放置共用 POST /logout 表單，按原生側欄樣式呈現；無帳號管理許可時在側欄末端提供。
+- 延伸既有整合測試驗證：歡迎頁／配置頁順序、只出現一個側欄登出、POST 方法、僅歡迎頁使用者仍可登出、清 Cookie 後回登入頁且不寫 DB。
+- 相關 132 passed、1 個既有 Starlette/httpx warning，8.11s；35 樣板 lint 0 errors、Ruff lint／測試格式、三站 checker PASS（0 issues）、git diff --check 通過。
+- 僅樣板、CSS、既有測試與文件變動，沿用既有登出服務；未重跑完整套件，未操作正式帳號或 DB，未 Commit／Push。
+
+
+## 2026-10-28 側欄登出外觀修正
+
+原因：原生灰色按鈕與側欄不一致，舊 ?v=dev 樣式快取可重現。結論：本機資源版本隨檔案變動，登出 reset 與側欄一致；保留原 POST /logout。驗證完成：實際離線瀏覽器 6 passed、0 skipped（11.97s），可重現舊快取；歡迎／工作台在 1440 與 390 寬度的字體、padding、色彩、行高相同，桌機控制項寬度／左右對齊／高度誤差不超過 1px，hover／鍵盤焦點及 POST 登出通過。已檢視桌機及手機合成截圖。相關 Python 回歸 132 passed、1 個既有 warning（8.67s）；Ruff lint／格式、三站 checker PASS（0 issues）、git diff --check 通過。未重跑完整套件、未操作正式 Cookie／DB、未 Commit／Push。
+
+## 2026-10-28 取消所屬部門後重登診斷
+
+- 正式來源唯讀確認取消已成功：資訊部關聯非現行、採購部與主要部門保留，無外鍵阻擋。採購部未勾三配置功能，另有三聯式發票四操作設定但目前業務入口未接線。
+- 只補合成回歸與說明，沒有更改應用程式、替帳號加權或新增功能，也沒有正式 DB 寫入。
+- 相關回歸 45 passed、1 個既有 warning，6.08s。初輪測試 Cookie 網域不一致導致 1 failed／44 passed；修正測試後通過。未重跑完整套件。
+
+
+## 2026-10-28 部門授權動態側欄驗證
+
+- 登入、操作驗權與 E 頁面相關離線測試：219 passed，1 個既有 Starlette／httpx warning（13.12s）。新增 8 個案例涵蓋登入後新功能即顯示、撤銷即移除、停用／前台限定／無授權／所屬失效、未知代碼與 HTML 名稱、四操作不互推及僅業務功能帳號。
+- 實際瀏覽器離線 DOM：8 passed、0 skipped（17.61s）；1440px／390px 檢查待接線名稱、無任意連結、無橫向溢出、原生登出及側欄樣式。已檢視 tmp/sidebar-logout/catalog-1440.png 與 catalog-390.png，僅為合成測試資料。
+- 初輪手機測試發現 flex 預設 stretch 使同列帳號選項被待接線文字拉高；調整 align-items 後重測通過，未放寬幾何檢查。
+- Ruff lint／format、djLint（36 樣板、0 errors）、離線專案檢查與 diff --check 通過。未進行正式 DB 寫入、真實帳號登入、部署或 Git 上傳；發票頁面與逐操作服務接線仍待該功能實作後驗收。
+
+
+### 本批補充回歸結果
+
+- 額外執行既有本機配置、功能列表／內容、部門矩陣與帳號部門測試：最終 197 passed，1 個既有 warning（6.24s）；連同登入與 E 驗權 219 項，本批共 416 項相關 Python 測試通過，另有 8 項實際瀏覽器測試通過。這是相關測試，並非本批重跑整個專案全部測試。
+- 擴充回歸初輪 2 failed、195 passed：兩個歷史測試把「沒有額外 Session／列表沒有修改表單」寫成整頁不得有登出 POST，與先前已核定側欄登出衝突。保留不產生 Cookie 的原檢查，補驗側欄原生 POST 登出，並將禁止修改表單的範圍限定在 main 列表內容；正式權限與寫入 guard 未放寬。
+- 最終 Ruff lint／format、djLint、離線專案檢查通過。開發紀錄已寫回專案；未 Commit／Push 或修改正式資料。
+
+
+## 2026-10-28 整批交付前完整回歸
+
+- 1179 passed、9 skipped、1 個既有 warning（124.82s）；這是整合最新 main 前的 E 工作樹。側欄瀏覽器離線驗證 8 passed。交付說明見 [E-DELIVERY-20261028](E-DELIVERY-20261028.md)，合併後測試另行記錄。
+
+
+## 2026-10-28 最新 main 整合後驗證
+
+- 整合後完整離線回歸 1193 passed、9 skipped、1 個既有 Starlette／httpx warning（197.25s）
+- 部門全選與側欄桌機／手機實際瀏覽器離線 DOM：17 passed、0 skipped（50.00s）。
+- Ruff lint／format、djLint（49 樣板、0 errors）、跨站專案契約檢查通過；Git 合併沒有文字衝突。來源 main 的 JS 尾端多餘空白行已清理，無功能變動。
+- 保留來源 main 1105460 的發票流程、知識庫及儀表板；移除舊固定本機 Session 金鑰預設，E 登入維持核定的目前部門授權流程。
+- 準備上傳 codex/06e-login-department-20261028，PR 目標 main。上傳／PR／合併實際結果以 GitHub 為準；未修改正式資料或雲端環境設定。
+
+## 2026-10-29 Claude：ADMIN 加入 AI 模組（START 注入）
+
+- 使用者核定：ADMIN 也使用 AI 模組，START 必須注入 ADMIN。範圍只有模組與設定，不建任何功能或端點。
+- 程式：app/integrations/document_ai.py、gemini.py、groq.py、chat_models.py 自 API 複製（逐位元組相同）；config.py 新增 GEMINI_MODEL、GROQ_API_KEY、GROQ_DEFAULT_MODEL、GROQ_ADVANCED_MODEL、GOOGLE_CLOUD_PROJECT_ID、GOOGLE_CLOUD_LOCATION、DOCUMENT_AI_PROCESSOR_ID、GOOGLE_SERVICE_ACCOUNT_JSON，以及 LOCAL_INJECTED_FIELDS（DATABASE_URL、GEMINI_API_KEY、GOOGLE_SERVICE_ACCOUNT_JSON、GROQ_API_KEY），本機能力檢查與啟動檢查都只放行這四項，SESSION_SECRET_KEY／SUPABASE_SECRET_KEY／OPENAI_API_KEY 仍拒絕；共用 environment.py 未修改。requirements 加 httpx==0.28.1、google-auth==2.62.0；.env.example 同步。
+- ADMIN venv 安裝 google-auth 2.62.0（帶入 cryptography 50.0.2），實際 import 與 google.auth.crypt 載入成功，Smart App Control 未封鎖。
+- 測試：自 API 複製 test_document_ai／test_gemini／test_groq（合成值、MockTransport，不連網）；test_module_config 新增 START 注入的 AI 設定可在本機使用、模型預設值、Groq／服務帳號不外洩，原「本機拒絕機密」改為不含 GEMINI_API_KEY；test_environment 的繼承機密測試改以 LOCAL_INJECTED_FIELDS 判斷；conftest 設定名稱清單補 AI 欄位；新增與 API 相同的 test_shared_integrations（五個共用 integration 檔兩站逐位元組比對，單站 checkout 時 skip）。
+- 驗證：check_project（--project-root）PASS；pytest 1304 passed、9 skipped；ruff check／format --check、environment --check 通過。
+- 未驗證：實際呼叫 Google／Groq（ADMIN 尚無功能，也未注入真實值測試）；Vercel ADMIN 專案尚未設定六項 AI 設定（需使用者在 Vercel 設定）；ADMIN 函式上限仍為 30 秒。

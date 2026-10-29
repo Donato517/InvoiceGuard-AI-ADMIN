@@ -1,0 +1,19 @@
+{#
+  @template partials/header_department_picker.html
+  @description 頁首右上角切換部門下拉選單（位於登出左側），供使用者／開發人員快速切換所屬部門視角。
+#}
+{% if request.state.header_departments is defined and request.state.header_departments %}
+  <form class="department-picker" method="post" action="/switch-department">
+    <input type="hidden" name="next" value="{{ request.url.path }}">
+    <label for="header-switch-department">切換部門</label>
+    <select id="header-switch-department"
+            name="switch_department_id"
+            class="form-select"
+            data-auto-submit>
+      {% for department in request.state.header_departments %}
+        <option value="{{ department.department_id }}"
+                {% if department.department_id == request.state.header_selected_department_id %}selected{% endif %}>{{ department.department_code }}－{{ department.department_name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+{% endif %}

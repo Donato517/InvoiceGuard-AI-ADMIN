@@ -13,13 +13,34 @@ SITE_NAME = SITE_NAMES["ADMIN"]
 # 存放已簽署登入資料的 cookie（httpOnly）；與前台的 ig_session 分開
 SESSION_COOKIE_NAME = "ig_admin_session"
 
+# 管理站內建首頁，不依賴部門矩陣的可選勾選。
+WELCOME_CODE = "welcome"
+WELCOME_PATH = "/welcome"
+
 # 側欄選單：(顯示文字, 網址)；新增頁面時同步更新
 MENU_ITEMS: list[tuple[str, str]] = [
+    ("歡迎頁", WELCOME_PATH),
     ("儀表板", "/dashboard"),
     ("發票審核", "/invoices"),
-    ("使用者管理", "/users"),
+    ("知識庫管理", "/knowledge"),
+    ("帳號管理", "/accounts"),
+    ("部門管理", "/department"),
+    ("功能管理", "/functions"),
     ("排程紀錄", "/system/job-runs"),
     ("稽核紀錄", "/system/audit-logs"),
+]
+
+# 發票作業 9 個步驟（對應 HTML 原型 STEPS）
+INVOICE_FLOW_STEPS: list[str] = [
+    "採購上傳發票",
+    "AI OCR 辨識",
+    "採購核對修正",
+    "系統自動檢核",
+    "財務審核",
+    "產生申報檔",
+    "匯入國稅局軟體",
+    "自動產生傳票",
+    "匯出結果",
 ]
 
 # 發票狀態 → 顯示文字（對應 app.db.models.invoice.InvoiceStatus）

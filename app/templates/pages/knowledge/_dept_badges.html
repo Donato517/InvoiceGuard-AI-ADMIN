@@ -1,0 +1,30 @@
+{#
+  @template pages/knowledge/_dept_badges.html
+  @description 部門選用標籤片段（HTML 原型 usageTags）：點擊切換該部門是否選用；唯讀或狀態未知時停用。
+  @context badges: list[dict]  [{id, name, state, can_toggle}]，state 為 on / off / unknown
+  @context toggle_url: str     切換用的 POST 網址（知識庫或文件各自不同）
+  @context target: str         HTMX 要替換的容器 id（例：dept-badges-12）
+#}
+<div id="{{ target }}" class="dept-list">
+  {% for badge in badges %}
+    <form method="post"
+          action="{{ toggle_url }}"
+          hx-post="{{ toggle_url }}"
+          hx-target="#{{ target }}"
+          hx-swap="outerHTML">
+      <input type="hidden" name="department_id" value="{{ badge.id }}">
+      <input type="hidden"
+             name="enable"
+             value="{{ 'false' if badge.state == 'on' else 'true' }}">
+      <button type="submit"
+              class="dept-badge {% if badge.state == 'on' %}dept-badge--on{% elif badge.state == 'unknown' %}dept-badge--pending{% endif %}"
+              aria-pressed="{{ 'true' if badge.state == 'on' else 'false' }}"
+              {% if badge.state == 'unknown' or not badge.can_toggle %}disabled{% endif %}
+              title="{% if badge.state == 'unknown' %}尚未確認狀態{% elif not badge.can_toggle %}此部門唯讀{% elif badge.state == 'on' %}點擊取消此部門選用{% else %}點擊讓此部門選用{% endif %}">
+        {{ badge.name }}{% if badge.state == "unknown" %} · 待確認{% endif %}
+      </button>
+    </form>
+  {% else %}
+    <small class="muted">目前沒有部門選用</small>
+  {% endfor %}
+</div>

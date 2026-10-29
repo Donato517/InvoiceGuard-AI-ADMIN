@@ -1,0 +1,89 @@
+/* ==========================================================================
+   頁面樣式：知識庫管理（pages/knowledge/*.html）
+   對應 HTML 原型：.department-badge / .qa-tabs / .batch-results / .content-editor / .content-frame
+   ========================================================================== */
+
+.tab-bar {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+.tab-bar__item {
+  padding: 0.625rem var(--space-4);
+  font-size: var(--font-size-md);
+  color: var(--color-btn-secondary-text);
+  background-color: var(--color-btn-secondary-bg);
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.tab-bar__item--active {
+  color: var(--color-bg);
+  background-color: var(--color-primary);
+}
+
+/* ---- 部門選用標籤（原型 .department-badge）---- */
+.dept-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.dept-badge {
+  padding: 0.3125rem 0.625rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-neutral-soft-text);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--color-neutral-soft);
+  border: 1px solid var(--color-dept-badge-border);
+  border-radius: var(--radius-pill);
+}
+
+.dept-badge--on {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
+  border-color: var(--color-dept-badge-on-border);
+}
+
+.dept-badge--pending {
+  color: var(--color-dept-badge-pending-text);
+  background-color: var(--color-dept-badge-pending-bg);
+}
+
+.dept-badge:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.batch-results {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.batch-results div {
+  padding: 0.3125rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.content-editor {
+  width: 100%;
+  min-height: 26.875rem;
+  font-family: ui-monospace, monospace;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.content-frame {
+  width: 100%;
+  height: 65vh;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}

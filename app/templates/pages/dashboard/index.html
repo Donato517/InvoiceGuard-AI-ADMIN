@@ -1,28 +1,120 @@
 {#
   @template pages/dashboard/index.html
-  @description 儀表板：今日上傳數、待複核數、高風險發票數、最近排程狀態。
+  @description 儀表板：今日上傳數、待複核數、高風險發票數、已完成發票與待辦審核發票清單。
   @route GET /dashboard（需管理者登入）
+  @context summary: dict            統計數字 {today_uploaded, pending_review, high_risk, completed}
+  @context pending_invoices: list   待處理發票
+  @context completed_invoices: list 已完成發票
 #}
 {% extends "layouts/admin.html" %}
 {% block title %}儀表板{% endblock %}
+{% block head %}
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
 {% block content %}
-  {# TODO(JerryChien): 由 dashboard_service 提供 summary，取代下方的 "-" #}
+  <div class="page-heading page-heading--between">
+    <div>
+      <h2>作業總覽</h2>
+      <p class="muted small-text">查看已完成與待處理的發票審核作業。</p>
+    </div>
+    <a href="/invoices/new" class="btn btn--primary">＋ 新增發票</a>
+  </div>
   <div class="stat-grid">
     <section class="stat-card">
       <h2 class="stat-card__label">今日上傳</h2>
-      <p class="stat-card__value">-</p>
+      <p class="stat-card__value">{{ summary.today_uploaded if summary else "-" }}</p>
     </section>
-    <section class="stat-card">
+    <section class="stat-card stat-card--warning">
       <h2 class="stat-card__label">待人工複核</h2>
-      <p class="stat-card__value">-</p>
+      <p class="stat-card__value">{{ summary.pending_review if summary else "-" }}</p>
     </section>
-    <section class="stat-card">
+    <section class="stat-card stat-card--danger">
       <h2 class="stat-card__label">高風險發票</h2>
-      <p class="stat-card__value">-</p>
+      <p class="stat-card__value">{{ summary.high_risk if summary else "-" }}</p>
     </section>
-    <section class="stat-card">
-      <h2 class="stat-card__label">最近排程</h2>
-      <p class="stat-card__value">-</p>
+    <section class="stat-card stat-card--success">
+      <h2 class="stat-card__label">已完成審核</h2>
+      <p class="stat-card__value">{{ summary.completed if summary else "-" }}</p>
     </section>
   </div>
+  {% if pending_invoices %}
+    <section class="card">
+      <div class="toolbar">
+        <h2 class="card__title">待辦發票審核</h2>
+        <a href="/invoices" class="btn btn--secondary btn--small">查看全部發票 →</a>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">發票號碼</th>
+              <th scope="col">開立日期</th>
+              <th scope="col">品名項目</th>
+              <th scope="col">金額</th>
+              <th scope="col">狀態</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in pending_invoices %}
+              <tr>
+                <td>
+                  <a href="/invoices/{{ inv.id }}">{{ inv.invoice_number }}</a>
+                </td>
+                <td>{{ inv.invoice_date }}</td>
+                <td>{{ inv.item_description }}</td>
+                <td>{{ inv.total_amount | currency }}</td>
+                <td>
+                  <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                </td>
+                <td>
+                  <a href="/invoices/{{ inv.id }}/flow?step={{ inv.stage if inv.stage else 4 }}"
+                     class="btn btn--primary btn--small">進入審核作業 →</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+  {% if completed_invoices %}
+    <section class="card">
+      <h2 class="card__title">已完成發票</h2>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">發票號碼</th>
+              <th scope="col">開立日期</th>
+              <th scope="col">品名項目</th>
+              <th scope="col">金額</th>
+              <th scope="col">狀態</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in completed_invoices %}
+              <tr>
+                <td>
+                  <a href="/invoices/{{ inv.id }}">{{ inv.invoice_number }}</a>
+                </td>
+                <td>{{ inv.invoice_date }}</td>
+                <td>{{ inv.item_description }}</td>
+                <td>{{ inv.total_amount | currency }}</td>
+                <td>
+                  <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                </td>
+                <td>
+                  <a href="/invoices/{{ inv.id }}/flow?step=9"
+                     class="btn btn--secondary btn--small">檢視</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
 {% endblock content %}

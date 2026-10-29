@@ -68,10 +68,7 @@
                           action="/dev/files/{{ section.key }}/move"
                           hx-post="/dev/files/{{ section.key }}/move">
                       <input type="hidden" name="name" value="{{ file.name }}">
-                      <input name="folder"
-                             type="text"
-                             value="archive"
-                             aria-label="目的資料夾（留空為根目錄）">
+                      <input name="folder" type="text" value="archive" aria-label="目的資料夾（留空為根目錄）">
                       <button type="submit" class="btn">移動</button>
                     </form>
                   </td>

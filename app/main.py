@@ -16,13 +16,18 @@ from app.core.config import BASE_DIR, settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import setup_logging
 from app.routers import (
+    accounts,
     auth,
     dashboard,
     db_inspection,
+    departments,
     dev_accounts,
     dev_files,
+    e_admin,
+    e_function_settings,
     health,
     invoices,
+    knowledge,
     robots,
     system,
     users,
@@ -45,6 +50,7 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="s
 
 # ---- 例外處理 ----
 register_exception_handlers(app)
+app.add_exception_handler(e_admin.EError, e_admin.handle_e_error)
 
 # ---- 頁面路由 ----
 app.include_router(health.router)
@@ -52,10 +58,17 @@ app.include_router(robots.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(invoices.router)
+app.include_router(knowledge.router)
 app.include_router(users.router)
+app.include_router(accounts.router)
 app.include_router(system.router)
 app.include_router(db_inspection.router)
+app.include_router(departments.router)
 # 開發示範：本機頁面與雲端帳號 API（各自只在 remote／cloud 模式提供）
 app.include_router(dev_accounts.page)
 app.include_router(dev_accounts.api)
 app.include_router(dev_files.page)
+
+# 06_E 正式功能；共同接點未就緒時拒絕操作。
+app.include_router(e_admin.router)
+app.include_router(e_function_settings.router)

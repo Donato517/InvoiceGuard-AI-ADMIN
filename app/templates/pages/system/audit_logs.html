@@ -6,6 +6,12 @@
 {% extends "layouts/admin.html" %}
 {% block title %}稽核紀錄{% endblock %}
 {% block content %}
-  {# TODO(JerryChien): 依動作代碼與操作者篩選 + 分頁表格，寫法參考 pages/system/job_runs.html #}
-  <p class="empty-state">內容建置中</p>
+  <div class="page-heading">
+    <h2>操作稽核紀錄</h2>
+    <p class="muted small-text">查詢管理者的重要操作紀錄（發票複核、帳號停用、權限異動等）。</p>
+  </div>
+  <section class="card">
+    {# TODO(JerryChien): 依動作代碼與操作者篩選 + 分頁表格，寫法參考 pages/system/job_runs.html #}
+    <p class="empty-state">內容建置中</p>
+  </section>
 {% endblock content %}

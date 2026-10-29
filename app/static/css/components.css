@@ -1,6 +1,6 @@
 /* ==========================================================================
-   共用元件樣式：按鈕、表單、表格、提示、標籤、分頁、空狀態
-   在樣板中以 class 使用，例如 <button class="btn btn--primary">。
+   共用元件樣式：按鈕、表單、表格、提示、標籤、分頁、空狀態、卡片、對話框
+   對齊 invoiceguard_final_formatted.html 原型視覺設計。
    命名採 BEM：區塊__元素--狀態。
    ========================================================================== */
 
@@ -10,28 +10,77 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  color: var(--color-text);
-  background-color: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 0.625rem var(--space-4);
+  font-size: var(--font-size-md);
+  line-height: 1.4;
+  color: var(--color-btn-secondary-text);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--color-btn-secondary-bg);
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition: filter 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--color-btn-secondary-text);
+  filter: brightness(0.96);
 }
 
 .btn--primary {
   color: var(--color-bg);
   background-color: var(--color-primary);
-  border-color: var(--color-primary);
 }
 
-.btn--primary:hover {
+.btn--primary:hover:not(:disabled) {
+  color: var(--color-bg);
   background-color: var(--color-primary-hover);
+}
+
+.btn--secondary {
+  color: var(--color-btn-secondary-text);
+  background-color: var(--color-btn-secondary-bg);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  color: var(--color-btn-secondary-text);
+  filter: brightness(0.96);
+}
+
+.btn--success {
+  color: var(--color-bg);
+  background-color: var(--color-success);
+}
+
+.btn--success:hover:not(:disabled) {
+  color: var(--color-bg);
+  filter: brightness(0.96);
+}
+
+.btn--danger {
+  color: var(--color-danger);
+  background-color: var(--color-btn-danger-bg);
+}
+
+.btn--danger:hover:not(:disabled) {
+  color: var(--color-danger);
+  filter: brightness(0.96);
+}
+
+.btn--small {
+  padding: 0.375rem 0.6875rem;
+  font-size: var(--font-size-sm);
 }
 
 .btn--text {
   padding: 0;
   color: var(--color-primary);
-  background: none;
-  border: none;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.1875rem;
+  white-space: normal;
+  background: transparent;
+  border: 0;
 }
 
 .btn--block {
@@ -40,87 +89,208 @@
 
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
-/* ---- 表單 ---- */
+/* ---- 表單與輸入控制項 ---- */
+input:not([type='checkbox']):not([type='radio']):not([type='file']),
+select,
+textarea {
+  padding: 0.625rem 0.75rem;
+  font-size: var(--font-size-md);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-sm);
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--color-input-focus);
+  outline-offset: 1px;
+}
+
+input[readonly],
+textarea[readonly] {
+  background-color: var(--color-table-th-bg);
+}
+
+.search-input {
+  min-width: 13.75rem;
+  max-width: 100%;
+  padding: 0.5rem 0.6875rem;
+  font-size: var(--font-size-sm);
+}
+
 .form {
   display: grid;
   gap: var(--space-4);
 }
 
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
 .form-field {
   display: grid;
-  gap: var(--space-1);
+  gap: 0.4375rem;
+}
+
+.form-field label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
 }
 
 .form-field input,
 .form-field select,
 .form-field textarea {
-  padding: var(--space-2) var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+
+fieldset.form {
+  padding: var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
+fieldset.form legend {
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-card-title);
+}
+
 /* ---- 表格 ---- */
+.table-wrap {
+  overflow: auto;
+}
+
 .table {
   width: 100%;
+  font-size: var(--font-size-md);
+  white-space: nowrap;
   border-collapse: collapse;
   background-color: var(--color-bg);
 }
 
-.table th,
-.table td {
-  padding: var(--space-3);
+.table th {
+  padding: 0.8125rem 0.75rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-table-th-text);
   text-align: left;
+  background-color: var(--color-table-th-bg);
   border-bottom: 1px solid var(--color-border);
 }
 
-/* ---- 提示訊息 ---- */
+.table td {
+  padding: 0.8125rem 0.75rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table a:not(.btn) {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 0.1875rem;
+}
+
+/* ---- 提示訊息（對齊原型 .notice）---- */
 .alert {
-  padding: var(--space-3) var(--space-4);
+  padding: 0.75rem 0.9375rem;
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--color-primary-soft-text);
+  background-color: var(--color-primary-soft);
+  border: 0;
   border-radius: var(--radius-md);
+}
+
+.alert--info {
+  color: var(--color-primary-soft-text);
+  background-color: var(--color-primary-soft);
+}
+
+.alert--success {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-notice-success-bg);
+}
+
+.alert--warning {
+  color: var(--color-notice-warning-text);
+  background-color: var(--color-notice-warning-bg);
 }
 
 .alert--danger {
   color: var(--color-danger);
-  background-color: rgb(220 38 38 / 8%);
+  background-color: var(--color-danger-soft);
 }
 
-/* ---- 狀態標籤（對應發票狀態值）---- */
+/* ---- 狀態標籤（對齊原型 .badge）---- */
 .badge {
   display: inline-block;
-  padding: 0 var(--space-2);
-  font-size: var(--font-size-sm);
-  border-radius: var(--radius-md);
-  background-color: var(--color-bg-muted);
+  padding: 0.3125rem 0.625rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-warning-soft-text);
+  white-space: nowrap;
+  background-color: var(--color-warning-soft);
+  border-radius: var(--radius-pill);
 }
 
-.badge--passed {
-  color: var(--color-success);
+.badge--passed,
+.badge--success,
+.badge--active {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
+}
+
+.badge--gray,
+.badge--neutral,
+.badge--disabled {
+  color: var(--color-neutral-soft-text);
+  background-color: var(--color-neutral-soft);
 }
 
 .badge--flagged,
-.badge--rejected {
-  color: var(--color-danger);
+.badge--rejected,
+.badge--failed,
+.badge--danger {
+  color: var(--color-danger-soft-text);
+  background-color: var(--color-danger-soft);
 }
 
 .badge--pending,
-.badge--analyzing {
-  color: var(--color-warning);
+.badge--analyzing,
+.badge--running,
+.badge--warning {
+  color: var(--color-warning-soft-text);
+  background-color: var(--color-warning-soft);
 }
 
 /* ---- 分頁 ---- */
 .pagination {
   display: flex;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
   margin-top: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
 }
 
 .pagination__item {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 0.375rem 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-btn-secondary-text);
+  background-color: var(--color-btn-secondary-bg);
+  border-radius: var(--radius-sm);
 }
 
 .pagination__item--active {
@@ -130,7 +300,135 @@
 
 /* ---- 空狀態 ---- */
 .empty-state {
-  padding: var(--space-8);
-  text-align: center;
+  padding: 1.5625rem;
+  font-size: var(--font-size-md);
   color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ---- 卡片容器（對齊原型 .card）---- */
+.card {
+  padding: 1.375rem;
+  margin-bottom: 1.125rem;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.card__title,
+.card > h2,
+.card > h3 {
+  margin-top: 0;
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-card-title);
+}
+
+/* ---- 工具列（對齊原型 .toolbar / .actions）---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: 1.125rem;
+}
+
+.toolbar .card__title {
+  margin-bottom: 0;
+}
+
+.toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ---- 對話框（對齊原型 .modal）---- */
+.modal {
+  width: min(47.5rem, calc(100vw - 2rem));
+  max-height: 92vh;
+  padding: 0;
+  overflow: auto;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  border: 0;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-modal);
+}
+
+.modal::backdrop {
+  background-color: var(--color-modal-backdrop);
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 1.375rem var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal__header h2,
+.modal__header h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.modal__body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  max-height: 72vh;
+  overflow-y: auto;
+}
+
+.modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  padding: 1.125rem var(--space-6);
+  background-color: var(--color-modal-footer-bg);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---- 檔案選取盒（對齊原型 .file-box）---- */
+.file-box {
+  display: grid;
+  gap: var(--space-2);
+  padding: 1.125rem;
+  background-color: var(--color-file-box-bg);
+  border: 1px dashed var(--color-file-box-border);
+  border-radius: 0.625rem;
+}
+
+.file-box input[type='file'] {
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-sm);
+  background: transparent;
+  border: 0;
+}
+
+/* ---- 檢核結果提示 ---- */
+.check-ok {
+  font-weight: 500;
+  color: var(--color-success);
+}
+
+.check-warn {
+  font-weight: 500;
+  color: var(--color-warning);
+}
+
+@media (max-width: 800px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }

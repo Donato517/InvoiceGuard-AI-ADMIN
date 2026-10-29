@@ -1,0 +1,214 @@
+/* ==========================================================================
+   頁面樣式：發票作業流程（pages/invoices/flow.html 及 _flow_step_*.html）
+   在該頁樣板的 {% block head %} 載入。
+   對應 HTML 原型：.steps / .step / .drop / .invoice-preview / .downloads / .flow-footer / .todo
+   ========================================================================== */
+
+/* ---- 步驟列（原型 .steps / .step）---- */
+.stepper {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-2);
+  margin: var(--space-4) 0 var(--space-5);
+  overflow-x: auto;
+  list-style: none;
+}
+
+.stepper__item {
+  flex: 1;
+  min-width: 6.75rem;
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-step-text);
+  text-align: center;
+  background-color: var(--color-step-bg);
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.stepper__item a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.stepper__item--active {
+  font-weight: 600;
+  color: var(--color-step-active-text);
+  background-color: var(--color-step-active-bg);
+}
+
+.stepper__item--done {
+  color: var(--color-step-done-text);
+  background-color: var(--color-step-done-bg);
+}
+
+.stepper__index {
+  display: block;
+  margin-bottom: 0.3125rem;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  background: transparent;
+}
+
+/* ---- 上傳區（原型 .drop）---- */
+.dropzone {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+  padding: 2.625rem var(--space-5);
+  text-align: center;
+  cursor: pointer;
+  background-color: var(--color-file-box-bg);
+  border: 2px dashed var(--color-file-box-border);
+  border-radius: 0.75rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.dropzone--drag {
+  background-color: var(--color-step-active-bg);
+  border-color: var(--color-primary);
+}
+
+.dropzone input[type="file"] {
+  display: none;
+}
+
+.dropzone__icon {
+  margin-bottom: 0.625rem;
+  font-size: 2.5rem;
+}
+
+.dropzone__preview {
+  width: 100%;
+  max-width: 38rem;
+  margin-bottom: 0.625rem;
+}
+
+.dropzone__preview[hidden],
+.dropzone__icon[hidden],
+.invoice-file-preview__img[hidden],
+.invoice-file-preview__frame[hidden] {
+  display: none;
+}
+
+/* ---- 發票檔案即時預覽 ---- */
+.invoice-file-preview {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  padding: var(--space-4);
+  background-color: var(--color-table-th-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+}
+
+.invoice-file-preview__img {
+  display: block;
+  max-width: 100%;
+  max-height: 26rem;
+  object-fit: contain;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.invoice-file-preview__frame {
+  width: 100%;
+  height: 26rem;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.two-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+/* ---- 辨識結果預覽（原型 .invoice-preview）---- */
+.invoice-preview {
+  padding: var(--space-6);
+  font-size: var(--font-size-md);
+  line-height: 2;
+  background-color: var(--color-invoice-preview-bg);
+  border: 1px solid var(--color-invoice-preview-border);
+  border-radius: 0.625rem;
+}
+
+/* ---- 下載卡（原型 .downloads / .download-card）---- */
+.download-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+.download-card {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  padding: 1.625rem var(--space-4);
+  text-align: center;
+  background-color: var(--color-download-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+}
+
+.download-card h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+.download-card__icon {
+  font-size: 2rem;
+}
+
+/* ---- 上一步／下一步列（原型 .flow-footer）---- */
+.flow-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-5);
+}
+
+/* ---- 待辦事項列與進度條（原型 .todo / .progress）---- */
+.todo-item {
+  display: flex;
+  gap: 0.9375rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.progress {
+  width: 6.25rem;
+  height: 0.375rem;
+  overflow: hidden;
+  background-color: var(--color-progress-bg);
+  border-radius: 0.375rem;
+}
+
+.progress__bar {
+  display: block;
+  height: 100%;
+  background-color: var(--color-primary);
+}
+
+.check-ok {
+  color: var(--color-success);
+}
+
+.check-warn {
+  color: var(--color-warning);
+}
+
+@media (max-width: 800px) {
+  .download-list,
+  .two-cols {
+    grid-template-columns: 1fr;
+  }
+}

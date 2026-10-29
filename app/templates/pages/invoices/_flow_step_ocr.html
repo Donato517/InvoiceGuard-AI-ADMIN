@@ -1,0 +1,40 @@
+{#
+  @template pages/invoices/_flow_step_ocr.html
+  @description 步驟 2：AI 辨識結果預覽（HTML 原型 flowStep 1），並排顯示上傳影像與辨識資料。
+  @context invoice: dict  發票資料
+#}
+<p class="alert alert--warning">以下為 AI OCR 辨識資料預覽；請點擊下一步完成「採購核對修正」以儲存本次發票作業進度。</p>
+<div class="{% if invoice.file_bytes %}two-cols{% endif %}">
+  {% if invoice.file_bytes %}
+    <div class="invoice-file-preview">
+      {% if invoice.file_media_type == "application/pdf" %}
+        <iframe class="invoice-file-preview__frame"
+                title="發票檔案預覽"
+                src="/invoices/{{ invoice.id }}/file"></iframe>
+      {% else %}
+        <img class="invoice-file-preview__img"
+             src="/invoices/{{ invoice.id }}/file"
+             alt="發票預覽：{{ invoice.file_name }}">
+      {% endif %}
+      <span class="muted small-text">上傳檔案：{{ invoice.file_name }}</span>
+    </div>
+  {% endif %}
+  <div class="invoice-preview">
+    <h3>統一發票（三聯式）</h3>
+    號碼：{{ invoice.invoice_number }}
+    <br>
+    日期：{{ invoice.invoice_date }}
+    <br>
+    賣方統編：{{ invoice.seller_tax_id }}
+    <br>
+    買方統編：{{ invoice.buyer_tax_id }}
+    <br>
+    品名：{{ invoice.item_description }}
+    <br>
+    未稅金額：{{ invoice.net_amount | currency }}
+    <br>
+    稅額：{{ invoice.tax_amount | currency }}
+    <br>
+    總額：{{ invoice.total_amount | currency }}
+  </div>
+</div>

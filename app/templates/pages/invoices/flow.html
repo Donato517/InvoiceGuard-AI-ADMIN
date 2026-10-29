@@ -1,0 +1,65 @@
+{#
+  @template pages/invoices/flow.html
+  @description 發票作業流程（步驟 1～9：上傳、OCR 預覽、資料核對、系統檢核、財務審核、申報檔、匯入、傳票、匯出）。
+  @route GET /invoices/{invoice_id}/flow?step=4（需管理者登入）
+  @context invoice: dict      發票資料
+  @context step: int          目前步驟（1～9）
+  @context steps: list[dict]  九個步驟 [{number, label, state, url}]
+  @context error: str | None  上一次送出失敗的訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}發票作業流程{% endblock %}
+{% block head %}
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
+{% block content %}
+  <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票審核</a>
+  {% include "pages/invoices/_stepper.html" %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <section class="card" id="flow-step">
+    <h2 class="card__title">{{ steps[step - 1].label }}</h2>
+    {% if invoice.is_completed %}<p class="alert alert--success">已完成，目前為檢視模式。</p>{% endif %}
+    {% if step == 1 %}
+      {% include "pages/invoices/_flow_step_upload.html" %}
+    {% elif step == 2 %}
+      {% include "pages/invoices/_flow_step_ocr.html" %}
+    {% elif step == 3 %}
+      {% include "pages/invoices/_flow_step_correct.html" %}
+    {% elif step == 4 %}
+      {% include "pages/invoices/_flow_step_check.html" %}
+    {% elif step == 5 %}
+      {% include "pages/invoices/_flow_step_review.html" %}
+    {% elif step == 6 %}
+      {% include "pages/invoices/_flow_step_filing.html" %}
+    {% elif step == 7 %}
+      {% include "pages/invoices/_flow_step_import.html" %}
+    {% elif step == 8 %}
+      {% include "pages/invoices/_flow_step_voucher.html" %}
+    {% else %}
+      {% include "pages/invoices/_flow_step_export.html" %}
+    {% endif %}
+  </section>
+  <div class="flow-footer">
+    {% if step > 1 and (step > 3 or invoice.file_bytes) %}
+      <a href="/invoices/{{ invoice.id }}/flow?step={{ step - 1 }}"
+         class="btn btn--secondary">← 上一步</a>
+    {% else %}
+      <a href="/invoices" class="btn btn--secondary">← 返回列表</a>
+    {% endif %}
+    {% if step == 1 %}
+      <button type="submit" form="flow-upload-form" class="btn btn--primary">上傳並開始辨識 →</button>
+    {% elif step == 3 %}
+      <button type="submit" form="flow-correct-form" class="btn btn--primary">完成核對並儲存進度 →</button>
+    {% elif step < 9 %}
+      <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
+        <input type="hidden" name="from_step" value="{{ step }}">
+        <button type="submit" class="btn btn--primary">確認並繼續 →</button>
+      </form>
+    {% elif not invoice.is_completed %}
+      <form method="post" action="/invoices/{{ invoice.id }}/flow/complete">
+        <button type="submit" class="btn btn--success">確認完成</button>
+      </form>
+    {% endif %}
+  </div>
+{% endblock content %}

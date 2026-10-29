@@ -1,0 +1,26 @@
+{#
+  @template pages/invoices/_flow_step_check.html
+  @description 步驟 4：系統自動檢核結果（HTML 原型 flowStep 3）。檢核在後端執行，這裡只顯示結果。
+  @context checks: list[dict]  [{label, ok}]：發票格式、賣方統編位數、買方統編、日期、稅額、重複發票
+#}
+<p class="alert alert--info">以下為系統基本檢核，不代表正式稅務驗證。</p>
+<table class="table">
+  <thead>
+    <tr>
+      <th scope="col">項目</th>
+      <th scope="col">結果</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for check in checks %}
+      <tr>
+        <td>{{ check.label }}</td>
+        <td class="{{ 'check-ok' if check.ok else 'check-warn' }}">{{ "✓ 通過" if check.ok else "⚠ 需確認" }}</td>
+      </tr>
+    {% endfor %}
+    <tr>
+      <td>用途與可扣抵性</td>
+      <td class="check-warn">⚠ 人工審核</td>
+    </tr>
+  </tbody>
+</table>

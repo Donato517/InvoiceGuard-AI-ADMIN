@@ -1,0 +1,106 @@
+{#
+  @template pages/departments/list.html
+  @description 部門列表、新增、修改名稱、啟用與停用，沿用 ADMIN 元件。
+  @route GET/POST /department、POST /department/{department_id}/name、/code、/status（限本機）
+  @context departments: list[Department] 真實資料庫搜尋結果
+  @context q: str 搜尋文字
+  @context message: str 成功訊息
+  @context error: str 失敗訊息
+  @context code: str 新增失敗保留代碼
+  @context name: str 新增失敗保留名稱
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}部門管理{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('css/pages/e-department-detail.css') }}">{% endblock %}
+{% block content %}
+  <div id="departments"
+       hx-target="#departments"
+       hx-select="#departments"
+       hx-swap="outerHTML">
+    <div class="page-heading">
+      <h2>部門管理</h2>
+      <p class="muted small-text">管理組織部門代碼、名稱與啟用狀態，並連結部門功能設定。</p>
+    </div>
+    <p class="alert alert--info">本機開發測試：連接既有資料庫，請僅建立及操作虛構測試部門。正式部署前須接回授權機制。</p>
+    {% if message %}<p class="alert alert--success" role="status">{{ message }}</p>{% endif %}
+    {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+    <section class="card">
+      <div class="toolbar">
+        <h2 class="card__title">部門列表</h2>
+        <form class="filter-bar"
+              method="get"
+              action="/department"
+              hx-get="/department">
+          <label for="q">部門代碼或名稱</label>
+          <input id="q"
+                 class="search-input"
+                 name="q"
+                 type="search"
+                 value="{{ q }}"
+                 maxlength="200">
+          <button type="submit" class="btn btn--primary btn--small">搜尋</button>
+          <a class="btn btn--secondary btn--small" href="/department">清除</a>
+        </form>
+      </div>
+      {% if departments %}
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">代碼</th>
+                <th scope="col">名稱</th>
+                <th scope="col">狀態</th>
+                <th scope="col">建立時間</th>
+                <th scope="col">修改時間</th>
+                <th scope="col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for department in departments %}
+                <tr>
+                  <td><code>{{ department.department_code }}</code></td>
+                  <td>{{ department.department_name }}</td>
+                  <td>
+                    <span class="badge {% if department.is_active %}badge--success{% else %}badge--gray{% endif %}">
+                      {{ '啟用' if department.is_active else '停用' }}
+                    </span>
+                  </td>
+                  <td>{{ department.created_at | taipei_datetime }}</td>
+                  <td>{{ department.updated_at | taipei_datetime }}</td>
+                  <td>
+                    <a class="btn btn--secondary btn--small"
+                       href="/department/{{ department.department_id }}/edit">編輯／授權功能</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% elif not error %}
+        <p class="empty-state">沒有符合的部門</p>
+      {% endif %}
+    </section>
+    <section class="card">
+      <h2 class="card__title">新增部門</h2>
+      <form class="form"
+            method="post"
+            action="/department"
+            hx-post="/department"
+            data-confirm="確認新增部門？新增後請從列表開啟內容頁設定授權功能。">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="code">部門代碼</label>
+            <input id="code" name="code" value="{{ code }}" maxlength="200" required>
+          </div>
+          <div class="form-field">
+            <label for="name">部門名稱</label>
+            <input id="name" name="name" value="{{ name }}" maxlength="200" required>
+          </div>
+        </div>
+        <div class="toolbar__actions">
+          <button class="btn btn--primary" type="submit">新增部門</button>
+        </div>
+      </form>
+    </section>
+  </div>
+{% endblock content %}

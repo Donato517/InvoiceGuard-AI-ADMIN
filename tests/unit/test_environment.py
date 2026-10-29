@@ -183,15 +183,18 @@ def test_inherited_secrets_block_only_fields_this_site_reads(
     local_root: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     # 本站會讀取的機密欄位：拒絕啟動；本站沒有的欄位（例如個人 shell Key）：僅警告且不載入值
+    # ADMIN 依核定允許 START 注入的本機設定（DATABASE_URL 2026-10-25；AI 模組的 Gemini、
+    # Google 服務帳號、Groq 2026-10-29），見 config.Settings.LOCAL_INJECTED_FIELDS
+    approved = PLATFORM == "admin" and name in config.Settings.LOCAL_INJECTED_FIELDS
     value = (
         f"postgresql://synthetic:{MARKER}@db.example.invalid/test?sslmode=require"
-        if PLATFORM == "admin" and name == "DATABASE_URL"
+        if approved and name == "DATABASE_URL"
         else MARKER
     )
     monkeypatch.setenv("IG_ENV_TEST_" + name, value)
     settings = make_settings()
     report = settings.check_environment()
-    if PLATFORM == "admin" and name == "DATABASE_URL":
+    if approved:
         assert report["configuration_valid"]
         assert not any(issue["field"] == name for issue in report["issues"])
         settings.require_environment()

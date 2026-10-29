@@ -1,0 +1,63 @@
+{#
+  @template layouts/e_admin.html
+  @description E 依本次有效權限呈現工作台選單；不使用舊固定功能選單。
+  @context e_menu: tuple 已通過同一 guard 的功能
+  @context identity: Identity 已驗證管理站身分
+  @block content 頁面內容
+#}
+{% extends "base.html" %}
+{% block body %}
+  <div class="admin-layout">
+    <aside class="app-sidebar">
+      <div class="app-sidebar__logo">
+        InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
+      </div>
+      <nav aria-label="後台選單">
+        <div class="app-sidebar__caption">管理站工作台</div>
+        {% set logout_entry = namespace(rendered=false) %}
+        <a class="app-sidebar__link {% if request.url.path == '/welcome' %}app-sidebar__link--active{% endif %}"
+           href="/welcome">
+          <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
+          <span>歡迎頁</span>
+        </a>
+        <a class="app-sidebar__link {% if request.url.path == '/workspace' %}app-sidebar__link--active{% endif %}"
+           href="/workspace">
+          <span class="app-sidebar__emoji" aria-hidden="true">📊</span>
+          <span>工作台</span>
+        </a>
+        <a class="app-sidebar__link {% if request.url.path == '/account' %}app-sidebar__link--active{% endif %}"
+           href="/account">
+          <span class="app-sidebar__emoji" aria-hidden="true">👤</span>
+          <span>本人資訊</span>
+        </a>
+        {% for item in e_menu %}
+          {% if item.code != "sys.department-permissions" %}
+            {% include "partials/sidebar_entry.html" %}
+          {% endif %}
+          {% if item.code == "sys.accounts" %}
+            {% include "partials/sidebar_logout.html" %}
+            {% set logout_entry.rendered = true %}
+          {% endif %}
+        {% endfor %}
+        {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
+      </nav>
+    </aside>
+    <div class="admin-layout__main">
+      <header class="app-header">
+        <div class="app-header__account">
+          <span class="app-header__user">{{ identity.display_name if identity is defined and identity.display_name else "樣式預覽管理員" }}</span>
+          <span class="badge badge--gray">工程師</span>
+          {% include "partials/header_department_picker.html" %}
+          <form method="post" action="/logout">
+            <button class="btn btn--secondary btn--small" type="submit">登出</button>
+          </form>
+        </div>
+      </header>
+      <main class="admin-layout__content">
+        <div class="content">
+          {% block content %}{% endblock %}
+        </div>
+      </main>
+    </div>
+  </div>
+{% endblock body %}

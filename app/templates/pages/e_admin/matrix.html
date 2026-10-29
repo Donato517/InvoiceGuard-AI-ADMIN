@@ -1,0 +1,65 @@
+{#
+  @template pages/e_admin/matrix.html
+  @description G 同源的部門基礎矩陣；職務及資料範圍另行授權。
+  @route GET /system/departments/{department_id}/permissions（需管理授權）
+  @context department_id: UUID 部門識別
+  @context matrix: Matrix G 的現行版本
+  @context cells: list 可呈現的功能及操作
+  @context can_save: bool 是否可更新
+#}
+{% extends "layouts/e_admin.html" %}
+{% block title %}部門功能設定{% endblock %}
+{% block content %}
+  <div class="page-heading">
+    <h2>部門功能設定</h2>
+    <p class="muted small-text">本表設定部門基礎功能。有效成員依目前選取部門取得基本功能，資料範圍與主管管理資格另行驗證。</p>
+  </div>
+  <section class="card">
+    <form class="form"
+          method="post"
+          action="/system/departments/{{ department_id }}/permissions">
+      <input type="hidden" name="expected_revision" value="{{ matrix.revision }}">
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>功能</th>
+              <th>允許操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cell in cells %}
+              <tr>
+                <td>{{ cell.capability.name }}</td>
+                <td>
+                  <div class="toolbar__actions">
+                    {% for action in cell.actions %}
+                      <label>
+                        <input type="checkbox"
+                               name="grant"
+                               value="{{ cell.capability.code }}:{{ action.name }}"
+                               {% if action.checked %}checked{% endif %}
+                               {% if not can_save or not action.delegable %}disabled{% endif %}>
+                        {{ action.name }}
+                      </label>
+                      {% if action.checked and not action.delegable %}
+                        <input type="hidden"
+                               name="grant"
+                               value="{{ cell.capability.code }}:{{ action.name }}">
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if can_save %}
+        <div class="toolbar__actions">
+          <button class="btn btn--primary" type="submit">儲存部門功能</button>
+        </div>
+      {% endif %}
+    </form>
+  </section>
+{% endblock content %}

@@ -1,5 +1,9 @@
 # 系統架構說明 — InvoiceGuard-AI-ADMIN（後台網站）
 
+> 2026-10-30 後續核定：Document AI 三模組已同步到 API，兩站相同；這取代下方本日早期僅 ADMIN 分版的範圍。兩站各自的授權、設定及分層不變。
+
+> 2026-10-30：Document AI 三模組僅 ADMIN 整合、分站版本化，其他共用模組維持同步。三模組位於 integrations，尚未接線 service／router／DB。使用與驗證見 [檢驗報告](DOCUMENT_AI_REVIEW_20261030.md)。
+
 AI 先讀根目錄 [AGENTS.md](../AGENTS.md)（Claude 見 [CLAUDE.md](../CLAUDE.md)），
 再依 [開發狀態](DEVELOPMENT_STATUS.md) 區分已完成能力與目標設計。
 本文件描述分工，不代表外部服務或每個流程均已接線。日常三站啟動與全名別名見 [README](../README.md)，

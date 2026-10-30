@@ -1257,3 +1257,17 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 新帳號：/accounts/new 本來就要求所屬與主要部門，停用 UNASSIGNED 後可選其他啟用部門；新增部門與新增帳號是兩個流程。舊 /dev/accounts 若繼續依賴被停用的 UNASSIGNED，既有程式會回預設部門不可用，不偷偷重新啟用或改指其他部門。本批不另改舊示範流程。
 - 回歸：修正前新案例重現 5 failed／5 passed；修正後六份相關測試 292 passed（20.13s），僅既有 Starlette/httpx warning。涵蓋預設／測試／一般代碼啟停、兩入口一致、主要部門／未知 FK 拒絕、授權保留及帳號登入回歸；錯誤提示補強後重跑同六份測試，最終仍為 292 passed（20.53s）；Ruff lint／5 檔格式、跨站 check_project（0 issues）與 diff --check 通過。
 - 正式 DB 僅唯讀檢查；未寫入、migration、Commit 或 Push。前段記錄中 UNASSIGNED 固定不能停用的敘述自此被取代。
+
+## 2026-10-30 Claude：新增 Agent Platform 向量模組
+
+- 使用者要求：ADMIN 測試通過後同步 API。新增 app/integrations/vertex_embedding.py 與 tests/unit/test_vertex_embedding.py，兩站逐位元組相同並列入 test_shared_integrations；Settings、.env.example、tests/conftest.py 加 VERTEX_EMBEDDING_MODEL、VERTEX_EMBEDDING_DIMENSIONS。未改 document_ai／gemini／groq，Vercel 與 START 不用改。
+- Claude 回報的離線驗證（本輪結果另記 REVIEW_FIX_LOG）：check_project（--project-root）PASS；pytest ADMIN 1493 passed、9 skipped，API 961 passed、14 skipped；ruff check／format --check、environment --check 通過。
+- Claude 回報的真實呼叫（本輪未重新驗證；兩站各以自己的 Vercel 設定，只送合成文字，不寫 DB）：gemini-embedding-2 回 1536 維；相關句相似度 0.7948、無關句 0.5795；100 段（每段 725 字）ADMIN 6.3 秒、API 4.48 秒；超過 8,192 token 回 embedding_invalid_input。
+- 未驗證：長時間配額、真實文件的檢索品質、部署後的雲端執行。未接線功能、未改 DB、未 Commit。
+
+## 2026-10-30 Claude：Codex 修正後複驗並新增 RAG 開發說明
+
+- 新增 docs/RAG_DEVELOPMENT.md（ADMIN、API 內容相同），AGENTS.md 與 MODULE_CONTRACT.md 加入連結；API 的 KNOWLEDGE_API_CONTRACT.md 加註過期提示。程式未再修改。
+- 離線複驗：check_project（--project-root）PASS；pytest ADMIN 1519 passed、9 skipped，API 987 passed、14 skipped；ruff check／format --check、environment --check 通過。
+- 真實呼叫（Codex 修正後的模組，兩站各以自己的 Vercel 設定，只送合成文字，不寫 DB）：gemini-embedding-2 回 1536 維；相關句相似度 0.7948、無關句 0.5795；100 段（每段 725 字）ADMIN 4.25 秒、API 4.09 秒；超過 8,192 token 回 embedding_invalid_input。
+- 未驗證：長時間配額、真實文件的檢索品質、部署後的雲端執行。未接線功能、未改 DB、未 Commit。

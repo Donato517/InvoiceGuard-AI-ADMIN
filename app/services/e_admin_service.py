@@ -44,6 +44,7 @@ DEPARTMENTS = "sys.departments"
 FEATURES = "sys.features"
 GRANTS = "sys.department-permissions"
 INVOICES = "inv.upload"
+KNOWLEDGE = "rag.manager"
 
 
 @dataclass
@@ -349,6 +350,14 @@ def get_e_module() -> EModule:
             "發票上傳",
             "發票作業",
             "/invoices",
+            frozenset(Action),
+            system_only=False,
+        ),
+        Capability(
+            KNOWLEDGE,
+            "RAG知識庫管理",
+            "知識庫",
+            "/knowledge",
             frozenset(Action),
             system_only=False,
         ),

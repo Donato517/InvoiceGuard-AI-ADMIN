@@ -5,13 +5,16 @@
 注意事項：
     - 本路由需管理者權限（require_admin）。
     - 步驟 1～9：上傳發票、AI OCR 辨識、資料核對、系統自動檢核、財務審核、產生申報檔、匯入確認、自動產生傳票、匯出結果。
+    - 步驟 3 在財務退回時顯示「退回補正」區，逐項回覆後由 procurement_case_service（2-5）檢查再重送。
     - 步驟 6 與申報資料頁的檢核、81 字元申報資料與批次產檔由 format21_service（F09）負責；
       發票資料目前仍為示範資料，經 _to_filing_snapshot() 轉為 Schema v1.5 欄位後交給 F09。
 """
 
+import hashlib
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -37,6 +40,14 @@ from app.schemas.finance_review import (
     ReviewCase,
     StatusChange,
 )
+from app.schemas.procurement_case import (
+    ATTACHMENT_FIELD,
+    RESPONSE_ACTIONS,
+    CaseScope,
+    CorrectionResponse,
+    ResubmitPlan,
+    ReturnRequest,
+)
 from app.services.company_profile_service import HardcodedCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
 from app.services.finance_review_service import (
@@ -60,6 +71,12 @@ from app.services.format21_service import (
     format_record_line,
     summarize_401,
     validate_profile,
+)
+from app.services.procurement_case_service import (
+    UNSPECIFIED_FIELD,
+    ProcurementCaseError,
+    latest_return,
+    prepare_resubmit,
 )
 
 Module = Annotated[EModule, Depends(get_e_module)]
@@ -548,6 +565,9 @@ def _render_invoice_list_view(
             or search_term in i["item_description"].lower()
         ]
 
+    # 待補正的案件排在最前面，提醒申請人優先處理（sort 為穩定排序，其餘維持原順序）
+    invoices.sort(key=lambda i: i.get("review_status") != "returned")
+
     pending_count = sum(1 for i in base_invoices if not i["is_completed"])
     passed_count = sum(1 for i in base_invoices if i["status"] == "passed")
     flagged_count = sum(1 for i in base_invoices if i["status"] == "flagged")
@@ -877,6 +897,7 @@ def _render_flow_page(
     step: int,
     *,
     error: str | None = None,
+    procurement_errors: list[str] | None = None,
 ) -> HTMLResponse:
     _ensure_invoice_14_fields(invoice)
     fields_14 = _build_14_fields_rows(invoice)
@@ -927,6 +948,9 @@ def _render_flow_page(
             "finance_review": _finance_review_view(request, invoice)
             if step == 5 and _find_invoice(invoice_id)
             else None,
+            "procurement_return": _procurement_return_view(invoice, procurement_errors)
+            if step == 3
+            else None,
             "error": error,
             "max_flow_step": max_flow_step,
         },
@@ -967,6 +991,7 @@ async def upload_invoice_file(
         raw_bytes = await file.read()
         invoice["file_name"] = file.filename
         invoice["file_bytes"] = raw_bytes
+        _note_attachment_upload(invoice_id, raw_bytes)
         content_type = file.content_type or ""
         if file.filename.lower().endswith(".pdf") or "pdf" in content_type.lower():
             invoice["file_media_type"] = "application/pdf"
@@ -1091,6 +1116,10 @@ def correct_invoice_fields(
         else _invoice_chinese_amount(invoice["total_amount"])
     )
     _commit_draft_after_correction(invoice_id, invoice)
+    if _returned_case(invoice) is not None:
+        # 退回補正中：存檔後回到步驟 3，讓申請人逐項回覆並重新送出
+        invoice["stage"] = 3
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
 
@@ -1315,19 +1344,33 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
             {"trail": t, "label": field_label(t.field_name)}
             for t in build_change_history(demo.get("changes", []))
         ],
-        "history": [
-            {
-                "change": c,
-                "label": STATUS_LABELS.get(c.new_status, c.new_status),
-            }
-            for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])
-        ],
+        "history": [_history_entry(c) for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])],
         "tax_types": TAX_TYPES,
         "deduction_codes": DEDUCTION_CODES,
         "account_codes": ACCOUNT_CODES,
         "account_code": str(invoice.get("account_code") or "").split(" ", 1)[0],
         "return_field_options": field_options,
     }
+
+
+def _labelled_line(line: str) -> str:
+    """把「欄位：內容」的欄位名稱換成中文；沒有「：」的行原樣顯示。"""
+    field, sep, text = line.partition("：")
+    return f"{field_label(field.strip())}：{text.strip()}" if sep else line.strip()
+
+
+def _history_entry(change: StatusChange) -> dict[str, Any]:
+    """審核歷程的一列：退回列出補正項目，重送列出申請人的逐項回覆（欄位皆顯示中文）。"""
+    label = STATUS_LABELS.get(change.new_status, change.new_status)
+    if change.return_items:
+        lines = [f"{field_label(i.field)}：{i.reason}" for i in change.return_items]
+        return {"change": change, "label": label, "lines": lines, "note": None}
+    if change.old_status == STATUS_RETURNED and change.new_status in REVIEWABLE_STATUSES:
+        lines = [
+            _labelled_line(line) for line in (change.reason or "").splitlines() if line.strip()
+        ]
+        return {"change": change, "label": f"申請人重新送出，{label}", "lines": lines, "note": None}
+    return {"change": change, "label": label, "lines": [], "note": change.reason}
 
 
 def _finance_review_target(request: Request, invoice_id: int) -> dict[str, Any]:
@@ -1465,6 +1508,7 @@ def finance_return(
     except FinanceReviewError as error:
         return _review_error(request, invoice, error)
     _apply_change(invoice, case, change)
+    _take_return_snapshot(invoice)
     return _review_redirect(invoice_id)
 
 
@@ -1481,6 +1525,249 @@ def finance_reject(
         return _review_error(request, invoice, error)
     _apply_change(invoice, case, change)
     return _review_redirect(invoice_id)
+
+
+# ---- 採購退回補正（2-5）----
+# 退回時把示範發票的欄位拍一份快照，申請人存檔或重新上傳後與快照比對，得到實際修改的欄位。
+# TODO(StacieChen): 接上資料庫後改由 invoice_changes（本輪修改）判斷 changed_fields，
+#   部門改讀 invoices.department_id，刪除 _RETURN_SNAPSHOTS 與 _DEMO_DEPARTMENT_ID。
+_RETURN_SNAPSHOTS: dict[int, dict[str, Any]] = {}
+# 示範發票沒有部門欄位；未登入部門（測試替身）時使用此示範值，發票部門一律視為與目前部門相同
+_DEMO_DEPARTMENT_ID = "demo"
+# 示範發票欄位 → Schema v1.5 欄位；發票字軌號碼另拆成 invoice_track／invoice_number
+_SNAPSHOT_FIELDS = {
+    "net_amount": "sales_amount",
+    "tax_amount": "tax_amount",
+    "total_amount": "total_amount",
+    "seller_name": "seller_name",
+    "seller_tax_id": "seller_tax_id",
+    "buyer_tax_id": "buyer_tax_id",
+    "buyer_name": "buyer_name",
+    "invoice_date": "invoice_date",
+    "invoice_number": "invoice_number",
+}
+
+
+def _file_digest(raw: bytes | None) -> str | None:
+    return hashlib.sha256(raw).hexdigest() if raw else None
+
+
+def _returned_case(invoice: dict[str, Any]) -> ReviewCase | None:
+    """示範發票目前是否在「退回補正」；只有已進入財務審核的發票才有案件資料。"""
+    if not _find_invoice(int(invoice["id"])) or invoice.get("review_status") != "returned":
+        return None
+    case = _finance_case(invoice)
+    return case if case.status == STATUS_RETURNED else None
+
+
+def _take_return_snapshot(invoice: dict[str, Any]) -> None:
+    """財務退回成功後，記下退回當下的欄位與附件，作為比對修改的基準。"""
+    _RETURN_SNAPSHOTS[int(invoice["id"])] = {
+        "fields": {name: invoice.get(name) for name in _SNAPSHOT_FIELDS},
+        "file_digest": _file_digest(invoice.get("file_bytes")),
+        "attachment_replaced": False,
+    }
+
+
+def _note_attachment_upload(invoice_id: int, raw: bytes) -> None:
+    """退回補正期間重新上傳附件：步驟 3 存檔會清除暫存檔，所以上傳當下就記錄已更換。"""
+    snapshot = _RETURN_SNAPSHOTS.get(invoice_id)
+    if snapshot is not None and raw and _file_digest(raw) != snapshot["file_digest"]:
+        snapshot["attachment_replaced"] = True
+
+
+def _changed_fields(invoice: dict[str, Any]) -> set[tuple[str, str | None]]:
+    """與退回快照比對，回傳實際修改的 (v1.5 欄位, item_id)；示範發票只有表頭欄位。"""
+    snapshot = _RETURN_SNAPSHOTS.get(int(invoice["id"]))
+    if snapshot is None:
+        return set()
+    changed: set[tuple[str, str | None]] = set()
+    for name, v15_name in _SNAPSHOT_FIELDS.items():
+        old = str(snapshot["fields"].get(name) or "").strip().upper()
+        new = str(invoice.get(name) or "").strip().upper()
+        if old == new:
+            continue
+        if name == "invoice_number":
+            if old[:2] != new[:2]:
+                changed.add(("invoice_track", None))
+            if old[2:] != new[2:]:
+                changed.add(("invoice_number", None))
+        else:
+            changed.add((v15_name, None))
+    if snapshot["attachment_replaced"] or (
+        invoice.get("file_bytes") and _file_digest(invoice["file_bytes"]) != snapshot["file_digest"]
+    ):
+        changed.add((ATTACHMENT_FIELD, None))
+    # 「其他」沒有對應欄位：有任何欄位或附件修改時才算已補正
+    if changed:
+        changed.add((UNSPECIFIED_FIELD, None))
+    return changed
+
+
+def _return_request(invoice: dict[str, Any], case: ReviewCase) -> ReturnRequest | None:
+    """把 2-4 的示範審核資料轉成 v1.5 的 invoice_status_history 與 v_invoice_return_fields 後讀取退回項目。"""
+    history = [
+        {
+            "new_status": c.new_status,
+            "changed_at": c.changed_at,
+            "changed_by": c.changed_by,
+            "reason": c.reason,
+        }
+        for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])
+    ]
+    return_fields = [
+        {"field_name": r.field_name, "item_id": r.item_id, "review_comment": r.review_comment}
+        for r in case.field_reviews
+        if not r.is_checked
+    ]
+    return latest_return(str(invoice["id"]), history, return_fields)
+
+
+def _case_scope(request: Request) -> CaseScope:
+    department = getattr(request.state, "header_selected_department_id", None)
+    return CaseScope(_reviewer_id(request), str(department or _DEMO_DEPARTMENT_ID))
+
+
+def _procurement_return_view(
+    invoice: dict[str, Any], errors: list[str] | None
+) -> dict[str, Any] | None:
+    """步驟 3「退回補正」區所需資料；不在退回補正時為 None。"""
+    case = _returned_case(invoice)
+    if case is None:
+        return None
+    return_request = _return_request(invoice, case)
+    changed = _changed_fields(invoice)
+    items = [
+        {
+            "key": f"{item.field}|{item.item_id or ''}",
+            "label": field_label(item.field),
+            "reason": item.reason,
+            "is_changed": item.key in changed,
+        }
+        for item in (return_request.items if return_request else ())
+    ]
+    return {
+        "items": items,
+        "actions": RESPONSE_ACTIONS,
+        "errors": errors or [],
+        "submission_round": case.submission_round,
+        "returned_at": return_request.returned_at if return_request else None,
+    }
+
+
+def _v15_values(invoice: dict[str, Any]) -> dict[str, str]:
+    """示範發票目前的值，以 v1.5 欄位名稱表示（重送時更新欄位確認列的送出值）。"""
+    values = {v15: str(invoice.get(name) or "") for name, v15 in _SNAPSHOT_FIELDS.items()}
+    number = str(invoice.get("invoice_number") or "").strip().upper()
+    values["invoice_track"], values["invoice_number"] = number[:2], number[2:]
+    return values
+
+
+def _apply_resubmit(
+    request: Request, invoice: dict[str, Any], case: ReviewCase, plan: ResubmitPlan
+) -> None:
+    """套用重送計畫：案件進入新一輪待財務審核（示範資料；正式版由 C 的 service 以 expected_status 為條件寫入）。"""
+    values = _v15_values(invoice)
+    reviews = tuple(
+        replace(
+            r,
+            is_checked=False,
+            checked_by=None,
+            checked_at=None,
+            review_comment=None,
+            submitted_value=values.get(r.field_name, r.submitted_value)
+            if r.item_id is None
+            else r.submitted_value,
+        )
+        for r in case.field_reviews
+    )
+    _FINANCE_CASES[int(invoice["id"])] = replace(
+        case,
+        status=plan.target_status,
+        submission_round=plan.next_round,
+        field_reviews=reviews,
+        invoice_track=values["invoice_track"],
+        invoice_number=values["invoice_number"],
+        seller_tax_id=values["seller_tax_id"],
+        sales_amount=Decimal(str(invoice.get("net_amount") or 0)),
+        tax_amount=Decimal(str(invoice.get("tax_amount") or 0)),
+        total_amount=Decimal(str(invoice.get("total_amount") or 0)),
+    )
+    _FINANCE_HISTORY.setdefault(int(invoice["id"]), []).append(
+        StatusChange(
+            invoice_id=case.invoice_id,
+            old_status=plan.expected_status,
+            new_status=plan.target_status,
+            reason=plan.reason,
+            changed_by=_reviewer_id(request),
+            changed_at=datetime.now(UTC),
+        )
+    )
+    _RETURN_SNAPSHOTS.pop(int(invoice["id"]), None)
+    invoice["review_status"] = "pending"
+    invoice["first_four_checked"] = True
+    invoice["stage"] = 4
+
+
+@router.post("/{invoice_id}/procurement/resubmit", response_model=None)
+def procurement_resubmit(
+    request: Request,
+    invoice_id: int,
+    response_key: Annotated[list[str] | None, Form()] = None,
+    response_action: Annotated[list[str] | None, Form()] = None,
+    response_note: Annotated[list[str] | None, Form()] = None,
+) -> Response:
+    """步驟 3：逐項回覆退回項目（已補正／申覆）後重新送出財務審核。
+
+    回覆選項值為「欄位名稱|item_id」；處理方式空白代表未回覆。檢查不通過時回 400 並列出所有原因。
+    """
+    invoice = _find_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    case = _finance_case(invoice)
+    scope = _case_scope(request)
+    notes = list(response_note or [])
+    responses = []
+    for index, (key, action) in enumerate(
+        zip(response_key or [], response_action or [], strict=False)
+    ):
+        if not action.strip():
+            continue
+        field, _, item_id = key.partition("|")
+        note = notes[index].strip() if index < len(notes) else ""
+        responses.append(CorrectionResponse(field, action.strip(), note or None, item_id or None))
+    # 示範發票沒有部門欄位，轉 v1.5 欄位時部門與目前範圍相同
+    row = {
+        "invoice_id": str(invoice_id),
+        "status": case.status,
+        "submission_round": case.submission_round,
+        "department_id": scope.department_id,
+    }
+    return_request = _return_request(invoice, case) if case.status == STATUS_RETURNED else None
+    if case.status == STATUS_RETURNED and return_request is None:
+        raise HTTPException(status_code=400, detail="找不到退回紀錄，請聯絡財務人員")
+    try:
+        plan = prepare_resubmit(
+            row,
+            scope,
+            return_request or ReturnRequest(str(invoice_id), (), None, None),
+            responses,
+            _changed_fields(invoice),
+        )
+    except ProcurementCaseError as error:
+        messages = [blocker.message for blocker in error.blockers]
+        response = _render_flow_page(
+            request,
+            invoice,
+            3,
+            error=None if return_request else str(error),
+            procurement_errors=messages,
+        )
+        response.status_code = 400
+        return response
+    _apply_resubmit(request, invoice, case, plan)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
 
 @router.post("/{invoice_id}/review")

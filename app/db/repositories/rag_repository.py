@@ -27,6 +27,7 @@ from app.schemas.rag import (
     RagFile,
     RagJob,
     RetrievalCandidate,
+    SearchHit,
 )
 
 _KB_COLUMNS = """knowledge_base_id::text AS knowledge_base_id, knowledge_name, approval_status,
@@ -248,6 +249,70 @@ LIST_LATEST_JOBS = text("""
     WHERE f.knowledge_base_id = CAST(:id AS uuid)
     ORDER BY j.rag_file_id, j.created_at DESC, j.job_id
 """)
+# 資訊部測試問答：只限指定知識庫、已完成索引（ready）的文件，不看核准與部門選用；僅供資訊部使用
+SEARCH_REVIEW_CHUNKS = text("""
+    SELECT c.content,
+           c.embedding OPERATOR(extensions.<=>) CAST(:query_embedding AS extensions.vector)
+               AS distance,
+           f.title AS file_title, f.file_version, c.chunk_index, kb.knowledge_name,
+           f.rag_file_id::text AS rag_file_id
+    FROM public.rag_chunks c
+    JOIN public.rag_files f ON f.rag_file_id = c.rag_file_id
+    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = f.knowledge_base_id
+    WHERE kb.knowledge_base_id = CAST(:id AS uuid)
+      AND f.parse_status = 'ready'
+      AND c.embedding_model = :embedding_model
+      AND c.embedding IS NOT NULL
+    ORDER BY distance
+    LIMIT :top_k
+""")
+# 文字比對：問題提到「第 X 章／節／條」時，找去除空白後符合全部樣式（正規表示式）的段落；
+# 與向量檢索合併，補足向量不擅長的章節編號。distance 固定為 0（明確指名，視為相關）
+_KEYWORD_SELECT = """
+    SELECT c.content, 0.0 AS distance, f.title AS file_title, f.file_version, c.chunk_index,
+           kb.knowledge_name, f.rag_file_id::text AS rag_file_id
+    FROM public.rag_chunks c
+    JOIN public.rag_files f ON f.rag_file_id = c.rag_file_id
+    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = f.knowledge_base_id
+"""
+SEARCH_REVIEW_KEYWORDS = text(f"""{_KEYWORD_SELECT}
+    WHERE kb.knowledge_base_id = CAST(:id AS uuid)
+      AND f.parse_status = 'ready'
+      AND regexp_replace(c.content, '\\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
+    ORDER BY f.title, c.chunk_index
+    LIMIT :top_k
+""")
+# 一般部門：同檢索五項條件
+SEARCH_KEYWORDS = text(f"""{_KEYWORD_SELECT}
+    JOIN public.rag_department_access da
+      ON da.knowledge_base_id = kb.knowledge_base_id
+     AND da.department_id = CAST(:department_id AS uuid)
+    JOIN public.rag_file_department_usage u
+      ON u.rag_file_id = f.rag_file_id AND u.department_id = CAST(:department_id AS uuid)
+    WHERE kb.approval_status = 'approved' AND kb.is_active
+      AND da.can_read AND da.use_for_qa
+      AND u.use_document
+      AND f.is_approved
+      AND f.parse_status = 'ready'
+      AND regexp_replace(c.content, '\\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
+    ORDER BY f.title, c.chunk_index
+    LIMIT :top_k
+""")
+# 重新排入索引：把知識庫內已完成或失敗的文件改回等待索引（切段規則調整後重建用）
+QUEUE_REINDEX = text("""
+    UPDATE public.rag_files SET parse_status = 'uploaded', updated_at = now()
+    WHERE knowledge_base_id = CAST(:id AS uuid) AND parse_status IN ('ready', 'failed')
+""")
+COUNT_FILES = text("""
+    SELECT knowledge_base_id::text AS knowledge_base_id, count(*) AS total
+    FROM public.rag_files GROUP BY knowledge_base_id
+""")
+# 待建立索引的文件（uploaded／failed），依上傳先後
+LIST_FILES_TO_INDEX = text("""
+    SELECT knowledge_base_id::text AS knowledge_base_id, rag_file_id::text AS rag_file_id
+    FROM public.rag_files WHERE parse_status IN ('uploaded', 'failed')
+    ORDER BY created_at, rag_file_id
+""")
 FIND_PENDING_JOB = text("""
     SELECT job_id::text FROM public.rag_jobs
     WHERE rag_file_id = CAST(:id AS uuid) AND job_status = 'pending'
@@ -419,19 +484,20 @@ def lock_file_version(db: Session, rag_file_id: str) -> int | None:
 
 
 def replace_chunks(db: Session, rag_file_id: str, chunks: Sequence[IndexedChunk]) -> None:
-    """刪除文件舊段落並寫入新段落，不提交交易。"""
+    """刪除文件舊段落並一次批次寫入新段落（減少與雲端 DB 的來回），不提交交易。"""
     db.execute(DELETE_CHUNKS, {"id": rag_file_id})
-    for chunk in chunks:
-        db.execute(
-            INSERT_CHUNK,
-            {
-                "id": rag_file_id,
-                "chunk_index": chunk.chunk_index,
-                "content": chunk.content,
-                "embedding_model": chunk.embedding_model,
-                "embedding": vector_literal(chunk.embedding),
-            },
-        )
+    rows = [
+        {
+            "id": rag_file_id,
+            "chunk_index": chunk.chunk_index,
+            "content": chunk.content,
+            "embedding_model": chunk.embedding_model,
+            "embedding": vector_literal(chunk.embedding),
+        }
+        for chunk in chunks
+    ]
+    if rows:
+        db.execute(INSERT_CHUNK, rows)
 
 
 def has_qa_access(db: Session, user_id: UUID, department_id: UUID) -> bool:
@@ -590,3 +656,69 @@ def find_pending_job(db: Session, rag_file_id: str) -> str | None:
     """文件最早一筆等待中的工作 job_id；沒有時為 None。"""
     value = db.execute(FIND_PENDING_JOB, {"id": rag_file_id}).scalar_one_or_none()
     return None if value is None else str(value)
+
+
+def search_review_chunks(
+    db: Session,
+    query_embedding: Sequence[float],
+    embedding_model: str,
+    knowledge_base_id: str,
+    top_k: int,
+) -> list[SearchHit]:
+    """資訊部測試：在指定知識庫已完成索引的文件中，依距離由小到大取段落（含未核准文件）。"""
+    params: dict[str, Any] = {
+        "query_embedding": vector_literal(query_embedding),
+        "embedding_model": embedding_model,
+        "id": knowledge_base_id,
+        "top_k": top_k,
+    }
+    return [
+        SearchHit(**{**row, "distance": float(row["distance"])})
+        for row in db.execute(SEARCH_REVIEW_CHUNKS, params).mappings()
+    ]
+
+
+def list_files_to_index(db: Session) -> dict[str, list[str]]:
+    """每個知識庫待建立索引的文件（knowledge_base_id → rag_file_id 清單，依上傳先後）。"""
+    result: dict[str, list[str]] = {}
+    for row in db.execute(LIST_FILES_TO_INDEX).mappings():
+        result.setdefault(row["knowledge_base_id"], []).append(row["rag_file_id"])
+    return result
+
+
+def search_keyword_chunks(
+    db: Session,
+    patterns: Sequence[str],
+    top_k: int,
+    *,
+    knowledge_base_id: str | None = None,
+    department_id: UUID | None = None,
+) -> list[SearchHit]:
+    """以章節條文樣式（正規表示式，全部都要符合）比對段落；指定知識庫為資訊部測試，否則依部門五項條件。"""
+    params: dict[str, Any] = {
+        "patterns": list(patterns),
+        "top_k": top_k,
+    }
+    if knowledge_base_id is not None:
+        statement = SEARCH_REVIEW_KEYWORDS
+        params["id"] = knowledge_base_id
+    else:
+        statement = SEARCH_KEYWORDS
+        params["department_id"] = str(department_id)
+    return [
+        SearchHit(**{**row, "distance": float(row["distance"])})
+        for row in db.execute(statement, params).mappings()
+    ]
+
+
+def queue_reindex(db: Session, knowledge_base_id: str) -> int:
+    """把知識庫內已完成或失敗的文件改回等待索引；回傳筆數。"""
+    result = db.execute(QUEUE_REINDEX, {"id": knowledge_base_id})
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+def count_files(db: Session) -> dict[str, int]:
+    """每個知識庫的文件數。"""
+    return {
+        row["knowledge_base_id"]: int(row["total"]) for row in db.execute(COUNT_FILES).mappings()
+    }

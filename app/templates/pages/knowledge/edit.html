@@ -68,7 +68,8 @@
       <form method="post"
             action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content"
             enctype="multipart/form-data"
-            class="form">
+            class="form"
+            data-busy="正在儲存內容…">
         <input type="hidden" name="revision" value="{{ doc.revision }}">
         {% if content.text is not none %}
           <textarea name="text"

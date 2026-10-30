@@ -71,8 +71,10 @@ def test_replace_chunks_deletes_then_inserts_vectors() -> None:
     rag_repository.replace_chunks(db, "f-1", chunks)
     statements = [call.args[0] for call in db.execute.call_args_list]
     assert statements[0] is rag_repository.DELETE_CHUNKS
-    assert statements[1:] == [rag_repository.INSERT_CHUNK] * 2
-    assert db.execute.call_args_list[2].args[1]["embedding"] == "[3.0,4.0]"
+    assert statements[1:] == [rag_repository.INSERT_CHUNK]  # 一次批次寫入
+    rows = db.execute.call_args_list[1].args[1]
+    assert [row["chunk_index"] for row in rows] == [0, 1]
+    assert rows[1]["embedding"] == "[3.0,4.0]"
     assert "CAST(:embedding AS extensions.vector)" in str(rag_repository.INSERT_CHUNK)
     db.commit.assert_not_called()
 

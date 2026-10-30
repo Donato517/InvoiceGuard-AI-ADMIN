@@ -160,17 +160,48 @@ def test_list_reads_departments_from_db_and_limits_qa_to_own_department(pages: P
     assert not hasattr(knowledge, "DEPARTMENTS")
     assert "營業稅申報" in response.text and "待審核" in response.text
     assert "財務部" in response.text and "資訊部" in response.text
-    assert "由該部門設定" in response.text  # 資訊部那一列不能由財務部設定
+    assert "尚無已核准並指派給此部門的知識庫" in response.text  # 待審核的知識庫不可選用
+    assert "dept-badge--owner" in response.text and "財務部 · 上傳" in response.text
     assert pages.module.checks == []  # 查看不另呼叫寫入檢查
 
 
-def test_documents_page_shows_index_failure_and_index_button(pages: Pages) -> None:
+def test_qa_choice_of_other_department_is_read_only(
+    pages: Pages, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approved = KnowledgeBase(KB, "營業稅申報", "approved", submitted_department_id=FINANCE)
+    second = KnowledgeBase("33333333-3333-4333-8333-333333333333", "會計法規", "approved")
+    rows = (
+        *ACCESS,
+        DepartmentAccess(KB, IT),
+        DepartmentAccess(second.knowledge_base_id, IT),
+    )
+    monkeypatch.setattr(
+        rag_admin_service,
+        "load_overview",
+        lambda: rag_admin_service.KnowledgeOverview((approved, second), rows),
+    )
+
+    response = pages.client.get("/knowledge")
+
+    assert "由該部門設定" in response.text  # 資訊部那一列不能由財務部設定
+    assert "可選 2 個，同時只能用 1 個" in response.text
+
+
+def test_documents_page_shows_index_failure_and_hides_it_actions(pages: Pages) -> None:
     response = pages.client.get(f"/knowledge/{KB}/documents")
 
     assert response.status_code == 200
     assert "PDF 超過 15 頁" in response.text
-    assert f"/knowledge/{KB}/documents/{FILE}/index" in response.text
+    assert f"/documents/{FILE}/index" not in response.text  # 上傳部門不能建立索引
     assert f"/documents/{FILE}/status" not in response.text  # 非資訊部看不到核准
+
+
+def test_it_sees_index_button(pages: Pages) -> None:
+    pages.is_it = True
+
+    response = pages.client.get(f"/knowledge/{KB}/documents")
+
+    assert f"/knowledge/{KB}/documents/{FILE}/index" in response.text
 
 
 def test_content_page_reads_text_and_download_returns_original(pages: Pages) -> None:
@@ -203,7 +234,6 @@ def test_content_page_reads_text_and_download_returns_original(pages: Pages) -> 
             Action.EDIT,
             "set_file_usage",
         ),
-        (f"/knowledge/{KB}/documents/{FILE}/index", {}, Action.EDIT, "index_document"),
         (f"/knowledge/{KB}/documents/{FILE}/rename", {"title": "x"}, Action.EDIT, "rename_file"),
         (f"/knowledge/{KB}/documents/{FILE}/delete", {}, Action.DELETE, "delete_file"),
         (
@@ -266,6 +296,7 @@ def test_denied_write_does_not_call_service(pages: Pages) -> None:
         (f"/knowledge/{KB}/review/approve", {}),
         (f"/knowledge/{KB}/review/reject", {"comment": "內容過舊"}),
         (f"/knowledge/{KB}/documents/{FILE}/status", {"status": "active"}),
+        (f"/knowledge/{KB}/documents/{FILE}/index", {}),
     ],
 )
 def test_review_requires_it_workspace(pages: Pages, path: str, data: dict[str, str]) -> None:
@@ -316,3 +347,83 @@ def test_database_unavailable_returns_503(pages: Pages, monkeypatch: pytest.Monk
     monkeypatch.setattr(rag_admin_service, "load_overview", down)
 
     assert pages.client.get("/knowledge").status_code == 503
+
+
+# ---- 問答 ----
+
+
+def test_chat_page_lists_knowledge_bases_for_it(pages: Pages) -> None:
+    pages.is_it = True
+
+    response = pages.client.get("/knowledge/chat")
+
+    assert response.status_code == 200
+    assert "知識庫小助理" in response.text and "營業稅申報（待審核）" in response.text
+
+
+def test_chat_ask_renders_escaped_question_and_sources(
+    pages: Pages, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import rag_qa_service
+
+    answer = rag_qa_service.QaAnswer(
+        "要取得影本 [1]", True, (rag_qa_service.QaSource(1, "統一發票使用辦法", "營業稅", 2),), 30
+    )
+    seen: list[tuple[str, RagActor, str | None]] = []
+    monkeypatch.setattr(
+        rag_qa_service, "ask", lambda q, actor, kb: seen.append((q, actor, kb)) or answer
+    )
+
+    response = pages.client.post(
+        "/knowledge/chat/ask", data={"question": "<b>遺失</b>", "knowledge_base_id": KB}
+    )
+
+    assert response.status_code == 200
+    assert "&lt;b&gt;遺失&lt;/b&gt;" in response.text
+    assert "《統一發票使用辦法》第 3 段" in response.text
+    assert seen[0][2] == KB and seen[0][1].department_id == FINANCE
+    assert pages.module.checks == []  # 問答只需查看權限
+
+
+def test_upload_accepts_one_file_at_a_time(pages: Pages) -> None:
+    response = pages.client.post(
+        "/knowledge/documents",
+        data={"knowledge_base_id": KB},
+        files=[
+            ("files", ("a.txt", b"x", "text/plain")),
+            ("files", ("b.txt", b"y", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 400 and "一次上傳一份文件" in response.text
+    assert pages.called("upload_documents") == []
+
+
+def test_it_indexes_next_pending_file_from_list(
+    pages: Pages, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    overview = rag_admin_service.KnowledgeOverview((KB_ROW,), ACCESS, {KB: [FILE, "f-2"]})
+    monkeypatch.setattr(rag_admin_service, "load_overview", lambda: overview)
+
+    assert pages.client.post(f"/knowledge/{KB}/index-next").status_code == 403
+    pages.is_it = True
+    assert "建立索引（剩 2 份）" in pages.client.get("/knowledge").text
+
+    response = pages.client.post(f"/knowledge/{KB}/index-next")
+
+    assert response.status_code == 303
+    (args,) = pages.called("index_document")
+    assert args[:2] == (KB, FILE)
+
+
+def test_it_requeues_indexed_knowledge_base(pages: Pages, monkeypatch: pytest.MonkeyPatch) -> None:
+    overview = rag_admin_service.KnowledgeOverview((KB_ROW,), ACCESS, {}, {KB: 1})
+    monkeypatch.setattr(rag_admin_service, "load_overview", lambda: overview)
+    queued: list[str] = []
+    monkeypatch.setattr(rag_admin_service, "queue_reindex", lambda kb, actor: queued.append(kb))
+
+    assert pages.client.post(f"/knowledge/{KB}/reindex").status_code == 403
+    pages.is_it = True
+    assert f"/knowledge/{KB}/reindex" in pages.client.get("/knowledge").text
+    assert pages.client.post(f"/knowledge/{KB}/reindex").status_code == 303
+    assert queued == [KB]

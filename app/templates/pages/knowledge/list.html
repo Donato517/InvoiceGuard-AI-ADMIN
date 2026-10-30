@@ -4,7 +4,8 @@
   @route GET /knowledge（需目前部門有知識庫查看權限）
   @context counts: dict               {total, active, inactive, unknown}
   @context rows: list[dict]           [{id, title, badges, toggle_url, approval_status, approval_label,
-                                      review_comment, qa_department_names, can_manage}]
+                                      review_comment, qa_department_names, can_manage, to_index}]
+                                      to_index：待建立索引的文件數（資訊部可在列表直接建立，一次一份）
   @context current_department_name: str  目前選取部門（上傳部門）
   @context departments: list[dict]    [{id, name}] 供篩選下拉
   @context q: str                     名稱搜尋字串（只搜名稱，不搜文件全文）
@@ -25,7 +26,7 @@
     <p class="muted small-text">點知識庫名稱編輯或刪除，點「查看文件」開啟文件清單。</p>
   </div>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
-  <p class="alert alert--info">綠色部門＝已指派（可讀）；灰色＝未指派；只有送審部門、可管理的部門與資訊部能切換。每個部門只能選用一個「已核准」的知識庫做問答，請在下方「部門問答選用」設定。新知識庫須經資訊部核准。</p>
+  <p class="alert alert--info">藍色＝上傳（送審）部門；綠色＝已指派、可使用的部門；灰色＝未指派；只有送審部門、可管理的部門與資訊部能切換。每個部門只能選用一個「已核准」的知識庫做問答，請在下方「部門問答選用」設定。新知識庫須經資訊部核准。</p>
   <div class="stat-grid stat-grid--three">
     <div class="stat-card">
       <div class="stat-card__label">知識庫總數</div>
@@ -79,10 +80,11 @@
           </noscript>
         </form>
         <a href="/knowledge" class="btn btn--secondary btn--small">重新載入</a>
+        <a href="/knowledge/chat" class="btn btn--primary btn--small">💬 知識庫問答</a>
       </div>
     </div>
     <p class="muted small-text">搜尋結果：{{ rows | length }} 個，只搜尋名稱，不搜尋文件全文。</p>
-    {% if not rows and not q and department_id == 'all' %}
+    {% if not rows and not q and department_id == "all" %}
       <p class="muted small-text">目前還沒有知識庫，請按「＋ 新增知識庫及文件」建立。</p>
     {% endif %}
     {% if not is_it_reviewer %}
@@ -119,12 +121,27 @@
               <td>
                 <a href="/knowledge/{{ kb.id }}/documents"
                    class="btn btn--secondary btn--small">查看文件</a>
-                {% if is_it_reviewer and kb.approval_status == 'pending' %}
+                {% if is_it_reviewer and kb.to_index %}
+                  <form method="post"
+                        action="/knowledge/{{ kb.id }}/index-next"
+                        data-busy="正在建立索引（擷取文字、切段、向量），約需 5～20 秒…">
+                    <button type="submit" class="btn btn--primary btn--small">
+                      建立索引{% if kb.to_index > 1 %}（剩 {{ kb.to_index }} 份）{% endif %}
+                    </button>
+                  </form>
+                {% elif is_it_reviewer and kb.file_count %}
+                  <form method="post"
+                        action="/knowledge/{{ kb.id }}/reindex"
+                        data-confirm="重新排入後，文件在重建索引完成前不會被問答檢索。確定要重新建立索引嗎？">
+                    <button type="submit" class="btn btn--secondary btn--small">重新索引</button>
+                  </form>
+                {% endif %}
+                {% if is_it_reviewer and kb.approval_status == "pending" %}
                   <form method="post" action="/knowledge/{{ kb.id }}/review/approve">
                     <button type="submit" class="btn btn--success btn--small">核准</button>
                   </form>
                 {% endif %}
-                {% if is_it_reviewer and kb.approval_status != 'rejected' %}
+                {% if is_it_reviewer and kb.approval_status != "rejected" %}
                   <details>
                     <summary>退回</summary>
                     <form method="post" action="/knowledge/{{ kb.id }}/review/reject">
@@ -134,7 +151,7 @@
                     </form>
                   </details>
                 {% endif %}
-                {% if kb.approval_status == 'rejected' and kb.can_manage %}
+                {% if kb.approval_status == "rejected" and kb.can_manage %}
                   <form method="post" action="/knowledge/{{ kb.id }}/review/resubmit">
                     <button type="submit" class="btn btn--primary btn--small">重新送審</button>
                   </form>
@@ -166,31 +183,36 @@
             <tr>
               <td>{{ dept.name }}</td>
               <td>
-                <form class="toolbar__actions" method="post" action="/knowledge/qa-source">
-                  <input type="hidden" name="department_id" value="{{ dept.id }}">
-                  <label for="qa-source-{{ dept.id }}" class="muted small-text">選用</label>
-                  <select id="qa-source-{{ dept.id }}"
-                          name="knowledge_base_id"
-                          {% if not dept.editable %}disabled{% endif %}>
-                    <option value="">（不選用）</option>
-                    {% for option in dept.options %}
-                      <option value="{{ option.id }}"
-                              {% if option.id == dept.current %}selected{% endif %}>{{ option.title }}</option>
-                    {% endfor %}
-                  </select>
-                  {% if dept.editable %}
-                    <button type="submit" class="btn btn--secondary btn--small">儲存</button>
-                  {% else %}
-                    <small class="muted">由該部門設定</small>
-                  {% endif %}
-                </form>
+                {% if not dept.options and not dept.current %}
+                  <small class="muted">尚無已核准並指派給此部門的知識庫</small>
+                {% else %}
+                  <form class="toolbar__actions" method="post" action="/knowledge/qa-source">
+                    <input type="hidden" name="department_id" value="{{ dept.id }}">
+                    <label for="qa-source-{{ dept.id }}" class="muted small-text">選用</label>
+                    <select id="qa-source-{{ dept.id }}"
+                            name="knowledge_base_id"
+                            {% if not dept.editable %}disabled{% endif %}>
+                      <option value="">（不選用）</option>
+                      {% for option in dept.options %}
+                        <option value="{{ option.id }}"
+                                {% if option.id == dept.current %}selected{% endif %}>{{ option.title }}</option>
+                      {% endfor %}
+                    </select>
+                    {% if dept.editable %}
+                      <button type="submit" class="btn btn--secondary btn--small">儲存</button>
+                    {% else %}
+                      <small class="muted">由該部門設定</small>
+                    {% endif %}
+                    {% if dept.options | length > 1 %}<small class="muted">可選 {{ dept.options | length }} 個，同時只能用 1 個</small>{% endif %}
+                  </form>
+                {% endif %}
               </td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-    <p class="muted small-text">文件需在文件清單按「建立索引」完成向量後，才能由資訊部核准並被檢索；問答畫面尚未接線。</p>
+    <p class="muted small-text">文件上傳後由資訊部確認內容並「建立索引」，完成向量後才能核准並被檢索；問答畫面尚未接線。</p>
   </section>
   {% with new_knowledge_base=true %}
     {% include "pages/knowledge/_upload_modal.html" %}

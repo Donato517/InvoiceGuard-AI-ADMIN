@@ -90,6 +90,11 @@ _BOUNDARY = re.compile(
     rf"^\s*(?:第\s*{_NUMERAL}\s*(?:條(?:之\s*{_NUMERAL})?|點|章|節)"
     rf"|{_NUMERAL}、|附件\s*{_NUMERAL})"
 )
+# 章、節標題（例：第 四 章 稅額計算、第一節 一般稅額計算），用來在每段前面標示所屬章節
+_CHAPTER = re.compile(rf"^\s*第\s*{_NUMERAL}\s*章")
+_SECTION = re.compile(rf"^\s*第\s*{_NUMERAL}\s*節")
+# 章節標題最多保留的字數（避免把整行內文當標題）
+_HEADING_MAX_CHARS = 30
 # 長條文需要切開時，優先在句末切
 _SENTENCE_END = "。；！？\n"
 
@@ -303,23 +308,61 @@ def split_into_chunks(
     return chunks
 
 
+def _heading(line: str) -> str:
+    return re.sub(r"\s+", "", line)[:_HEADING_MAX_CHARS]
+
+
+def add_heading_context(chunks: list[str], title: str | None = None) -> list[str]:
+    """在每段前面加上「《文件名稱》章／節」，讓檢索能對上所屬章節（條文本身常不寫章節）。
+
+    章節以段落中第一行內文所屬的章、節為準；遇到新的章會清除原本的節。
+    標題去除空白（例：第 四 章 稅額計算 → 第四章稅額計算），方便文字比對。
+
+    Args:
+        chunks: split_into_chunks 的結果。
+        title: 文件名稱；None 時不加書名。
+
+    Returns:
+        加上前綴的段落；沒有書名也沒有章節的段落維持原樣。
+    """
+    chapter = section = ""
+    result = []
+    for chunk in chunks:
+        context: str | None = None
+        for line in chunk.split("\n"):
+            if _CHAPTER.match(line):
+                chapter, section = _heading(line), ""
+            elif _SECTION.match(line):
+                section = _heading(line)
+            elif context is None and line.strip():
+                context = "／".join(part for part in (chapter, section) if part)
+        if context is None:
+            context = "／".join(part for part in (chapter, section) if part)
+        prefix = (f"《{title}》" if title else "") + context
+        result.append(f"{prefix}\n{chunk}" if prefix else chunk)
+    return result
+
+
 def prepare_chunks(
-    text: str, size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_CHUNK_OVERLAP
+    text: str,
+    size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
+    *,
+    title: str | None = None,
 ) -> tuple[ChunkDraft, ...]:
-    """產生待 embedding 的段落資料（chunk_index 從 0 開始）。
+    """產生待 embedding 的段落資料（chunk_index 從 0 開始），每段前面標示文件名稱與章節。
 
     Args:
         text: 文件文字。
-        size: 每段最多字元數。
+        size: 每段最多字元數（不含前綴）。
         overlap: 長段重疊字元數。
+        title: 文件名稱。
 
     Returns:
         待 embedding 的段落。
     """
-    return tuple(
-        ChunkDraft(index, content, len(content))
-        for index, content in enumerate(split_into_chunks(text, size, overlap))
-    )
+    chunks = add_heading_context(split_into_chunks(text, size, overlap), title)
+    return tuple(ChunkDraft(index, content, len(content)) for index, content in enumerate(chunks))
 
 
 # ---- 工作與重試 ----
@@ -436,7 +479,7 @@ def embed_chunks(
     """
     if job.job_status != JOB_RUNNING or job.file_version is None:
         raise RagRuleError("JOB_NOT_RUNNING", "請先開始工作並記下文件版本")
-    drafts = prepare_chunks(text, size, overlap)
+    drafts = prepare_chunks(text, size, overlap, title=rag_file.title)
     if not drafts:
         return failed_result(job, ERROR_EMPTY_TEXT, now())
 

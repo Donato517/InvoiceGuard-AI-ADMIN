@@ -278,3 +278,19 @@ def test_index_file_requires_started_job() -> None:
             lambda: 1,
             lambda: NOW,
         )
+
+
+def test_chunks_are_prefixed_with_title_chapter_and_section() -> None:
+    from app.services.rag_indexing_service import prepare_chunks
+
+    text = (
+        "第一章 總則\n第 1 條 本法定義。\n"
+        "第 四 章 稅額計算\n第 一 節 一般稅額計算\n第 14 條 營業人銷售貨物。\n"
+        "第 二 節 特種稅額計算\n第 21 條 特種營業人。"
+    )
+
+    contents = [d.content for d in prepare_chunks(text, size=30, overlap=5, title="營業稅法")]
+
+    assert contents[0].startswith("《營業稅法》第一章總則\n")
+    assert contents[1].startswith("《營業稅法》第四章稅額計算／第一節一般稅額計算\n")
+    assert contents[2].startswith("《營業稅法》第四章稅額計算／第二節特種稅額計算\n")

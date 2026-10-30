@@ -15,12 +15,12 @@
       先上傳物件再寫 DB，DB 失敗時刪除剛上傳的物件；刪除 DB 列成功後才刪除舊物件。
     - 處理索引工作分兩個短交易：開始（記下版本、改為索引中）→ 提交 → 讀檔、擷取、呼叫向量
       （不持有 DB 交易）→ 寫入交易中鎖定 rag_files 核對版本，相同才刪舊寫新並設 ready。
-    - 由畫面手動觸發，不做排程、不用請求結束後的背景 thread。
+    - 索引只由資訊部在畫面手動觸發（確認上傳內容後），不做排程、不用請求結束後的背景 thread。
 """
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Protocol
@@ -64,10 +64,11 @@ RAG_BUCKET = "rag"
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 # 名稱長度上限（與畫面 maxlength 相同）
 MAX_NAME_LENGTH = 160
-# 一次索引的總時間預算（ADMIN 函式上限 30 秒，保留讀檔與回應時間）
-INDEX_TOTAL_BUDGET_SECONDS = 26.0
-# 寫入交易保留的時間
-INDEX_WRITE_MARGIN_SECONDS = 2.0
+# 一次索引的總時間預算，從 index_document 開始計算（含 DB 交易與讀檔）；
+# Vercel 函式與本機 START 閘道都在 30 秒切斷，保留驗權、讀列表與回應的時間
+INDEX_TOTAL_BUDGET_SECONDS = 25.0
+# 寫入段落與向量的交易保留時間（正式 DB 在雲端，來回較慢）
+INDEX_WRITE_MARGIN_SECONDS = 4.0
 
 
 class RagUnavailableError(RuntimeError):
@@ -96,6 +97,8 @@ class KnowledgeOverview:
 
     knowledge_bases: tuple[KnowledgeBase, ...]
     access_rows: tuple[DepartmentAccess, ...]
+    files_to_index: dict[str, list[str]] = field(default_factory=dict)
+    file_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -263,7 +266,10 @@ def load_overview() -> KnowledgeOverview:
 
     def operation(db: Session) -> KnowledgeOverview:
         return KnowledgeOverview(
-            tuple(repository.list_knowledge_bases(db)), repository.list_department_access(db)
+            tuple(repository.list_knowledge_bases(db)),
+            repository.list_department_access(db),
+            repository.list_files_to_index(db),
+            repository.count_files(db),
         )
 
     return _run(operation, write=False)
@@ -889,6 +895,28 @@ def process_job(
     return _finish(job, rag_file, result)
 
 
+def queue_reindex(knowledge_base_id: str, actor: RagActor) -> int:
+    """資訊部把知識庫內已索引的文件重新排入索引（切段規則調整後使用），之後再逐份建立索引。
+
+    排入後文件在重建完成前不會被檢索（parse_status 不是 ready）。
+
+    Returns:
+        排入的文件數。
+
+    Raises:
+        RagRuleError: 不是資訊部或找不到知識庫。
+        RagUnavailableError: DB 無法使用。
+    """
+    if not actor.is_it:
+        raise RagRuleError("NOT_IT_REVIEWER", "只有資訊部可以重新建立索引")
+
+    def operation(db: Session) -> int:
+        _require(repository.lock_knowledge_base(db, knowledge_base_id), "找不到指定知識庫")
+        return repository.queue_reindex(db, knowledge_base_id)
+
+    return _run(operation)
+
+
 def index_document(
     knowledge_base_id: str,
     rag_file_id: str,
@@ -898,12 +926,17 @@ def index_document(
     pdf_client_factory: Callable[[], indexing.PdfProcessor] = DocumentAIClient.from_settings,
     read_object: Callable[[str, str], bytes] = read_storage_object,
 ) -> IndexResult:
-    """手動索引一份文件：取最早的等待中工作；沒有且文件失敗或未索引時新增 reindex 工作，再處理。
+    """資訊部手動索引一份文件：取最早的等待中工作；沒有且文件失敗或未索引時新增 reindex 工作，再處理。
+
+    索引（文字擷取、向量）只由資訊部在確認上傳內容後觸發，退件的文件不會產生費用。
 
     Raises:
-        RagRuleError: 找不到、不能管理、已索引完成或處理中。
+        RagRuleError: 不是資訊部、找不到、已索引完成或處理中。
         RagUnavailableError: DB 無法使用，或向量服務未設定。
     """
+    if not actor.is_it:
+        raise RagRuleError("NOT_IT_REVIEWER", "只有資訊部可以建立索引")
+    deadline = time.monotonic() + INDEX_TOTAL_BUDGET_SECONDS
 
     def prepare(db: Session) -> str:
         rag_file = _load_file_for_write(db, knowledge_base_id, rag_file_id, actor)
@@ -920,7 +953,13 @@ def index_document(
     extractor = indexing.DocumentTextExtractor(pdf_client_factory)
     try:
         with embedding_factory() as client:
-            return process_job(job_id, client, extractor, read_object)
+            return process_job(
+                job_id,
+                client,
+                extractor,
+                read_object,
+                time_budget_seconds=deadline - time.monotonic(),
+            )
     except (EmbeddingError, DocumentAIError):
         raise RagUnavailableError("向量或文字辨識服務未設定，請回報專案負責人") from None
     finally:

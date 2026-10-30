@@ -3,8 +3,6 @@
   @description 知識庫的文件清單（HTML 原型 renderDocuments）：統計、搜尋、核准篩選、文件部門選用、核准／暫停。
   @route GET /knowledge/{kb_id}/documents（需目前部門有知識庫查看權限）
   @context kb: dict                 {id, title, badges, toggle_url}
-  @context department_id: str       目前檢視的部門 id
-  @context assigned_departments: list[dict]  此知識庫已配置的部門 [{id, name}]
   @context counts: dict             {total, approved, unapproved}
   @context rows: list[dict]         [{id, title, file_name, status, processing_status, processing_label, index_note,
                                     can_approve, can_index, created_at, badges, toggle_url}]
@@ -21,31 +19,25 @@
   <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
 {% endblock head %}
 {% block content %}
-  <div class="page-heading page-heading--between">
+  <div class="page-heading">
     <div>
       <a href="/knowledge" class="btn btn--secondary btn--small">← 返回知識庫管理</a>
       <h2>{{ kb.title }}</h2>
       <p class="muted small-text">點文件名稱編輯資料；點原始檔名查看與修改內容。</p>
+      <a href="/knowledge/chat" class="btn btn--primary btn--small">💬 知識庫問答</a>
     </div>
-    <form class="toolbar__actions"
-          method="get"
-          action="/knowledge/{{ kb.id }}/documents">
-      <select name="department_id" aria-label="檢視部門">
-        {% for dept in assigned_departments %}
-          <option value="{{ dept.id }}"
-                  {% if dept.id == department_id %}selected{% endif %}>{{ dept.name }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn--secondary btn--small">切換</button>
-    </form>
   </div>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   <div class="alert alert--info">
-    <p>配置此知識庫的部門（已指派）狀態：</p>
+    <p>配置此知識庫的部門（藍色＝上傳部門、綠色＝可使用、灰色＝未指派）：</p>
     {% with badges=kb.badges, toggle_url=kb.toggle_url, target="dept-badges-" ~ kb.id %}
       {% include "pages/knowledge/_dept_badges.html" %}
     {% endwith %}
-    <p class="muted small-text">下表「在使用部門」只列出已選用此知識庫的部門；選用文件不代表已核准或索引完成。</p>
+    <p class="muted small-text">
+      點上方部門標籤可指派或取消部門；指派後，該部門會出現在下表「在使用部門」，點標籤即可設定該部門是否使用這份文件。
+      {% if is_it_reviewer %}資訊部可設定所有部門。{% else %}一般部門只能設定自己部門的使用。{% endif %}
+      選用文件不代表已核准或索引完成。
+    </p>
   </div>
   <div class="stat-grid stat-grid--three">
     <div class="stat-card">
@@ -68,7 +60,6 @@
         <form class="toolbar__actions"
               method="get"
               action="/knowledge/{{ kb.id }}/documents">
-          <input type="hidden" name="department_id" value="{{ department_id }}">
           <input class="search-input"
                  name="q"
                  type="search"
@@ -85,7 +76,7 @@
         </form>
         <button type="button"
                 class="btn btn--success btn--small"
-                data-open-dialog="upload-modal">＋ 上傳新文件（可多選）</button>
+                data-open-dialog="upload-modal">＋ 上傳文件</button>
       </div>
     </div>
     <p class="muted small-text">搜尋結果：{{ rows | length }} / {{ counts.total }} 份文件。搜尋名稱及檔名，不搜尋全文。</p>
@@ -128,11 +119,12 @@
               <td>
                 {% if doc.can_index %}
                   <form method="post"
-                        action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/index">
+                        action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/index"
+                        data-busy="正在建立索引（擷取文字、切段、向量），約需 5～20 秒…">
                     <button type="submit" class="btn btn--secondary btn--small">建立索引</button>
                   </form>
                 {% endif %}
-                {% if is_it_reviewer and (doc.status == 'active' or doc.can_approve) %}
+                {% if is_it_reviewer and (doc.status == "active" or doc.can_approve) %}
                   <form method="post"
                         action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/status">
                     <input type="hidden"
@@ -141,8 +133,8 @@
                     <button type="submit"
                             class="btn btn--small {% if doc.status == 'active' %}btn--danger{% else %}btn--success{% endif %}">{{ "暫停文件" if doc.status == "active" else "核准文件" }}</button>
                   </form>
-                {% elif not doc.can_approve %}
-                  <small class="muted">索引完成後才能核准</small>
+                {% elif not doc.can_approve and not is_it_reviewer %}
+                  <small class="muted">待資訊部確認內容並建立索引</small>
                 {% else %}
                   <small class="muted">待資訊部核准</small>
                 {% endif %}

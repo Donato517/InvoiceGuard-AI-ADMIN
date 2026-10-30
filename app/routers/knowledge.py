@@ -1,6 +1,7 @@
 """
 模組名稱：app.routers.knowledge
-功能說明：知識庫與文件管理——列表、文件清單、上傳對話框、部門指派與問答選用、審核、索引、編輯與下載。
+功能說明：知識庫與文件管理——列表、文件清單、上傳對話框、部門指派與問答選用、審核、索引、編輯與下載，
+          以及問答測試（/knowledge/chat）。
 路由：/knowledge
 注意事項：
     - 本路由需目前部門有 RAG知識庫管理（rag_manager）的查看權限（require_knowledge_access）；
@@ -40,6 +41,7 @@ from app.schemas.rag import (
     RagRuleError,
 )
 from app.services import rag_admin_service as rag_service
+from app.services import rag_qa_service
 from app.services.e_admin_service import KNOWLEDGE, EModule, get_e_module
 from app.services.rag_admin_service import RagUnavailableError, UploadItem
 from app.services.rag_selection_service import can_manage_knowledge_base
@@ -164,6 +166,7 @@ def _kb_badges(
             "name": d.department_name,
             "state": "on" if d.department_id in assigned else "off",
             "can_toggle": can_toggle,
+            "owner": d.department_id == kb.submitted_department_id,
         }
         for d in departments
     ]
@@ -259,6 +262,8 @@ def _render_knowledge_list(
                     _department_name(departments, r.department_id) for r in mine if r.use_for_qa
                 ],
                 "can_manage": can_manage_knowledge_base(kb, mine, actor),
+                "to_index": len(overview.files_to_index.get(kb.knowledge_base_id, [])),
+                "file_count": overview.file_counts.get(kb.knowledge_base_id, 0),
             }
         )
 
@@ -426,6 +431,7 @@ def _doc_badges(
             "name": d.department_name,
             "state": "on" if d.department_id in using else "off",
             "can_toggle": manager or d.department_id == actor.department_id,
+            "owner": d.department_id == rag_file.owner_department_id,
         }
         for d in departments
         if d.department_id in assigned
@@ -446,21 +452,17 @@ def _index_note(rag_file: RagFile, view: rag_service.DocumentsView) -> str | Non
 def document_list(
     request: Request,
     kb_id: str,
-    department_id: Annotated[str, Query()] = "",
     q: Annotated[str, Query()] = "",
     approval: Annotated[str, Query()] = "all",
 ) -> HTMLResponse:
     """知識庫文件清單：統計、搜尋、核准篩選、文件部門選用、索引、核准／暫停。"""
-    return _render_document_list(
-        request, _uuid(kb_id), department_id=department_id, q=q, approval=approval
-    )
+    return _render_document_list(request, _uuid(kb_id), q=q, approval=approval)
 
 
 def _render_document_list(
     request: Request,
     kb_id: str,
     *,
-    department_id: str = "",
     q: str = "",
     approval: str = "all",
     error: str | None = None,
@@ -500,7 +502,7 @@ def _render_document_list(
             "processing_label": PARSE_LABELS.get(f.parse_status, "等待索引"),
             "index_note": _index_note(f, view),
             "can_approve": f.parse_status == PARSE_READY,
-            "can_index": manager and f.parse_status in {PARSE_UPLOADED, PARSE_FAILED},
+            "can_index": actor.is_it and f.parse_status in {PARSE_UPLOADED, PARSE_FAILED},
             "created_at": f.created_at,
             "badges": _doc_badges(kb, f, view, departments, actor),
             "toggle_url": f"/knowledge/{kb_id}/documents/{f.rag_file_id}/toggle-dept",
@@ -513,11 +515,6 @@ def _render_document_list(
         "approved": approved_count,
         "unapproved": len(view.files) - approved_count,
     }
-    assigned = [
-        {"id": d.department_id, "name": d.department_name}
-        for d in departments
-        if any(r.department_id == d.department_id and r.can_read for r in view.access_rows)
-    ]
     kb_view = {
         "id": kb_id,
         "title": kb.knowledge_name,
@@ -529,8 +526,6 @@ def _render_document_list(
         "pages/knowledge/documents.html",
         {
             "kb": kb_view,
-            "department_id": department_id or actor.department_id,
-            "assigned_departments": assigned,
             "departments": _department_views(departments),
             "current_department_name": _department_name(departments, actor.department_id),
             "counts": counts,
@@ -615,10 +610,40 @@ def update_document_status(
     return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
 
 
+@router.post("/{kb_id}/index-next", response_model=None)
+def index_next_document(request: Request, module: Module, kb_id: str) -> Response:
+    """資訊部在知識庫列表直接建立索引：處理此知識庫最早一份待索引的文件（一次一份）。"""
+    _authorize_review(request, module)
+    kb_id = _uuid(kb_id)
+    try:
+        pending = rag_service.load_overview().files_to_index.get(kb_id, [])
+        if not pending:
+            raise RagRuleError("NOTHING_TO_INDEX", "這個知識庫沒有待建立索引的文件")
+        rag_service.index_document(kb_id, pending[0], _viewer(request))
+    except RagRuleError as error:
+        return _list_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge", status_code=303)
+
+
+@router.post("/{kb_id}/reindex", response_model=None)
+def queue_knowledge_base_reindex(request: Request, module: Module, kb_id: str) -> Response:
+    """資訊部把知識庫內已索引的文件重新排入索引，之後在列表逐份按「建立索引」。"""
+    actor = _authorize_review(request, module)
+    try:
+        rag_service.queue_reindex(_uuid(kb_id), actor)
+    except RagRuleError as error:
+        return _list_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge", status_code=303)
+
+
 @router.post("/{kb_id}/documents/{doc_id}/index", response_model=None)
 def index_document(request: Request, module: Module, kb_id: str, doc_id: str) -> Response:
-    """手動索引一份文件（擷取文字、切段、向量），一次一份，不在背景執行。"""
-    actor = _authorize(request, module, Action.EDIT)
+    """資訊部手動索引一份文件（擷取文字、切段、向量），一次一份，不在背景執行。"""
+    actor = _authorize_review(request, module)
     kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
     try:
         rag_service.index_document(kb_id, doc_id, actor)
@@ -907,9 +932,13 @@ async def upload_documents(
     knowledge_base_title: Annotated[str | None, Form()] = None,
     title: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
-    """批次上傳文件到既有或新建立的知識庫（HTMX 回傳結果片段）；上傳部門為目前部門。"""
+    """上傳一份文件到既有或新建立的知識庫（HTMX 回傳結果片段）；上傳部門為目前部門。"""
     actor = _authorize(request, module, Action.CREATE)
     named = [f for f in files if f.filename]
+    if len(named) > 1:
+        return HTMLResponse(
+            '<div class="alert alert--danger">一次上傳一份文件，請逐份上傳。</div>', status_code=400
+        )
     items = [
         UploadItem(
             f.filename or "",
@@ -935,3 +964,64 @@ async def upload_documents(
             f'<div class="alert alert--danger">{escape(str(error))}</div>', status_code=503
         )
     return _upload_result([(o.ok, f"{o.filename}：{o.message}") for o in outcomes])
+
+
+# ---- 問答 ----
+
+
+def _chat_context(request: Request) -> dict[str, Any]:
+    """問答頁右側面板：資訊部可選任一知識庫測試；其他部門只顯示目前選用的知識庫。"""
+    actor = _viewer(request)
+    try:
+        overview = rag_service.load_overview()
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    names = {kb.knowledge_base_id: kb.knowledge_name for kb in overview.knowledge_bases}
+    current = next(
+        (
+            r.knowledge_base_id
+            for r in overview.access_rows
+            if r.department_id == actor.department_id and r.use_for_qa
+        ),
+        None,
+    )
+    return {
+        "is_it_reviewer": actor.is_it,
+        "knowledge_bases": [
+            {
+                "id": kb.knowledge_base_id,
+                "title": kb.knowledge_name,
+                "approval_label": APPROVAL_LABELS.get(kb.approval_status, "待審核"),
+            }
+            for kb in overview.knowledge_bases
+        ],
+        "current_title": names.get(current) if current else None,
+    }
+
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request) -> HTMLResponse:
+    """問答頁：一般部門用目前選用的知識庫；資訊部可指定知識庫測試（含未核准文件）。"""
+    return templates.TemplateResponse(request, "pages/knowledge/chat.html", _chat_context(request))
+
+
+@router.post("/chat/ask", response_class=HTMLResponse)
+def chat_ask(
+    request: Request,
+    question: Annotated[str, Form()] = "",
+    knowledge_base_id: Annotated[str, Form()] = "",
+) -> HTMLResponse:
+    """回答一個問題（HTMX 回傳提問與回答兩則訊息）；不保存問答內容。"""
+    actor = _viewer(request)
+    kb_id = _uuid(knowledge_base_id) if knowledge_base_id else None
+    try:
+        answer = rag_qa_service.ask(question, actor, kb_id)
+    except RagRuleError as error:
+        return HTMLResponse(
+            f'<div class="message assistant">{escape(error.message)}</div>', status_code=400
+        )
+    return templates.TemplateResponse(
+        request,
+        "pages/knowledge/_chat_message.html",
+        {"question": question.strip(), "answer": answer, "is_it_reviewer": actor.is_it},
+    )

@@ -709,7 +709,7 @@ def test_index_document_runs_pending_job_and_closes_clients(store: FakeStore) ->
     result = service.index_document(
         "kb-tax",
         "f-pdf",
-        FINANCE,
+        IT,
         embedding_factory=EmbeddingContext,
         pdf_client_factory=lambda: pdf,
         read_object=_reader(b"%PDF"),
@@ -723,7 +723,7 @@ def test_index_document_requeues_failed_file(store: FakeStore) -> None:
     result = service.index_document(
         "kb-tax",
         "f-txt",
-        FINANCE,
+        IT,
         embedding_factory=EmbeddingContext,
         read_object=_reader(TXT.encode()),
     )
@@ -731,14 +731,14 @@ def test_index_document_requeues_failed_file(store: FakeStore) -> None:
     assert store.jobs["job-new"].job_type == "reindex"
 
 
-def test_index_document_rejects_ready_file_and_other_department(store: FakeStore) -> None:
+def test_index_document_rejects_ready_file_and_non_it(store: FakeStore) -> None:
     store.jobs = {}
     store.files["f-txt"] = replace(store.files["f-txt"], parse_status=PARSE_READY)
     with pytest.raises(RagRuleError) as ready:
-        service.index_document("kb-tax", "f-txt", FINANCE, embedding_factory=EmbeddingContext)
-    with pytest.raises(RagRuleError) as other:
-        service.index_document("kb-tax", "f-pdf", PROCUREMENT, embedding_factory=EmbeddingContext)
-    assert (ready.value.code, other.value.code) == ("ALREADY_INDEXED", "NOT_MANAGER")
+        service.index_document("kb-tax", "f-txt", IT, embedding_factory=EmbeddingContext)
+    with pytest.raises(RagRuleError) as uploader:
+        service.index_document("kb-tax", "f-pdf", FINANCE, embedding_factory=EmbeddingContext)
+    assert (ready.value.code, uploader.value.code) == ("ALREADY_INDEXED", "NOT_IT_REVIEWER")
 
 
 # ---- 問答選用範圍 ----
@@ -750,3 +750,12 @@ def test_qa_source_only_for_own_department_unless_it(store: FakeStore) -> None:
     assert error.value.code == "OTHER_DEPARTMENT"
     service.clear_qa_source("procurement", IT)
     assert store.qa("procurement") == []
+
+
+def test_queue_reindex_is_it_only(store: FakeStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    queued: list[str] = []
+    monkeypatch.setattr(rag_repository, "queue_reindex", lambda db, kb: queued.append(kb) or 2)
+
+    with pytest.raises(RagRuleError):
+        service.queue_reindex("kb-tax", FINANCE)
+    assert service.queue_reindex("kb-tax", IT) == 2 and queued == ["kb-tax"]

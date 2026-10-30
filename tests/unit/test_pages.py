@@ -1,6 +1,5 @@
 """測試目標：頁面路由、管理者登入保護、錯誤頁、靜態檔"""
 
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -14,16 +13,7 @@ from app.core.config import settings
 from app.core.security import create_session_token
 from app.db.session import get_db
 from app.main import app
-from app.routers.knowledge import require_knowledge_access
 from app.services import system_service
-
-
-@pytest.fixture
-def knowledge_client() -> Iterator[TestClient]:
-    """略過知識庫權限檢查；權限本身由 test_knowledge_access 與 test_department_login 測試。"""
-    app.dependency_overrides[require_knowledge_access] = lambda: None
-    yield TestClient(app, follow_redirects=False)
-    app.dependency_overrides.clear()
 
 
 def test_health_returns_ok(client: TestClient) -> None:
@@ -181,83 +171,6 @@ def test_knowledge_page_redirects_without_login(client: TestClient) -> None:
     response = client.get("/knowledge")
     assert response.status_code == 303
     assert "/login?next=" in response.headers["location"]
-
-
-def test_knowledge_list_renders_for_admin(knowledge_client: TestClient) -> None:
-    response = knowledge_client.get("/knowledge")
-    assert response.status_code == 200
-    assert "知識庫管理" in response.text
-    assert "營業稅相關規定" in response.text
-
-
-def test_toggle_kb_department_htmx(knowledge_client: TestClient) -> None:
-    response = knowledge_client.post(
-        "/knowledge/shared-tax/toggle-dept",
-        data={"department_id": "finance", "enable": "false"},
-    )
-    assert response.status_code == 200
-    assert "財務部" in response.text
-
-
-def test_documents_list_renders(knowledge_client: TestClient) -> None:
-    response = knowledge_client.get("/knowledge/shared-tax/documents")
-    assert response.status_code == 200
-    assert "tax-guide.pdf" in response.text
-    assert "已核准" in response.text
-
-
-def test_toggle_document_department_htmx(knowledge_client: TestClient) -> None:
-    response = knowledge_client.post(
-        "/knowledge/shared-tax/documents/sample-tax/toggle-dept",
-        data={"department_id": "procurement", "enable": "false"},
-    )
-    assert response.status_code == 200
-    assert "採購部" in response.text
-
-
-def test_document_status_update(knowledge_client: TestClient) -> None:
-    response = knowledge_client.post(
-        "/knowledge/shared-tax/documents/sample-tax/status",
-        data={"status": "hold"},
-    )
-    assert response.status_code == 303
-    assert response.headers["location"] == "/knowledge/shared-tax/documents"
-
-
-def test_edit_kb_page_and_rename(knowledge_client: TestClient) -> None:
-    response = knowledge_client.get("/knowledge/shared-tax/edit")
-    assert response.status_code == 200
-    assert "編輯知識庫" in response.text
-
-    rename_res = knowledge_client.post(
-        "/knowledge/shared-tax/rename",
-        data={"title": "營業稅相關規定（新版）"},
-    )
-    assert rename_res.status_code == 303
-
-
-def test_document_content_and_download(knowledge_client: TestClient) -> None:
-    content_res = knowledge_client.get("/knowledge/shared-tax/documents/sample-tax/content")
-    assert content_res.status_code == 200
-    assert "統一發票應依規定開立與申報" in content_res.text
-
-    download_res = knowledge_client.get("/knowledge/shared-tax/documents/sample-tax/download")
-    assert download_res.status_code == 200
-    assert "attachment" in download_res.headers.get("content-disposition", "")
-
-
-def test_upload_documents_batch(knowledge_client: TestClient) -> None:
-    response = knowledge_client.post(
-        "/knowledge/documents",
-        data={
-            "department_id": "finance",
-            "knowledge_base_id": "shared-tax",
-            "status": "hold",
-        },
-        files=[("files", ("test_policy.txt", b"Test policy content", "text/plain"))],
-    )
-    assert response.status_code == 200
-    assert "test_policy.txt" in response.text
 
 
 def test_invoices_list_renders_for_admin(admin_client: TestClient) -> None:

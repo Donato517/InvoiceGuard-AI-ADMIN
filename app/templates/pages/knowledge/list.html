@@ -1,12 +1,19 @@
 {#
   @template pages/knowledge/list.html
   @description 全部門知識庫管理（HTML 原型 renderKnowledge）：統計、搜尋、部門篩選、部門選用切換。
-  @route GET /knowledge（需管理者登入）
+  @route GET /knowledge（需目前部門有知識庫查看權限）
   @context counts: dict               {total, active, inactive, unknown}
-  @context rows: list[dict]           [{id, title, badges, toggle_url}]
+  @context rows: list[dict]           [{id, title, badges, toggle_url, approval_status, approval_label,
+                                      review_comment, qa_department_names, can_manage, to_index}]
+                                      to_index：待建立索引的文件數（資訊部可在列表直接建立，一次一份）
+  @context current_department_name: str  目前選取部門（上傳部門）
   @context departments: list[dict]    [{id, name}] 供篩選下拉
   @context q: str                     名稱搜尋字串（只搜名稱，不搜文件全文）
   @context department_id: str         目前篩選的部門 id，"all" 為全部
+  @context is_it_reviewer: bool       目前部門是否為資訊部（可核准／退回知識庫）
+  @context qa_choices: list[dict]     [{id, name, options, current, editable}] 各部門可選用問答的知識庫與目前選用；
+                                      editable 為目前部門（資訊部可設定全部）
+  @context error: str | None          上一次操作不符規則的訊息
 #}
 {% extends "layouts/admin.html" %}
 {% block title %}知識庫管理{% endblock %}
@@ -18,7 +25,8 @@
     <h2>全部門知識庫管理</h2>
     <p class="muted small-text">點知識庫名稱編輯或刪除，點「查看文件」開啟文件清單。</p>
   </div>
-  <p class="alert alert--info">綠色部門＝已選用於問答；灰色＝未選用。部門篩選只顯示該部門目前選用的知識庫，取消選用不會刪除文件。</p>
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <p class="alert alert--info">藍色＝上傳（送審）部門；綠色＝已指派、可使用的部門；灰色＝未指派；只有送審部門、可管理的部門與資訊部能切換。每個部門只能選用一個「已核准」的知識庫做問答，請在下方「部門問答選用」設定。新知識庫須經資訊部核准。</p>
   <div class="stat-grid stat-grid--three">
     <div class="stat-card">
       <div class="stat-card__label">知識庫總數</div>
@@ -72,15 +80,23 @@
           </noscript>
         </form>
         <a href="/knowledge" class="btn btn--secondary btn--small">重新載入</a>
+        <a href="/knowledge/chat" class="btn btn--primary btn--small">💬 知識庫問答</a>
       </div>
     </div>
     <p class="muted small-text">搜尋結果：{{ rows | length }} 個，只搜尋名稱，不搜尋文件全文。</p>
+    {% if not rows and not q and department_id == "all" %}
+      <p class="muted small-text">目前還沒有知識庫，請按「＋ 新增知識庫及文件」建立。</p>
+    {% endif %}
+    {% if not is_it_reviewer %}
+      <p class="muted small-text">知識庫與文件的核准、退回限資訊部操作。</p>
+    {% endif %}
     <div id="kb-table" class="table-wrap">
       <table class="table">
         <thead>
           <tr>
             <th scope="col">知識庫名稱（編輯）</th>
-            <th scope="col">使用部門（可切換）</th>
+            <th scope="col">審核狀態</th>
+            <th scope="col">指派部門（可切換）</th>
             <th scope="col">操作</th>
           </tr>
         </thead>
@@ -91,6 +107,13 @@
                 <a href="/knowledge/{{ kb.id }}/edit">{{ kb.title }}</a>
               </td>
               <td>
+                <span class="badge {% if kb.approval_status == 'approved' %}badge--success{% elif kb.approval_status == 'rejected' %}badge--danger{% else %}badge--warning{% endif %}">{{ kb.approval_label }}</span>
+                {% if kb.review_comment %}<p class="muted small-text">退回原因：{{ kb.review_comment }}</p>{% endif %}
+                {% if kb.qa_department_names %}
+                  <p class="muted small-text">問答選用：{{ kb.qa_department_names | join("、") }}</p>
+                {% endif %}
+              </td>
+              <td>
                 {% with badges=kb.badges, toggle_url=kb.toggle_url, target="dept-badges-" ~ kb.id %}
                   {% include "pages/knowledge/_dept_badges.html" %}
                 {% endwith %}
@@ -98,16 +121,98 @@
               <td>
                 <a href="/knowledge/{{ kb.id }}/documents"
                    class="btn btn--secondary btn--small">查看文件</a>
+                {% if is_it_reviewer and kb.to_index %}
+                  <form method="post"
+                        action="/knowledge/{{ kb.id }}/index-next"
+                        data-busy="正在建立索引（擷取文字、切段、向量），約需 5～20 秒…">
+                    <button type="submit" class="btn btn--primary btn--small">
+                      建立索引{% if kb.to_index > 1 %}（剩 {{ kb.to_index }} 份）{% endif %}
+                    </button>
+                  </form>
+                {% elif is_it_reviewer and kb.file_count %}
+                  <form method="post"
+                        action="/knowledge/{{ kb.id }}/reindex"
+                        data-confirm="重新排入後，文件在重建索引完成前不會被問答檢索。確定要重新建立索引嗎？">
+                    <button type="submit" class="btn btn--secondary btn--small">重新索引</button>
+                  </form>
+                {% endif %}
+                {% if is_it_reviewer and kb.approval_status == "pending" %}
+                  <form method="post" action="/knowledge/{{ kb.id }}/review/approve">
+                    <button type="submit" class="btn btn--success btn--small">核准</button>
+                  </form>
+                {% endif %}
+                {% if is_it_reviewer and kb.approval_status != "rejected" %}
+                  <details>
+                    <summary>退回</summary>
+                    <form method="post" action="/knowledge/{{ kb.id }}/review/reject">
+                      <label for="reject-comment-{{ kb.id }}">退回原因</label>
+                      <input id="reject-comment-{{ kb.id }}" name="comment" required>
+                      <button type="submit" class="btn btn--danger btn--small">退回</button>
+                    </form>
+                  </details>
+                {% endif %}
+                {% if kb.approval_status == "rejected" and kb.can_manage %}
+                  <form method="post" action="/knowledge/{{ kb.id }}/review/resubmit">
+                    <button type="submit" class="btn btn--primary btn--small">重新送審</button>
+                  </form>
+                {% endif %}
               </td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="3" class="empty-state">沒有符合條件的知識庫</td>
+              <td colspan="4" class="empty-state">沒有符合條件的知識庫</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+  </section>
+  <section class="card" aria-label="部門問答選用">
+    <h2 class="card__title">部門問答選用（每個部門一個）</h2>
+    <p class="muted small-text">只列出已核准、啟用中且已指派給該部門的知識庫。退回知識庫時會自動取消選用。</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">部門</th>
+            <th scope="col">問答使用的知識庫</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dept in qa_choices %}
+            <tr>
+              <td>{{ dept.name }}</td>
+              <td>
+                {% if not dept.options and not dept.current %}
+                  <small class="muted">尚無已核准並指派給此部門的知識庫</small>
+                {% else %}
+                  <form class="toolbar__actions" method="post" action="/knowledge/qa-source">
+                    <input type="hidden" name="department_id" value="{{ dept.id }}">
+                    <label for="qa-source-{{ dept.id }}" class="muted small-text">選用</label>
+                    <select id="qa-source-{{ dept.id }}"
+                            name="knowledge_base_id"
+                            {% if not dept.editable %}disabled{% endif %}>
+                      <option value="">（不選用）</option>
+                      {% for option in dept.options %}
+                        <option value="{{ option.id }}"
+                                {% if option.id == dept.current %}selected{% endif %}>{{ option.title }}</option>
+                      {% endfor %}
+                    </select>
+                    {% if dept.editable %}
+                      <button type="submit" class="btn btn--secondary btn--small">儲存</button>
+                    {% else %}
+                      <small class="muted">由該部門設定</small>
+                    {% endif %}
+                    {% if dept.options | length > 1 %}<small class="muted">可選 {{ dept.options | length }} 個，同時只能用 1 個</small>{% endif %}
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small-text">文件上傳後由資訊部確認內容並「建立索引」，完成向量後才能核准並被檢索；問答畫面尚未接線。</p>
   </section>
   {% with new_knowledge_base=true %}
     {% include "pages/knowledge/_upload_modal.html" %}

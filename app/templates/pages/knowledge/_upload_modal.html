@@ -1,21 +1,25 @@
 {#
   @template pages/knowledge/_upload_modal.html
-  @description 上傳多個文件的對話框（HTML 原型 uploadDialog）。開關由 main.js 的 data-open-dialog / data-close-dialog 處理。
-  @route POST /knowledge/documents（multipart）→ 逐檔寫入 Storage 與 DB，回傳每檔結果
+  @description 上傳文件的對話框（HTML 原型 uploadDialog）：一次一份，文件名稱與檔案一一對應，方便資訊部逐份確認。
+               開關由 main.js 的 data-open-dialog / data-close-dialog 處理；上傳中顯示處理中遮罩，成功後按鈕改為「完成」。
+  @route POST /knowledge/documents（multipart）→ 寫入 Storage（bucket rag）與 DB，回傳結果
   @context kb: dict | None                 在既有知識庫內上傳時提供；新增知識庫時為 None
-  @context departments: list[dict]         可選擇的所屬部門 [{id, name}]
+  @context current_department_name: str    上傳部門（目前選取部門，由登入身分決定，不能在表單更改）
   @context new_knowledge_base: bool        true 時顯示「知識庫名稱」欄位
 #}
 <dialog id="upload-modal" class="modal" aria-labelledby="upload-heading">
-  <form method="post"
+  <form class="upload-form"
+        method="post"
         action="/knowledge/documents"
         enctype="multipart/form-data"
         hx-post="/knowledge/documents"
         hx-encoding="multipart/form-data"
         hx-target="#batch-results"
-        hx-swap="innerHTML">
+        hx-swap="innerHTML"
+        hx-on::after-request="this.classList.toggle('is-done', event.detail.successful)"
+        data-busy="正在上傳文件，請勿關閉視窗…">
     <div class="modal__header">
-      <h2 id="upload-heading">上傳多個文件</h2>
+      <h2 id="upload-heading">上傳文件</h2>
       <button type="button"
               class="btn btn--secondary btn--small"
               data-close-dialog
@@ -30,45 +34,37 @@
                  name="knowledge_base_title"
                  maxlength="160"
                  required>
+          <span class="muted small-text">新知識庫須經資訊部核准後才能供部門問答。</span>
         </div>
       {% endif %}
+      <p class="muted small-text">上傳部門：{{ current_department_name }}（目前選取的部門）</p>
       <div class="form-field">
-        <label for="upload-department">所屬部門</label>
-        <select id="upload-department" name="department_id" required>
-          {% for dept in departments %}<option value="{{ dept.id }}">{{ dept.name }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="form-field">
-        <label for="document-title">文件名稱（單檔可自訂，多檔使用各自檔名）</label>
+        <label for="document-title">文件名稱（空白時使用檔名）</label>
         <input id="document-title" name="title" maxlength="160">
       </div>
       <div class="form-field">
-        <label for="document-files">選擇文件（可多選）</label>
+        <label for="document-files">選擇文件</label>
         <div class="file-box">
           <input id="document-files"
                  name="files"
                  type="file"
                  accept=".pdf,.docx,.txt,.md"
-                 multiple
                  required>
-          <span class="muted">支援 PDF、DOCX、TXT、Markdown；每檔 20 MB 以下。</span>
+          <span class="muted">一次上傳一份。支援 PDF、DOCX、TXT、Markdown，4 MB 以下；PDF 目前最多 15 頁，DOCX 可上傳但尚無法索引。</span>
         </div>
       </div>
-      <div class="form-field">
-        <label for="document-status">文件審核設定</label>
-        <select id="document-status" name="status">
-          <option value="hold">未核准（預設）</option>
-          <option value="active">已核准</option>
-        </select>
-      </div>
+      <p class="muted small-text">新上傳一律未核准；由資訊部確認內容並建立索引後核准。</p>
       <div id="batch-results"
            class="batch-results"
            role="status"
            aria-live="polite"></div>
     </div>
     <div class="modal__footer">
-      <button type="button" class="btn btn--secondary" data-close-dialog>取消</button>
-      <button type="submit" class="btn btn--primary">上傳文件</button>
+      <button type="button"
+              class="btn btn--secondary upload-form__pending"
+              data-close-dialog>取消</button>
+      <button type="submit" class="btn btn--primary upload-form__pending">上傳文件</button>
+      <a href="" class="btn btn--primary upload-form__done">完成</a>
     </div>
   </form>
 </dialog>

@@ -1,0 +1,66 @@
+{#
+  @template pages/knowledge/chat.html
+  @description 知識庫問答（HTML 原型「問答輔助」的聊天版面）：左側對話、右側知識庫。回答只依知識庫段落，找不到就不回答；
+               問答不保存，重新整理即清空。
+  @route GET /knowledge/chat；提問 POST /knowledge/chat/ask（HTMX，附加到對話區）
+  @context is_it_reviewer: bool          目前部門是否為資訊部（可指定知識庫測試，含未核准文件）
+  @context knowledge_bases: list[dict]   [{id, title, approval_label}] 資訊部測試可選的知識庫
+  @context current_title: str | None     目前部門選用的問答知識庫名稱
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}知識庫問答{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <a href="/knowledge" class="btn btn--secondary btn--small">← 返回知識庫管理</a>
+    <h2>知識庫問答</h2>
+    <p class="muted small-text">回答只根據知識庫的條文，並附上來源；找不到相關內容時不會猜測。對話不保存，重新整理即清空。</p>
+  </div>
+  <form class="qa-layout"
+        hx-post="/knowledge/chat/ask"
+        hx-target="#chatMessages"
+        hx-swap="beforeend scroll:#chatMessages:bottom"
+        hx-disabled-elt="find button[type=submit]"
+        data-busy="正在查詢知識庫並整理回答，約需 5～15 秒…"
+        hx-on::after-request="if (event.detail.successful) this.querySelector('textarea').value = ''">
+    <section class="card chat-card" aria-label="對話">
+      <div class="toolbar">
+        <h3 class="card__title">💬 智慧問答</h3>
+        <a href="/knowledge/chat" class="btn btn--secondary btn--small">清除對話</a>
+      </div>
+      <div id="chatMessages" role="log" aria-live="polite">
+        <div class="message assistant">
+          您好！我是知識庫小助理，可以幫你查發票、營業稅與會計相關規定。
+          {% if not is_it_reviewer and not current_title %}目前部門還沒有選用問答知識庫，請先到知識庫管理設定。{% endif %}
+        </div>
+      </div>
+      <div class="ask-form">
+        <textarea name="question"
+                  rows="2"
+                  maxlength="500"
+                  required
+                  aria-label="問題"
+                  placeholder="輸入問題，例如：三聯式發票遺失要怎麼處理？"></textarea>
+        <button type="submit" class="btn btn--primary">送出</button>
+      </div>
+    </section>
+    <aside class="card" aria-label="知識庫">
+      <h3 class="card__title">知識庫</h3>
+      {% if is_it_reviewer %}
+        <label for="chat-kb" class="muted small-text">資訊部測試：選擇知識庫（含未核准、已索引的文件）</label>
+        <select id="chat-kb" name="knowledge_base_id">
+          <option value="">（依資訊部目前選用的知識庫）</option>
+          {% for kb in knowledge_bases %}<option value="{{ kb.id }}">{{ kb.title }}（{{ kb.approval_label }}）</option>{% endfor %}
+        </select>
+        <p class="muted small-text">測試結果只供核准前確認，不代表文件已開放給各部門。</p>
+      {% elif current_title %}
+        <p>目前部門使用：<strong>{{ current_title }}</strong></p>
+        <p class="muted small-text">只會檢索已核准、已索引並供本部門使用的文件。</p>
+      {% else %}
+        <p class="muted small-text">尚未選用問答知識庫。</p>
+      {% endif %}
+    </aside>
+  </form>
+{% endblock content %}

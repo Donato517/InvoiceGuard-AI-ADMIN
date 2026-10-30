@@ -1,0 +1,23 @@
+{#
+  @template pages/knowledge/_chat_message.html
+  @description 一次提問與回答（HTMX 附加到 #chatMessages）；有引用時列出來源。
+  @route POST /knowledge/chat/ask
+  @context question: str            使用者的問題
+  @context answer: QaAnswer         回答：text、grounded、sources[{number, file_title, knowledge_name, chunk_index}]、note
+  @context is_it_reviewer: bool     資訊部才顯示 note（測試診斷，不含內容）
+#}
+<div class="message user">
+  <div class="message__text">{{ question }}</div>
+</div>
+<div class="message assistant">
+  <div class="message__text">{{ answer.text }}</div>
+  {% if answer.sources %}
+    <div class="sources">
+      來源：
+      {% for source in answer.sources %}
+        <div>[{{ source.number }}] 《{{ source.file_title }}》第 {{ source.chunk_index + 1 }} 段</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if is_it_reviewer and answer.note %}<small class="muted">（測試說明：{{ answer.note }}）</small>{% endif %}
+</div>

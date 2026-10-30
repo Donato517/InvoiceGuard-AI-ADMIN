@@ -83,6 +83,46 @@ document.addEventListener('submit', (event) => {
 })
 
 /**
+ * 處理中遮罩：表單加上 data-busy="訊息"，送出後整個畫面反灰並顯示處理中，避免重複送出。
+ * 一般表單送出後等待換頁；HTMX 表單在請求結束時關閉。
+ * @example
+ * <form method="post" action="/knowledge/.../index" data-busy="正在建立索引…">
+ */
+function setBusy(message) {
+  let overlay = document.getElementById('busy-overlay')
+  if (!message) {
+    overlay?.remove()
+    return
+  }
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'busy-overlay'
+    overlay.className = 'busy-overlay'
+    overlay.setAttribute('role', 'status')
+    overlay.setAttribute('aria-live', 'assertive')
+    overlay.innerHTML = '<div class="busy-overlay__box"><span class="busy-overlay__spinner"></span><span class="busy-overlay__text"></span></div>'
+    // 開啟中的 <dialog> 位於最上層，遮罩要放進對話框裡才看得到
+    ;(document.querySelector('dialog[open]') || document.body).append(overlay)
+  }
+  overlay.querySelector('.busy-overlay__text').textContent = message
+}
+
+document.addEventListener('submit', (event) => {
+  const message = event.target.dataset.busy
+  if (message && !event.defaultPrevented) {
+    setBusy(message)
+  }
+})
+document.addEventListener('htmx:beforeRequest', (event) => {
+  const message = event.detail.elt.closest('[data-busy]')?.dataset.busy
+  if (message) {
+    setBusy(message)
+  }
+})
+document.addEventListener('htmx:afterRequest', () => setBusy(null))
+window.addEventListener('pageshow', () => setBusy(null))
+
+/**
  * 對話框開關與拖曳上傳點擊觸發。
  */
 document.addEventListener('click', (event) => {

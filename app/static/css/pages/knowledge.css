@@ -50,6 +50,12 @@
   border-color: var(--color-dept-badge-on-border);
 }
 
+.dept-badge--owner {
+  color: var(--color-primary);
+  background-color: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
 .dept-badge--pending {
   color: var(--color-dept-badge-pending-text);
   background-color: var(--color-dept-badge-pending-bg);
@@ -86,4 +92,98 @@
   height: 65vh;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+}
+
+/* ---- 知識庫問答（原型「問答輔助」） ---- */
+.qa-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 36rem;
+  margin: 0;
+}
+
+#chatMessages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-height: 30rem;
+  padding: var(--space-5) 0;
+  overflow: auto;
+}
+
+.message {
+  max-width: 88%;
+  padding: var(--space-3) var(--space-4);
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-lg);
+}
+
+/* 只有訊息本文保留換行，樣板縮排不會變成空白 */
+.message__text {
+  white-space: pre-wrap;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background-color: var(--color-primary-soft);
+}
+
+.message.user {
+  align-self: flex-end;
+  color: #fff;
+  background-color: var(--color-primary);
+}
+
+.message .sources {
+  padding-top: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-primary-soft-text);
+  border-top: 1px solid var(--color-border);
+}
+
+.ask-form {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ask-form textarea {
+  flex: 1;
+}
+
+/* 長知識庫名稱不撐出右側面板 */
+.qa-layout aside {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.qa-layout aside select {
+  width: 100%;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .qa-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 上傳完成後：隱藏取消／上傳，改顯示「完成」（重新整理頁面） */
+.upload-form__done,
+.upload-form.is-done .upload-form__pending {
+  display: none;
+}
+
+.upload-form.is-done .upload-form__done {
+  display: inline-flex;
 }

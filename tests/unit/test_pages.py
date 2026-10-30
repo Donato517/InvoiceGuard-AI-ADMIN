@@ -416,16 +416,69 @@ def test_batch_filing_page_and_export(admin_client: TestClient) -> None:
     assert "已勾選" in filing_res.text
     assert "產生並下載申報檔" in filing_res.text
 
-    # 批次匯出申報檔
+    # 示範發票的統編檢查碼與字軌未通過 F09 檢核：單張顯示原因、不產生預覽，批次整批不產檔
+    assert "不可列入申報" in step6_res.text
+    assert "銷售人統編未通過統一編號邏輯檢查" in step6_res.text
+    assert '<pre class="filing-line">' not in step6_res.text
     export_res = admin_client.post(
         "/invoices/filing/export",
         data={"period": "11308", "invoice_ids": [1, 2, 5]},
     )
-    assert export_res.status_code == 200
-    assert export_res.headers["content-type"].startswith("text/plain")
-    assert "12345678.TXT" in export_res.headers["content-disposition"]
-    lines = [ln for ln in export_res.text.splitlines() if ln]
-    assert len(lines) == 3
-    for line in lines:
+    assert export_res.status_code == 400
+    assert "content-disposition" not in export_res.headers
+
+
+def test_batch_filing_exports_valid_invoice_with_f09(admin_client: TestClient) -> None:
+    from app.routers.invoices import _INVOICE_STORE
+
+    initial_ids = {int(i["id"]) for i in _INVOICE_STORE}
+    valid = {
+        "id": 901,
+        "invoice_number": "EC08904069",
+        "invoice_date": "115/09/15",
+        "seller_tax_id": "27601907",
+        "buyer_tax_id": "04595252",
+        "net_amount": 6000,
+        "tax_amount": 300,
+        "tax_category": "應稅",
+        "deduction_code": "1 - 進貨及費用",
+        "review_status": "approved",
+        "status": "passed",
+        "stage": 9,
+        "is_completed": True,
+    }
+    _INVOICE_STORE.append(valid)
+    try:
+        page = admin_client.get(
+            "/invoices/filing",
+            params={"period": "11510", "from_date": "2026-09-01", "to_date": "2026-10-31"},
+        )
+        assert page.status_code == 200
+        assert "EC08904069" in page.text
+        assert "AB12345678" not in page.text  # 113 年示範發票不在起訖日內
+        assert "04595252.TXT" in page.text
+        assert "28／29 欄 $6,000／$300" in page.text
+
+        export = admin_client.post(
+            "/invoices/filing/export", data={"period": "11510", "invoice_ids": [901]}
+        )
+        assert export.status_code == 200
+        assert "04595252.TXT" in export.headers["content-disposition"]
+        (line,) = [ln for ln in export.text.split("\r\n") if ln]
         assert len(line) == 81
-        assert line.startswith("21123456789")
+        assert line.startswith("21123456789000000111510")
+
+        mixed = admin_client.post(
+            "/invoices/filing/export", data={"period": "11510", "invoice_ids": [901, 1]}
+        )
+        assert mixed.status_code == 400
+    finally:
+        _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
+
+
+def test_batch_filing_rejects_bad_period(admin_client: TestClient) -> None:
+    response = admin_client.post(
+        "/invoices/filing/export", data={"period": "113", "invoice_ids": [1]}
+    )
+
+    assert response.status_code == 400

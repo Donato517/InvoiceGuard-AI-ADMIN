@@ -1,11 +1,16 @@
 {#
   @template pages/invoices/_batch_filing_card.html
   @description 批次產生申報檔組件（對應 F09 規格畫面），供發票流程步驟 6 與申報資料頁使用。
-  @context batch_filing: dict  {period, periods, from_date, to_date, rows, count, sales_amount, tax_amount, total_amount, company_id}
+  @context batch_filing: dict  {period, periods, from_date, to_date, rows, count, sales_amount, tax_amount, total_amount, company_id, company_issues, totals_401}
 #}
 <section class="card filing-card">
   <h2 class="card__title">批次產生申報檔</h2>
-  <div class="alert alert--warning">本機示範：以下檢核、小計與檔案由系統模擬，只用於確認畫面，不可作為正式申報檔。</div>
+  <div class="alert alert--warning">檢核與產檔使用格式 21 規則（F09）；發票與公司資料目前仍為示範資料，產出的檔案不可作為正式申報。</div>
+  {% if batch_filing.company_issues %}
+    <div class="alert alert--danger">
+      公司資料未通過檢核，無法產生申報檔：{{ batch_filing.company_issues | join("、") }}
+    </div>
+  {% endif %}
   <form id="batch-filing-form" method="post" action="/invoices/filing/export">
     <div class="filing-controls">
       <div class="field">
@@ -78,7 +83,9 @@
                 {% if not r.issues %}
                   <span class="filing-pill ok">✓ 通過</span>
                 {% else %}
-                  <span class="filing-pill bad" title="{{ r.issues[0].message }}">⚠ {{ r.issues[0].message }}</span>
+                  <span class="filing-pill bad"
+                        title="{{ r.issues | map(attribute='message') | join('；') }}">⚠ {{ r.issues[0].message }}
+                    {%- if r.issues | length > 1 %}（另 {{ r.issues | length - 1 }} 項）{% endif %}</span>
                 {% endif %}
               </td>
             </tr>
@@ -107,6 +114,13 @@
         </div>
       </div>
     </div>
+    <p class="muted small-text">
+      401 申報書進項欄位（以所有可匯出發票計算，供與申報軟體匯入結果對帳）：
+      28／29 欄 ${{ "{:,}".format(batch_filing.totals_401["28"]) }}／${{ "{:,}".format(batch_filing.totals_401["29"]) }}；
+      30／31 欄 ${{ "{:,}".format(batch_filing.totals_401["30"]) }}／${{ "{:,}".format(batch_filing.totals_401["31"]) }}；
+      48 欄 ${{ "{:,}".format(batch_filing.totals_401["48"]) }}；
+      49 欄 ${{ "{:,}".format(batch_filing.totals_401["49"]) }}
+    </p>
     <div class="filing-export">
       <div class="muted">
         檔名：<code>{{ batch_filing.company_id }}.TXT</code>（每期一檔）

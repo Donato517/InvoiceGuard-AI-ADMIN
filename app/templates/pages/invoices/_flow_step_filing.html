@@ -2,14 +2,18 @@
   @template pages/invoices/_flow_step_filing.html
   @description 步驟 6：產生申報檔（單張檢核預覽 + 批次產生申報檔）。
   @context invoice: dict           發票資料
-  @context top_preview_line: str   81 字元格式 21 預覽文字
+  @context single_filing: dict     F09 單張檢核 {issues: [{code, message}], preview_line: str | None}
   @context batch_filing: dict      批次申報資料
 #}
 <p class="muted small-text">單張發票只檢核與預覽；申報檔只能在下方批次產生，每期一檔。</p>
 <section class="card filing-card">
   <div class="toolbar">
     <h3 class="filing-section-title">本張發票檢核</h3>
-    <span class="filing-pill ok">✓ 可列入申報</span>
+    {% if single_filing.issues %}
+      <span class="filing-pill bad">⚠ 不可列入申報</span>
+    {% else %}
+      <span class="filing-pill ok">✓ 可列入申報</span>
+    {% endif %}
   </div>
   <div class="table-wrap">
     <table class="table">
@@ -36,7 +40,16 @@
     </table>
   </div>
   <p class="muted small-text filing-preview-title">格式 21 單行預覽（81 字元，不提供下載）</p>
-  <pre class="filing-line">{{ top_preview_line }}</pre>
-  <p class="muted small-text">預覽流水號固定為 0000001，申報所屬期使用下方批次區目前選的期別；實際流水號與期別以批次產生為準。（本機示範：由系統模擬檢核。）</p>
+  {% if single_filing.issues %}
+    <div class="alert alert--danger">
+      <p>以下問題修正後才能產生預覽並列入申報檔：</p>
+      <ul>
+        {% for issue in single_filing.issues %}<li>{{ issue.message }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <pre class="filing-line">{{ single_filing.preview_line }}</pre>
+  {% endif %}
+  <p class="muted small-text">預覽流水號固定為 0000001，申報所屬期使用下方批次區目前選的期別；實際流水號與期別以批次產生為準。</p>
 </section>
 {% include "pages/invoices/_batch_filing_card.html" %}

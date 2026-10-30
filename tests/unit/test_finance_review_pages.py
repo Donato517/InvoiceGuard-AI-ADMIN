@@ -28,6 +28,7 @@ def _restore_demo_state() -> Iterator[None]:
     invoices_router._INVOICE_STORE[:] = store
     invoices_router._FINANCE_CASES.clear()
     invoices_router._FINANCE_HISTORY.clear()
+    invoices_router._RETURN_SNAPSHOTS.clear()
 
 
 @pytest.fixture

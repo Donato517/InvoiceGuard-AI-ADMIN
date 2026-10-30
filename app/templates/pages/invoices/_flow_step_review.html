@@ -260,12 +260,12 @@
         {% for item in fr.history %}
           <li>
             {{ item.change.changed_at.strftime("%Y-%m-%d %H:%M") }}　→ {{ item.label }}
-            {% if item.change.return_items %}
+            {% if item.lines %}
               <ul>
-                {% for ri in item.change.return_items %}<li>{{ ri.field }}：{{ ri.reason }}</li>{% endfor %}
+                {% for line in item.lines %}<li>{{ line }}</li>{% endfor %}
               </ul>
-            {% elif item.change.reason %}
-              <span class="muted small-text">（{{ item.change.reason }}）</span>
+            {% elif item.note %}
+              <span class="muted small-text">（{{ item.note }}）</span>
             {% endif %}
           </li>
         {% endfor %}

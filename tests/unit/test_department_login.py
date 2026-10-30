@@ -233,6 +233,42 @@ def test_login_composes_session_and_only_updates_login_record(
     assert state["login_updates"] == 1
 
 
+def rag_manager_row(state: dict[str, Any], **flags: bool) -> None:
+    state["functions"].append(
+        {
+            **state["functions"][0],
+            "function_code": "rag_manager",
+            "function_name": "RAG知識庫管理",
+            "app_scope": "admin",
+            **flags,
+        }
+    )
+
+
+def test_rag_manager_catalog_row_opens_knowledge_page(
+    browser: TestClient, state: dict[str, Any]
+) -> None:
+    rag_manager_row(state)
+    login(browser)
+
+    assert 'href="/knowledge"' in browser.get("/welcome").text
+    page = browser.get("/knowledge")
+
+    assert page.status_code == 200 and "知識庫管理" in page.text
+
+
+@pytest.mark.parametrize("grant", [False, True], ids=["no-catalog-row", "view-not-granted"])
+def test_knowledge_page_requires_rag_manager_view(
+    browser: TestClient, state: dict[str, Any], grant: bool
+) -> None:
+    if grant:
+        rag_manager_row(state, can_view=False)
+    login(browser)
+
+    assert 'href="/knowledge"' not in browser.get("/welcome").text
+    assert browser.get("/knowledge").status_code == 403
+
+
 @pytest.mark.parametrize(
     "fault", ["wrong_password", "unknown", "disabled", "locked", "resigned", "no_department"]
 )
@@ -766,3 +802,177 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         assert "content-disposition" not in export_resp.headers
     finally:
         _INVOICE_STORE[0]["uploaded_by"] = orig_user
+
+
+KNOWLEDGE_ROUTES = (
+    ("GET", "/knowledge"),
+    ("POST", "/knowledge/shared-tax/toggle-dept"),
+    ("GET", "/knowledge/shared-tax/documents"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/toggle-dept"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/status"),
+    ("GET", "/knowledge/shared-tax/edit"),
+    ("POST", "/knowledge/shared-tax/rename"),
+    ("POST", "/knowledge/shared-tax/delete"),
+    ("GET", "/knowledge/shared-tax/documents/sample-tax/edit"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/rename"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/delete"),
+    ("GET", "/knowledge/shared-tax/documents/sample-tax/content"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/content"),
+    ("GET", "/knowledge/shared-tax/documents/sample-tax/download"),
+    ("POST", "/knowledge/documents"),
+)
+
+
+@pytest.mark.parametrize("method,path", KNOWLEDGE_ROUTES)
+def test_all_knowledge_routes_reject_without_admin_cookie_even_if_legacy_guard_is_overridden(
+    browser: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, path: str
+) -> None:
+    """所有 GET/POST 都不可透過舊 require_admin override、Header 或 URL 自報身分。"""
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.core import deps
+
+    monkeypatch.setitem(app.dependency_overrides, deps.require_admin, lambda: None)
+    response = browser.request(
+        method,
+        path,
+        headers={**ORIGIN, "Authorization": "Bearer synthetic-session", "X-User-ID": str(USER)},
+        params={"user_id": str(USER), "department_id": str(DEPARTMENT), "role": "admin"},
+    )
+    assert response.status_code == 303
+    location = urlsplit(response.headers["location"])
+    assert location.path == "/login"
+    assert parse_qs(location.query)["next"][0].split("?", 1)[0] == path
+
+
+@pytest.mark.parametrize("method,path", KNOWLEDGE_ROUTES)
+def test_all_knowledge_routes_reject_logged_in_department_without_rag_permission(
+    browser: TestClient, method: str, path: str
+) -> None:
+    """已登入但目前部門沒勾 rag_manager，所有 GET/POST 都是 403。"""
+    login(browser)
+    response = browser.request(method, path, headers=ORIGIN)
+    assert response.status_code == 403
+    assert not hasattr(response.context["request"].state, "knowledge_identity")
+    assert not hasattr(response.context["request"].state, "e_configuration_authenticated")
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_rag_mapping_and_it_state_use_only_selected_department(
+    browser: TestClient, state: dict[str, Any], module: EModule, allowed: bool
+) -> None:
+    """資訊部所屬身分不提升財務部權限，三個授權投影都使用 rag_manager 對應。"""
+    from app.schemas.e_admin import Target
+    from app.services.e_admin_service import KNOWLEDGE
+
+    rag_manager_row(state)
+    rag = dict(state["functions"][-1])
+    common = list(state["functions"][:-1])
+    state["departments"] = [
+        {
+            "department_id": DEPARTMENT,
+            "department_code": "technology_d",
+            "department_name": "資訊部",
+        },
+        {"department_id": OTHER, "department_code": "finance_d", "department_name": "財務部"},
+    ]
+    state["account"]["primary_department_id"] = OTHER
+    state["department_functions"] = {
+        DEPARTMENT: common + [rag],
+        OTHER: common
+        + [
+            {
+                **rag,
+                "can_view": allowed,
+                "can_create": False,
+                "can_edit": False,
+                "can_delete": False,
+            }
+        ],
+    }
+    login(browser)
+    page = browser.get(
+        "/knowledge",
+        headers={"X-Department-ID": str(DEPARTMENT)},
+        params={"department_id": str(DEPARTMENT)},
+    )
+    assert page.status_code == (200 if allowed else 403)
+    identity = module.identity(SecretStr(browser.cookies.get(SESSION_COOKIE_NAME)))
+    snapshot = module.access.effective_access(identity)
+    rag_view = [
+        item
+        for item in snapshot.decisions
+        if item.function_code == KNOWLEDGE and item.action == Action.VIEW
+    ]
+    assert len(rag_view) == 1 and rag_view[0].selected_department_id == OTHER
+    assert rag_view[0].department_effect == ("allow" if allowed else "deny")
+    sidebar = [item for item in module.sidebar_menu(identity) if item.code == KNOWLEDGE]
+    assert all(item.route == ("/knowledge" if allowed else None) for item in sidebar)
+    if allowed:
+        decision = module.check(identity, KNOWLEDGE, Action.VIEW, Target(OTHER))
+        assert decision.scope.department_ids == frozenset({OTHER})
+        assert page.context["request"].state.is_it_workspace is False
+        assert page.context["request"].state.header_selected_department_id == OTHER
+        assert len(page.context["request"].state.header_departments) == 2
+        assert 'name="switch_department_id"' in page.text
+        assert "technology_d－資訊部" in page.text and "finance_d－財務部" in page.text
+        assert any(
+            item.code == KNOWLEDGE and item.can_open
+            for item in module.workspace_access(identity).functions
+        )
+    else:
+        assert not hasattr(page.context["request"].state, "knowledge_identity")
+
+
+def test_rag_sidebar_keeps_existing_navigation_order(
+    browser: TestClient, state: dict[str, Any]
+) -> None:
+    """新增 RAG 入口不重排既有發票／部門／功能／帳號與登出。"""
+    state["functions"].append(
+        {
+            **state["functions"][0],
+            "function_code": "Triplicate Uniform Invoice",
+            "function_name": "發票上傳",
+        }
+    )
+    login(browser)
+    before = SidebarNavigation(browser.get("/welcome").text).entries
+    rag_manager_row(state)
+    after = SidebarNavigation(browser.get("/welcome").text).entries
+    assert "/knowledge" in after
+    assert [item for item in after if item != "/knowledge"] == before
+    assert all(
+        path in after
+        for path in ("/invoices", "/accounts", "/department", "/functions", "/welcome")
+    )
+
+
+@pytest.mark.parametrize("change", [{"is_active": False}, {"app_scope": "frontend"}])
+def test_disabled_or_wrong_scope_rag_catalog_cannot_open_knowledge(
+    browser: TestClient, state: dict[str, Any], change: dict[str, Any]
+) -> None:
+    """停用或非 ADMIN 範圍的目錄功能不產生有效權限。"""
+    rag_manager_row(state)
+    state["functions"][-1].update(change)
+    login(browser)
+    assert browser.get("/knowledge").status_code == 403
+
+
+def test_knowledge_router_covers_every_declared_get_and_post() -> None:
+    """新路由若沒列入授權覆蓋或沒有 guard，就必須讓測試失敗。"""
+    from fastapi.routing import APIRoute
+
+    from app.routers import knowledge
+
+    routes = [route for route in knowledge.router.routes if isinstance(route, APIRoute)]
+    actual = {
+        (method, route.path.replace("{kb_id}", "shared-tax").replace("{doc_id}", "sample-tax"))
+        for route in routes
+        for method in route.methods
+        if method in {"GET", "POST"}
+    }
+    assert actual == set(KNOWLEDGE_ROUTES)
+    assert all(
+        any(item.dependency is knowledge.require_knowledge_access for item in route.dependencies)
+        for route in routes
+    )

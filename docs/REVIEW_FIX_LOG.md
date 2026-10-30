@@ -811,3 +811,17 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 最初兩站各 56 個治理 setup error 是 Windows 長路徑複製問題；保留輸出，改用專案外新 basetemp 的 Windows 長路徑格式後完整通過，未修改治理測試或期待值。略過均屬治理規則不適用／symlink 權限，不是向量或手機辨識案例。
 - SHA256：vertex_embedding.py 由 52e6a14639f2b46631cf3258df5c4f83b12274ed9d0fbec3513cee5a687df451 改為 aa7f6612907c168e6f40ed62eaf18afa57dacf4cb1c7f0fbe531b4ba28ed5fa0；test_vertex_embedding.py 由 787fec5bc38af9dc95a2998919214049849d062d8d57666d57092c8ddb0593b6 改為 6e547ceee446b379c8b537fba0e5e37815e61bce3b41dddef6533125e0a98903；shared 測試維持 fd2b0a725bf992b0591e332d16a71da2ec5980e6e09db3e37a75e3c44ee03bc1。兩站相同。
 - 輸出位於專案外暫存 ivx-20261030-170851（REVIEW.md、TEST_RESULTS.md、SHA256 與 JUnit）；沒有改既有 reviews／REVIEW 指令、前台、STARTUP、其他 AI／Storage 模組、requirements 或快照，沒有讀真實秘密／發票，沒有正式服務呼叫、安裝／升級、部署、migration、Stage／Commit／Push 或切換分支。
+
+## 2026-10-30 Codex：knowledge 權限、E 對應與 v1.6 SQL 離線檢驗
+
+- 先核對最新指令的 11 份 SHA256，全部符合後才修改程式／測試／文件；所有 SQL 只讀，沒有執行、修改或重跑 ALTER。
+- **P2｜拒絕／失敗時留下部分登入狀態**：require_knowledge_access 在 sidebar_menu 之前已設 e_configuration_authenticated=True，後續 DeniedError／UnavailableError 會留下旗標。專案外反例 2 failed／12 passed 重現。改為取得部門、側欄與資訊部標記都成功後才發佈 request.state，成功輸出與權限判斷不變；沒有授權繞過的新功能或 DB 接線。
+- 保留 rag.manager→rag_manager 對應、Action.VIEW、目前選取部門的 Target 與 Cookie 唯一 Session 來源。新增 40 項正式回歸，覆蓋全部 15 個 GET／POST 的未登入與無權限拒絕、舊 require_admin override 無法繞過、目前部門與其他所屬部門隔離、effective_access／sidebar 對應、停用／錯誤 app_scope 及既有側欄順序。
+- test_pages.py 不修改；以 AST 對照 HEAD，33 個既有頁面測試 body／assertion 在 client 名稱正規化後全部相同，UI fixture 不作授權通過證據，授權另由真正 DepartmentLoginAdapter＋假 repository 驗證。外部兩項反例另確認有效合成 Session 改放 Authorization／URL 仍被拒絕。
+- **文件**：兩站 RAG_DEVELOPMENT.md 逐位元組同步，正式 v1.6 狀態明確標為使用者查詢回報；原有雲端／效能資料註明本輪未查證，說明固定維度與程式介面。沒有宣稱 knowledge 已接 DB 或已部署。
+- **依指示保留的資訊性風險**：名稱含「資訊」的備援可把 non_it_d／「非資訊窗口」判為資訊部，本輪以合成資料重現 True。沒有移除備援，也沒有改審核流程；此 flag 不能取代正式授權，rag_manager VIEW 仍獨立檢查。
+- **SQL 靜態檢查**：三份 SHA256 前後不變。v1.5／v1.6 忽略註解／空白後，唯一執行內容差異為 rag_chunks.embedding：extensions.vector→extensions.vector(1536)。頂層物件宣告數相同，沒有新增 HNSW；ALTER 的 BEGIN／SET LOCAL／前置檢查／ALTER／完成檢查／COMMIT 順序與型別相符。空表、NULL、1536／非 1536 與重複執行僅作語意分析，沒有實際 SQL 驗證；不建測試 DB／容器。
+- 完整回歸 1642 passed／9 skipped；三份重點測試 118 passed；五種突變（移除對應、移除 router guard、VIEW→EDIT、任一部門視為 IT、拒絕前寫 state）皆觸發測試 failure，沒有收集／匯入 errors。Ruff lint、152 檔 format、environment --check、兩站 check_project --project-root、git diff --check 通過；djlint 57 檔／0 errors。只有既有 Starlette/httpx warning。
+- 前後雜湊：knowledge.py 49af06ea84167f7d9b49b1e3117e3871a40d21cd9fd71c75d8b9475764ebc28f→131ee031afc7521fdcfc2dbd7c6b6c5c366e500151ca57392fc37b96595d69d1；兩站 RAG_DEVELOPMENT.md d6f47e94d9e7f837e68262cd3d2a1bf5a2c5ad9df6f429b3a6fbf5f872042a10→2c2abb454238728cfa730d9db631cc18af391ebbd3e1a7768a4f82d58b2d14ac；其餘檔案詳見專案外 SOURCE_SHA256_BEFORE_AFTER.tsv。
+- 未驗證：正式 DB 的 ALTER 結果僅來自使用者查詢（vector(1536)、dimensions 1536、chunks 0、維度不符 0），部門權限勾選仍未知；不據此宣稱正式權限已開通。本輪沒有讀真實秘密、連外服務、START、安裝／升級、部署、migration、Stage／Commit／Push 或分支操作；未改 integrations、requirements、contracts、AGENTS 共同區塊、前台／STARTUP 或舊 reviews 指令。
+- 輸出放專案外暫存 ik-20261030-203958：REVIEW.md、TEST_RESULTS.md、SQL_STATIC_REVIEW.json、APP_STATIC_REVIEW.json、命令／JUnit、五份突變及前後 SHA256。

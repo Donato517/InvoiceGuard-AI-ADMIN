@@ -756,19 +756,13 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         assert "已勾選" in filing_page.text
         assert "產生並下載申報檔" in filing_page.text
 
-        # 批次匯出格式 21 申報檔
+        # 批次匯出格式 21 申報檔：示範發票的統編與字軌未通過 F09 檢核，整批不產檔
         export_resp = browser.post(
             "/invoices/filing/export",
             headers=ORIGIN,
             data={"period": "11308", "invoice_ids": [1, 2]},
         )
-        assert export_resp.status_code == 200
-        assert export_resp.headers["content-type"].startswith("text/plain")
-        assert "12345678.TXT" in export_resp.headers["content-disposition"]
-        export_lines = [ln for ln in export_resp.text.splitlines() if ln]
-        assert len(export_lines) == 2
-        for eline in export_lines:
-            assert len(eline) == 81
-            assert eline.startswith("21123456789")
+        assert export_resp.status_code == 400
+        assert "content-disposition" not in export_resp.headers
     finally:
         _INVOICE_STORE[0]["uploaded_by"] = orig_user

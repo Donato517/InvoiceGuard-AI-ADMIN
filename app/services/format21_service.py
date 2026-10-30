@@ -364,6 +364,13 @@ def to_roc_year_month(value: date) -> str:
     return f"{value.year - ROC_YEAR_OFFSET:03d}{value.month:02d}"
 
 
+def _issue_year_month(value: object) -> str:
+    try:
+        return to_roc_year_month(date.fromisoformat(str(value)))
+    except ValueError:
+        return ""  # 交由檢核規則回報開立年月錯誤
+
+
 def _to_decimal(value: object) -> Decimal:
     try:
         return Decimal(str(value))
@@ -395,7 +402,7 @@ def build_record_from_snapshot(
         tax_reg_no=profile.tax_reg_no,
         buyer_ban=profile.ban,
         report_period=report_period,
-        issue_year_month=to_roc_year_month(date.fromisoformat(snapshot["invoice_date"])),
+        issue_year_month=_issue_year_month(snapshot.get("invoice_date")),
         track=str(snapshot.get("invoice_track") or "").strip().upper(),
         number=str(snapshot.get("invoice_number") or "").strip(),
         seller_ban=str(snapshot.get("seller_tax_id") or ""),
@@ -404,6 +411,23 @@ def build_record_from_snapshot(
         tax_amount=_to_decimal(snapshot.get("tax_amount")),
         deduction_code=str(snapshot.get("deduction_code") or ""),
     )
+
+
+def check_snapshot(
+    snapshot: dict, profile: CompanyProfile, report_period: str
+) -> tuple[Format21Record, list[Format21Issue]]:
+    """檢核一筆請款單能否列入申報檔，供清單逐列顯示與單張預覽使用。
+
+    Args:
+        snapshot: 請款單資料（Schema v1.5 invoices 欄位）。
+        profile: 公司基本資料。
+        report_period: 申報所屬年月（民國 5 碼）。
+
+    Returns:
+        申報資料與問題清單；問題清單為空才可列入申報檔。
+    """
+    record = build_record_from_snapshot(snapshot, profile, report_period)
+    return record, validate_snapshot(snapshot, profile) + validate_record(record)
 
 
 def build_format21_file(
@@ -433,8 +457,7 @@ def build_format21_file(
     seen: dict[tuple[str, str], str] = {}
     for snapshot in snapshots:
         invoice_id = str(snapshot.get("invoice_id", "unknown"))
-        record = build_record_from_snapshot(snapshot, profile, report_period)
-        found = validate_snapshot(snapshot, profile) + validate_record(record)
+        record, found = check_snapshot(snapshot, profile, report_period)
         key = (record.seller_ban, record.track + record.number)
         if key in seen:
             found.append(

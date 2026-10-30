@@ -5,8 +5,11 @@
 注意事項：
     - 本路由需管理者權限（require_admin）。
     - 步驟 1～9：上傳發票、AI OCR 辨識、資料核對、系統自動檢核、財務審核、產生申報檔、匯入確認、自動產生傳票、匯出結果。
+    - 步驟 6 與申報資料頁的檢核、81 字元申報資料與批次產檔由 format21_service（F09）負責；
+      發票資料目前仍為示範資料，經 _to_filing_snapshot() 轉為 Schema v1.5 欄位後交給 F09。
 """
 
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import quote
@@ -19,7 +22,15 @@ from app.core.deps import require_admin
 from app.core.templating import templates
 from app.routers.e_admin import session_evidence
 from app.schemas.e_admin import Action, DeniedError, Target, UnauthenticatedError
+from app.services.company_profile_service import HardcodedCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
+from app.services.format21_service import (
+    build_format21_file,
+    check_snapshot,
+    format_record_line,
+    summarize_401,
+    validate_profile,
+)
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
@@ -560,42 +571,52 @@ def invoice_review_list(
     return _render_invoice_list_view(request, section="review", status=status, q=q)
 
 
-def _format_21_line(
-    invoice: dict[str, Any],
-    period_code: str,
-    serial: int,
-    *,
-    buyer_tax_id: str | None = None,
-) -> str:
-    """產生格式 21（進項三聯式發票）單行申報資料，長度固定 81 字元。
+# ---- 申報檔（F09）----
 
-    21 (2) + 稅籍編號 (9) + 流水號 (7) + 申報所屬期 (5) + 買受人統編 (8) +
-    銷貨人統編 (8) + 發票字軌號碼 (10) + 銷售額 (12, 靠右補 0) +
-    課稅別 (1) + 營業稅額 (10, 靠右補 0) + 扣抵代號 (1) + 8 空白 = 81 字元。
-    """
-    tax_reg_no = "123456789"
-    serial_str = str(serial).zfill(7)
-    period = str(period_code).strip()[:5].ljust(5, "0")
-    buyer = (buyer_tax_id or invoice.get("buyer_tax_id", "12345678")).strip()[:8].ljust(8, " ")
-    seller = str(invoice.get("seller_tax_id", "24681357")).strip()[:8].ljust(8, " ")
-    inv_no = str(invoice.get("invoice_number", "")).strip().upper()[:10].ljust(10, " ")
-    sales = str(max(0, int(invoice.get("net_amount", 0)))).zfill(12)
+# TODO(StacieChen): 公司主檔確定後改由設定讀取（見 F_Schema補充建議_v1.5.md §5）
+_FILING_PROFILE = HardcodedCompanyProfileProvider()
+_TAX_CATEGORY_TO_TYPE = {"應稅": "taxable", "零稅率": "zero_rated", "免稅": "tax_exempt"}
+_ROC_DATE = re.compile(r"(\d{2,3})/(\d{1,2})/(\d{1,2})")
+_REPORT_PERIOD = re.compile(r"\d{5}")
 
-    cat = invoice.get("tax_category", "應稅")
-    if cat == "零稅率":
-        tax_type_code = "2"
-    elif cat == "免稅":
-        tax_type_code = "3"
-    else:
-        tax_type_code = "1"
 
-    tax = str(max(0, int(invoice.get("tax_amount", 0)))).zfill(10)
+def _roc_to_iso(value: object) -> str:
+    """示範資料的民國日期（113/08/15）轉 ISO；格式不符原樣交給 F09 回報錯誤。"""
+    text = str(value or "").strip()
+    match = _ROC_DATE.fullmatch(text)
+    if not match:
+        return text
+    year, month, day = (int(part) for part in match.groups())
+    return f"{year + 1911:04d}-{month:02d}-{day:02d}"
 
-    deduction_raw = str(invoice.get("deduction_code", "1"))
-    deduction_code = deduction_raw[:1] if deduction_raw and deduction_raw[:1] in "1234" else "1"
 
-    line = f"21{tax_reg_no}{serial_str}{period}{buyer}{seller}{inv_no}{sales}{tax_type_code}{tax}{deduction_code}"
-    return line.ljust(81, " ")
+def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
+    """將示範發票轉為 F09 讀取的 Schema v1.5 欄位，缺值不補預設，交由 F09 檢核。"""
+    # TODO(StacieChen): 接上資料庫後改由 repository 讀 invoices，刪除此轉換
+    number = str(invoice.get("invoice_number") or "").strip().upper()
+    approved = invoice.get("review_status") == "approved" or invoice.get("status") == "passed"
+    deduction = str(invoice.get("deduction_code") or "").strip()[:1]
+    category = invoice.get("tax_category")
+    return {
+        "invoice_id": str(invoice["id"]),
+        "invoice_track": number[:2],
+        "invoice_number": number[2:],
+        "invoice_date": _roc_to_iso(invoice.get("invoice_date")),
+        "seller_tax_id": invoice.get("seller_tax_id"),
+        "buyer_tax_id": invoice.get("buyer_tax_id"),
+        "sales_amount": invoice.get("net_amount"),
+        "tax_amount": invoice.get("tax_amount"),
+        "tax_type": _TAX_CATEGORY_TO_TYPE.get(str(category), category),
+        "status": "approved" if approved else str(invoice.get("status") or ""),
+        "deduction_code": deduction if deduction and deduction in "1234" else "",
+    }
+
+
+def _in_date_range(iso_date: str, from_date: str, to_date: str) -> bool:
+    """發票日期在起訖日內；日期無法判讀時保留，讓檢核結果顯示在清單上。"""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", iso_date):
+        return True
+    return (not from_date or iso_date >= from_date) and (not to_date or iso_date <= to_date)
 
 
 def _build_batch_filing_context(
@@ -603,7 +624,7 @@ def _build_batch_filing_context(
     from_date: str = "2024-07-01",
     to_date: str = "2024-08-31",
 ) -> dict[str, Any]:
-    """建立批次申報檔卡片所需資料。"""
+    """建立批次申報檔卡片所需資料；每列的檢核結果來自 F09。"""
     periods = [
         ("11308", "113 年 07-08 期"),
         ("11306", "113 年 05-06 期"),
@@ -615,39 +636,37 @@ def _build_batch_filing_context(
     if not any(code == selected_period for code, _ in periods):
         periods.insert(0, (selected_period, f"{selected_period} 期"))
 
+    profile = _FILING_PROFILE.get_profile()
+    company_issues = [issue.message for issue in validate_profile(profile)]
     rows: list[dict[str, Any]] = []
-    company_id = "12345678"
+    passed_records = []
     dept_map = {"1": "採購部", "2": "行銷部", "3": "採購部", "4": "資訊部", "5": "研發部"}
 
     for inv in _INVOICE_STORE:
-        inv_id_str = str(inv["id"])
-        inv_company = str(inv.get("buyer_tax_id", company_id))
-        if company_id == "12345678" and inv_company:
-            company_id = inv_company
-
-        issues: list[dict[str, str]] = []
-        is_approved = inv.get("review_status") == "approved" or inv.get("status") == "passed"
-        if not is_approved:
-            issues.append({"code": "NOT_APPROVED", "message": "尚未完成財務審核，不可匯出"})
-
+        snapshot = _to_filing_snapshot(inv)
+        if not _in_date_range(snapshot["invoice_date"], from_date, to_date):
+            continue
+        record, issues = check_snapshot(snapshot, profile, selected_period)
+        exportable = not issues and not company_issues
+        if exportable:
+            passed_records.append(record)
         rows.append(
             {
                 "id": inv["id"],
                 "invoice_number": inv.get("invoice_number", ""),
                 "invoice_date": inv.get("invoice_date", ""),
-                "department_name": inv.get("department_name") or dept_map.get(inv_id_str, "採購部"),
+                "department_name": inv.get("department_name")
+                or dept_map.get(str(inv["id"]), "採購部"),
                 "sales": int(inv.get("net_amount", 0)),
                 "tax": int(inv.get("tax_amount", 0)),
-                "checked": not issues,
-                "issues": issues,
+                "checked": exportable,
+                "issues": [{"code": i.code, "message": i.message} for i in issues],
             }
         )
 
     checked_rows = [r for r in rows if r["checked"]]
-    count = len(checked_rows)
     sales_amount = sum(r["sales"] for r in checked_rows)
     tax_amount = sum(r["tax"] for r in checked_rows)
-    total_amount = sales_amount + tax_amount
 
     return {
         "period": selected_period,
@@ -655,11 +674,26 @@ def _build_batch_filing_context(
         "from_date": from_date,
         "to_date": to_date,
         "rows": rows,
-        "count": count,
+        "count": len(checked_rows),
         "sales_amount": sales_amount,
         "tax_amount": tax_amount,
-        "total_amount": total_amount,
-        "company_id": company_id,
+        "total_amount": sales_amount + tax_amount,
+        "company_id": profile.ban,
+        "company_issues": company_issues,
+        "totals_401": {
+            field: int(amount) for field, amount in summarize_401(passed_records).items()
+        },
+    }
+
+
+def _single_filing_check(invoice: dict[str, Any], period: str) -> dict[str, Any]:
+    """步驟 6 單張檢核：問題清單與 81 字元預覽（有問題時不產生預覽）。"""
+    record, issues = check_snapshot(
+        _to_filing_snapshot(invoice), _FILING_PROFILE.get_profile(), period
+    )
+    return {
+        "issues": [{"code": i.code, "message": i.message} for i in issues],
+        "preview_line": None if issues else format_record_line(record, serial=1),
     }
 
 
@@ -673,6 +707,8 @@ def invoice_filing_list(
     """📑 申報資料（批次產生申報檔，僅財務部工作區開放）。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
+    if not _REPORT_PERIOD.fullmatch(period):
+        raise HTTPException(status_code=400, detail="申報所屬期格式錯誤")
     request.state.active_sidebar_route = "/invoices/filing"
     batch_filing = _build_batch_filing_context(
         selected_period=period, from_date=from_date, to_date=to_date
@@ -692,24 +728,37 @@ def export_batch_filing(
     period: Annotated[str, Form()] = "11308",
     invoice_ids: Annotated[list[int] | None, Form()] = None,
 ) -> Response:
-    """批次產生並下載格式 21 申報檔（每期一檔，檔名為 {buyer_tax_id}.TXT）。"""
+    """批次產生並下載格式 21 申報檔（每期一檔，檔名為本公司統編.TXT）。
+
+    任一筆未通過 F09 檢核即整批不產檔，回 400 並列出原因。
+    """
     if getattr(request.state, "invoice_max_step", 9) < 6:
         raise DeniedError
+    if not _REPORT_PERIOD.fullmatch(period):
+        raise HTTPException(status_code=400, detail="申報所屬期格式錯誤")
     ids = invoice_ids or []
     if not ids:
         raise HTTPException(status_code=400, detail="請至少勾選一筆發票")
     selected_invoices = [i for i in _INVOICE_STORE if int(i["id"]) in ids]
     if not selected_invoices:
         raise HTTPException(status_code=400, detail="找不到勾選的發票")
-    buyer_tax_id = selected_invoices[0].get("buyer_tax_id", "12345678")
-    lines = []
-    for serial, inv in enumerate(selected_invoices, start=1):
-        lines.append(_format_21_line(inv, period, serial, buyer_tax_id=buyer_tax_id))
-    content = "\r\n".join(lines) + "\r\n"
-    filename = f"{buyer_tax_id}.TXT"
-    encoded_fn = quote(filename)
+
+    result = build_format21_file(
+        [_to_filing_snapshot(i) for i in selected_invoices], _FILING_PROFILE, period
+    )
+    if result.content is None or result.filename is None:
+        numbers = {
+            str(i["id"]): i.get("invoice_number") or "（未填號碼）" for i in selected_invoices
+        }
+        problems = "；".join(
+            f"{numbers.get(key, '公司資料')}：{issues[0].message}"
+            for key, issues in result.issues.items()
+        )
+        raise HTTPException(status_code=400, detail=f"有資料未通過檢核，未產生申報檔。{problems}")
+
+    encoded_fn = quote(result.filename)
     return Response(
-        content=content.encode("utf-8"),
+        content=result.content.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"},
     )
@@ -829,8 +878,8 @@ def _render_flow_page(
             "preview_text": invoice["filing_preview"],
         }
 
-    top_preview_line = _format_21_line(invoice, "11308", 1)
     batch_filing = _build_batch_filing_context()
+    single_filing = _single_filing_check(invoice, batch_filing["period"])
 
     return templates.TemplateResponse(
         request,
@@ -843,7 +892,7 @@ def _render_flow_page(
             "checks": checks,
             "voucher": voucher,
             "filing": filing,
-            "top_preview_line": top_preview_line,
+            "single_filing": single_filing,
             "batch_filing": batch_filing,
             "error": error,
             "max_flow_step": max_flow_step,

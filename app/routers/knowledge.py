@@ -3,21 +3,60 @@
 功能說明：知識庫與文件管理——列表、文件清單、上傳對話框、部門選用切換、編輯與下載。
 路由：/knowledge
 注意事項：
-    - 本路由需管理者權限（require_admin）。
+    - 本路由需目前部門有 RAG知識庫管理（rag_manager）的查看權限；寫入路由接 DB 時要另依操作檢查。
     - 支援 HTML 原型所規劃之知識庫與文件管理功能，包含 HTMX 部門標籤切換與多檔批次上傳。
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import quote
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from app.core.deps import require_admin
 from app.core.templating import templates
+from app.routers.e_admin import session_evidence
+from app.schemas.e_access import EffectiveDepartment
+from app.schemas.e_admin import Action, Target
+from app.services.e_admin_service import KNOWLEDGE, EModule, get_e_module
 
-router = APIRouter(prefix="/knowledge", tags=["knowledge"], dependencies=[Depends(require_admin)])
+Module = Annotated[EModule, Depends(get_e_module)]
+
+# 資訊部的部門代碼（departments.department_code）
+IT_DEPARTMENT_CODE = "technology_d"
+
+
+def _is_it_department(
+    departments: Sequence[EffectiveDepartment], selected_department_id: UUID
+) -> bool:
+    return any(
+        dept.department_id == selected_department_id
+        and (dept.department_code == IT_DEPARTMENT_CODE or "資訊" in dept.department_name)
+        for dept in departments
+    )
+
+
+def require_knowledge_access(request: Request, module: Module) -> None:
+    """驗證目前部門可查看知識庫，並把身分放入 request.state 供後續路由使用。"""
+    identity = module.identity(session_evidence(request))
+    module.check(identity, KNOWLEDGE, Action.VIEW, Target(identity.selected_department_id))
+    departments = module.departments(identity)
+    menu = module.sidebar_menu(identity)
+    is_it_workspace = _is_it_department(departments, identity.selected_department_id)
+    # 所有驗權與顯示資料都成功取得後，才一次發佈本次請求的登入狀態。
+    request.state.e_configuration_authenticated = True
+    request.state.e_configuration_menu = menu
+    request.state.header_departments = departments
+    request.state.header_selected_department_id = identity.selected_department_id
+    request.state.knowledge_identity = identity
+    request.state.is_it_workspace = is_it_workspace
+
+
+router = APIRouter(
+    prefix="/knowledge", tags=["knowledge"], dependencies=[Depends(require_knowledge_access)]
+)
 
 DEPARTMENTS: list[dict[str, str]] = [
     {"id": "finance", "name": "財務部"},

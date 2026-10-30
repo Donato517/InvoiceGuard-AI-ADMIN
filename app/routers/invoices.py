@@ -35,10 +35,14 @@ def _is_finance_department(departments: tuple[Any, ...], selected_department_id:
 
 
 def require_invoice_access(request: Request, module: Module) -> None:
-    """驗證發票作業存取權限（僅財務部開放步骤 5～9 及財會檢核／申報資料／會計傳票，其餘部門僅開放前 4 步驟）。"""
+    """驗證發票作業存取權限（僅財務部開放步驟 5～9 及財會檢核／申報資料／會計傳票，其餘部門僅開放前 4 步驟）。"""
     override = request.app.dependency_overrides.get(require_admin)
     if override is not None:
-        override(request)
+        admin_user = override(request)
+        user_id = getattr(admin_user, "id", None) or getattr(
+            getattr(request.state, "admin", None), "id", "1"
+        )
+        request.state.invoice_user_id = str(user_id)
         request.state.is_finance_workspace = True
         request.state.invoice_max_step = 9
         return
@@ -56,6 +60,7 @@ def require_invoice_access(request: Request, module: Module) -> None:
         departments = module.departments(identity)
         request.state.header_departments = departments
         request.state.header_selected_department_id = identity.selected_department_id
+        request.state.invoice_user_id = str(identity.user_id)
         is_finance = _is_finance_department(departments, identity.selected_department_id)
         request.state.is_finance_workspace = is_finance
         request.state.invoice_max_step = 9 if is_finance else 4
@@ -69,22 +74,162 @@ router = APIRouter(
     dependencies=[Depends(require_invoice_access)],
 )
 
+
+def _invoice_chinese_amount(amount: int | float) -> str:
+    """將數值金額轉為繁體中文國字大寫金額（例如 6300 -> 陸仟參佰元整）。"""
+    cents = round(float(amount or 0) * 100)
+    if cents < 0 or cents > 99_999_999_999_999:
+        return ""
+    digits = "零壹貳參肆伍陸柒捌玖"
+    small = ["", "拾", "佰", "仟"]
+    large = ["", "萬", "億", "兆"]
+    integer = cents // 100
+    groups: list[int] = []
+    while integer:
+        groups.append(integer % 10000)
+        integer //= 10000
+    result = ""
+    between = False
+    for index in range(len(groups) - 1, -1, -1):
+        group = groups[index]
+        if not group:
+            if result:
+                between = True
+            continue
+        if result and (between or group < 1000):
+            result += "零"
+        between = False
+        part = ""
+        zero = False
+        for p in range(3, -1, -1):
+            digit = (group // (10**p)) % 10
+            if not digit:
+                if part:
+                    zero = True
+                continue
+            if zero:
+                part += "零"
+            zero = False
+            part += digits[digit] + small[p]
+        result += part + large[index]
+    result = (result or "零") + "元"
+    jiao = (cents % 100) // 10
+    fen = cents % 10
+    if not jiao and not fen:
+        return result + "整"
+    if jiao:
+        result += digits[jiao] + "角"
+    if fen:
+        result += ("零" if not jiao else "") + digits[fen] + "分"
+    return result
+
+
+def _ensure_invoice_14_fields(invoice: dict[str, Any]) -> dict[str, Any]:
+    """補齊並同步發票 14 項核對欄位預設值。"""
+    invoice.setdefault("uploaded_by", "1")
+    invoice.setdefault("format_identification", "三聯式手開發票")
+    invoice.setdefault("invoice_number", "")
+    invoice.setdefault("invoice_date", "113/08/15")
+    invoice.setdefault("buyer_name", "範例科技股份有限公司")
+    invoice.setdefault("buyer_tax_id", "12345678")
+    invoice.setdefault("item_description", invoice.get("purpose", ""))
+    invoice.setdefault("purpose", invoice["item_description"])
+    net = int(invoice.get("net_amount", 0) or 0)
+    tax = int(invoice.get("tax_amount", 0) or 0)
+    invoice.setdefault("quantity", 1)
+    invoice.setdefault("unit_price", net)
+    invoice.setdefault("amount", net)
+    raw_tax_type = str(invoice.get("tax_type", "1 - 應稅") or "")
+    default_tax_cat = (
+        "免稅" if "免稅" in raw_tax_type else ("零稅率" if "零稅率" in raw_tax_type else "應稅")
+    )
+    invoice.setdefault("tax_category", default_tax_cat)
+    total = int(invoice.get("total_amount", net + tax) or (net + tax))
+    invoice["total_amount"] = total
+    if not invoice.get("total_chinese"):
+        invoice["total_chinese"] = _invoice_chinese_amount(total)
+    invoice.setdefault("remarks", "")
+    invoice.setdefault("seller_name", "範例銷貨人")
+    invoice.setdefault("seller_tax_id", "24681357")
+    return invoice
+
+
+def _build_14_fields_rows(invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """將發票 14 項核對欄位整理為顯示列清單（供 OCR 預覽、財務審核與詳情頁檢視）。"""
+    _ensure_invoice_14_fields(invoice)
+    seller_tax = invoice.get("seller_tax_id", "")
+    seller_display = (
+        f"{invoice['seller_name']} ／ 統編：{seller_tax}" if seller_tax else invoice["seller_name"]
+    )
+    return [
+        {"index": 1, "label": "發票聯式／識別", "value": invoice["format_identification"]},
+        {"index": 2, "label": "發票字軌號碼", "value": invoice["invoice_number"]},
+        {"index": 3, "label": "發票日期", "value": invoice["invoice_date"]},
+        {"index": 4, "label": "買受人名稱", "value": invoice["buyer_name"]},
+        {"index": 5, "label": "買受人統編", "value": invoice["buyer_tax_id"]},
+        {"index": 6, "label": "品名／用途", "value": invoice["item_description"]},
+        {"index": 7, "label": "數量", "value": str(invoice["quantity"])},
+        {"index": 8, "label": "單價", "value": f"${int(invoice['unit_price']):,}"},
+        {"index": 9, "label": "金額", "value": f"${int(invoice['amount']):,}"},
+        {"index": 10, "label": "銷售額合計", "value": f"${int(invoice['net_amount']):,}"},
+        {
+            "index": 11,
+            "label": "課稅別與稅額",
+            "value": f"{invoice['tax_category']} ／ 稅額：${int(invoice['tax_amount']):,}",
+        },
+        {
+            "index": 12,
+            "label": "總計／國字大寫",
+            "value": f"${int(invoice['total_amount']):,} ／ {invoice['total_chinese']}",
+        },
+        {"index": 13, "label": "備註", "value": invoice["remarks"] or "—"},
+        {"index": 14, "label": "銷貨人", "value": seller_display},
+    ]
+
+
+def _check_invoice_access(
+    request: Request,
+    invoice: dict[str, Any],
+    *,
+    require_owner: bool = False,
+) -> None:
+    """驗證發票存取權：財務部可檢視及處理所有發票；非財務部僅限檢視及處理本人上傳之發票。"""
+    current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
+    is_owner = str(invoice.get("uploaded_by", "1")) == current_user_id
+    is_finance = bool(getattr(request.state, "is_finance_workspace", False))
+    if is_finance:
+        return
+    if not is_owner:
+        raise DeniedError
+
+
 # 示範發票資料庫（對應原型 seedInvoices）
 _INVOICE_STORE: list[dict[str, Any]] = [
     {
         "id": 1,
+        "uploaded_by": "1",
+        "format_identification": "三聯式手開發票",
         "invoice_number": "AB12345678",
         "invoice_date": "113/08/15",
+        "buyer_name": "範例科技股份有限公司",
+        "seller_name": "範例銷貨人",
         "seller_tax_id": "24681357",
         "buyer_tax_id": "12345678",
         "item_description": "辦公耗材與文具用品",
+        "quantity": 1,
+        "unit_price": 6000,
+        "amount": 6000,
         "net_amount": 6000,
+        "tax_category": "應稅",
         "tax_amount": 300,
         "total_amount": 6300,
+        "total_chinese": "陸仟參佰元整",
+        "remarks": "",
         "stage": 9,
         "status": "passed",
         "review_status": "approved",
         "is_completed": True,
+        "file_name": "invoice_001.jpg",
         "purpose": "供行政與財務部門日常辦公使用",
         "account_code": "5601 辦公用品費",
         "deduction_code": "1 - 進貨及費用",
@@ -94,18 +239,29 @@ _INVOICE_STORE: list[dict[str, Any]] = [
     },
     {
         "id": 2,
+        "uploaded_by": "1",
+        "format_identification": "三聯式手開發票",
         "invoice_number": "AB12345679",
         "invoice_date": "113/08/15",
+        "buyer_name": "範例科技股份有限公司",
+        "seller_name": "範例銷貨人",
         "seller_tax_id": "24681357",
         "buyer_tax_id": "12345678",
         "item_description": "影印紙與印表機碳粉",
+        "quantity": 1,
+        "unit_price": 2000,
+        "amount": 2000,
         "net_amount": 2000,
+        "tax_category": "應稅",
         "tax_amount": 100,
         "total_amount": 2100,
+        "total_chinese": "貳仟壹佰元整",
+        "remarks": "",
         "stage": 9,
         "status": "passed",
         "review_status": "approved",
         "is_completed": True,
+        "file_name": "invoice_002.jpg",
         "purpose": "資訊設備耗材補充",
         "account_code": "5601 辦公用品費",
         "deduction_code": "1 - 進貨及費用",
@@ -115,18 +271,29 @@ _INVOICE_STORE: list[dict[str, Any]] = [
     },
     {
         "id": 3,
+        "uploaded_by": "1",
+        "format_identification": "三聯式手開發票",
         "invoice_number": "AB12345680",
         "invoice_date": "113/08/15",
+        "buyer_name": "範例科技股份有限公司",
+        "seller_name": "範例銷貨人",
         "seller_tax_id": "24681357",
         "buyer_tax_id": "12345678",
         "item_description": "茶水間咖啡豆與茶包耗材",
+        "quantity": 1,
+        "unit_price": 1500,
+        "amount": 1500,
         "net_amount": 1500,
+        "tax_category": "應稅",
         "tax_amount": 75,
         "total_amount": 1575,
+        "total_chinese": "壹仟伍佰柒拾伍元整",
+        "remarks": "",
         "stage": 4,
         "status": "flagged",
         "review_status": "pending",
         "is_completed": False,
+        "file_name": "invoice_003.jpg",
         "purpose": "供辦公室茶水間使用",
         "account_code": "5602 什支",
         "deduction_code": "1 - 進貨及費用",
@@ -136,18 +303,29 @@ _INVOICE_STORE: list[dict[str, Any]] = [
     },
     {
         "id": 4,
+        "uploaded_by": "1",
+        "format_identification": "三聯式手開發票",
         "invoice_number": "AB12345681",
         "invoice_date": "113/08/15",
+        "buyer_name": "範例科技股份有限公司",
+        "seller_name": "範例銷貨人",
         "seller_tax_id": "24681357",
         "buyer_tax_id": "12345678",
         "item_description": "高階人體工學辦公椅",
+        "quantity": 1,
+        "unit_price": 12000,
+        "amount": 12000,
         "net_amount": 12000,
+        "tax_category": "應稅",
         "tax_amount": 600,
         "total_amount": 12600,
+        "total_chinese": "壹萬貳仟陸佰元整",
+        "remarks": "",
         "stage": 5,
         "status": "flagged",
         "review_status": "pending",
         "is_completed": False,
+        "file_name": "invoice_004.jpg",
         "purpose": "研發人員辦公設備添購",
         "account_code": "1401 辦公設備",
         "deduction_code": "2 - 固定資產",
@@ -157,18 +335,29 @@ _INVOICE_STORE: list[dict[str, Any]] = [
     },
     {
         "id": 5,
+        "uploaded_by": "1",
+        "format_identification": "三聯式手開發票",
         "invoice_number": "AB12345682",
         "invoice_date": "113/08/15",
+        "buyer_name": "範例科技股份有限公司",
+        "seller_name": "範例銷貨人",
         "seller_tax_id": "24681357",
         "buyer_tax_id": "12345678",
         "item_description": "網路線材與 RJ45 接頭",
+        "quantity": 1,
+        "unit_price": 800,
+        "amount": 800,
         "net_amount": 800,
+        "tax_category": "應稅",
         "tax_amount": 40,
         "total_amount": 840,
+        "total_chinese": "捌佰肆拾元整",
+        "remarks": "",
         "stage": 6,
         "status": "passed",
         "review_status": "approved",
         "is_completed": False,
+        "file_name": "invoice_005.jpg",
         "purpose": "機房線路整修備品",
         "account_code": "5605 修繕費",
         "deduction_code": "1 - 進貨及費用",
@@ -277,8 +466,14 @@ def _render_invoice_list_view(
     q: str = "",
 ) -> HTMLResponse:
     _DRAFT_INVOICE_STORE.clear()
+    current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
+    is_finance = bool(getattr(request.state, "is_finance_workspace", False))
     section_config = {
-        "invoices": ("發票管理", "/invoices", lambda i: True),
+        "invoices": (
+            "發票管理",
+            "/invoices",
+            lambda i: is_finance or str(i.get("uploaded_by", "1")) == current_user_id,
+        ),
         "review": (
             "財會檢核",
             "/invoices/review",
@@ -297,7 +492,8 @@ def _render_invoice_list_view(
     }
     section_title, active_route, section_filter = section_config[section]
     request.state.active_sidebar_route = active_route
-    invoices = [i for i in _INVOICE_STORE if section_filter(i)]
+    base_invoices = [_ensure_invoice_14_fields(i) for i in _INVOICE_STORE if section_filter(i)]
+    invoices = list(base_invoices)
 
     if status and status in INVOICE_STATUS_LABEL:
         invoices = [i for i in invoices if i["status"] == status]
@@ -311,12 +507,12 @@ def _render_invoice_list_view(
             or search_term in i["item_description"].lower()
         ]
 
-    pending_count = sum(1 for i in _INVOICE_STORE if not i["is_completed"])
-    passed_count = sum(1 for i in _INVOICE_STORE if i["status"] == "passed")
-    flagged_count = sum(1 for i in _INVOICE_STORE if i["status"] == "flagged")
+    pending_count = sum(1 for i in base_invoices if not i["is_completed"])
+    passed_count = sum(1 for i in base_invoices if i["status"] == "passed")
+    flagged_count = sum(1 for i in base_invoices if i["status"] == "flagged")
 
     counts = {
-        "total": len(_INVOICE_STORE),
+        "total": len(base_invoices),
         "pending": pending_count,
         "passed": passed_count,
         "flagged": flagged_count,
@@ -342,14 +538,14 @@ def invoice_list(
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
 ) -> HTMLResponse:
-    """🗂️ 發票管理列表：分頁、狀態篩選、關鍵字搜尋。"""
+    """🗂️ 發票管理列表：財務部可檢視所有發票，非財務部僅限檢視本人上傳發票。"""
     return _render_invoice_list_view(request, section="invoices", status=status, q=q)
 
 
 @router.get("/upload")
-def invoice_upload_entry() -> RedirectResponse:
+def invoice_upload_entry(request: Request) -> RedirectResponse:
     """📤 發票上傳入口：建立暫存發票草稿並進入步驟 1（採購上傳發票）。"""
-    return create_new_invoice()
+    return create_new_invoice(request)
 
 
 @router.get("/review", response_class=HTMLResponse)
@@ -364,16 +560,159 @@ def invoice_review_list(
     return _render_invoice_list_view(request, section="review", status=status, q=q)
 
 
+def _format_21_line(
+    invoice: dict[str, Any],
+    period_code: str,
+    serial: int,
+    *,
+    buyer_tax_id: str | None = None,
+) -> str:
+    """產生格式 21（進項三聯式發票）單行申報資料，長度固定 81 字元。
+
+    21 (2) + 稅籍編號 (9) + 流水號 (7) + 申報所屬期 (5) + 買受人統編 (8) +
+    銷貨人統編 (8) + 發票字軌號碼 (10) + 銷售額 (12, 靠右補 0) +
+    課稅別 (1) + 營業稅額 (10, 靠右補 0) + 扣抵代號 (1) + 8 空白 = 81 字元。
+    """
+    tax_reg_no = "123456789"
+    serial_str = str(serial).zfill(7)
+    period = str(period_code).strip()[:5].ljust(5, "0")
+    buyer = (buyer_tax_id or invoice.get("buyer_tax_id", "12345678")).strip()[:8].ljust(8, " ")
+    seller = str(invoice.get("seller_tax_id", "24681357")).strip()[:8].ljust(8, " ")
+    inv_no = str(invoice.get("invoice_number", "")).strip().upper()[:10].ljust(10, " ")
+    sales = str(max(0, int(invoice.get("net_amount", 0)))).zfill(12)
+
+    cat = invoice.get("tax_category", "應稅")
+    if cat == "零稅率":
+        tax_type_code = "2"
+    elif cat == "免稅":
+        tax_type_code = "3"
+    else:
+        tax_type_code = "1"
+
+    tax = str(max(0, int(invoice.get("tax_amount", 0)))).zfill(10)
+
+    deduction_raw = str(invoice.get("deduction_code", "1"))
+    deduction_code = deduction_raw[:1] if deduction_raw and deduction_raw[:1] in "1234" else "1"
+
+    line = f"21{tax_reg_no}{serial_str}{period}{buyer}{seller}{inv_no}{sales}{tax_type_code}{tax}{deduction_code}"
+    return line.ljust(81, " ")
+
+
+def _build_batch_filing_context(
+    selected_period: str = "11308",
+    from_date: str = "2024-07-01",
+    to_date: str = "2024-08-31",
+) -> dict[str, Any]:
+    """建立批次申報檔卡片所需資料。"""
+    periods = [
+        ("11308", "113 年 07-08 期"),
+        ("11306", "113 年 05-06 期"),
+        ("11304", "113 年 03-04 期"),
+        ("11302", "113 年 01-02 期"),
+        ("11212", "112 年 11-12 期"),
+        ("11210", "112 年 09-10 期"),
+    ]
+    if not any(code == selected_period for code, _ in periods):
+        periods.insert(0, (selected_period, f"{selected_period} 期"))
+
+    rows: list[dict[str, Any]] = []
+    company_id = "12345678"
+    dept_map = {"1": "採購部", "2": "行銷部", "3": "採購部", "4": "資訊部", "5": "研發部"}
+
+    for inv in _INVOICE_STORE:
+        inv_id_str = str(inv["id"])
+        inv_company = str(inv.get("buyer_tax_id", company_id))
+        if company_id == "12345678" and inv_company:
+            company_id = inv_company
+
+        issues: list[dict[str, str]] = []
+        is_approved = inv.get("review_status") == "approved" or inv.get("status") == "passed"
+        if not is_approved:
+            issues.append({"code": "NOT_APPROVED", "message": "尚未完成財務審核，不可匯出"})
+
+        rows.append(
+            {
+                "id": inv["id"],
+                "invoice_number": inv.get("invoice_number", ""),
+                "invoice_date": inv.get("invoice_date", ""),
+                "department_name": inv.get("department_name") or dept_map.get(inv_id_str, "採購部"),
+                "sales": int(inv.get("net_amount", 0)),
+                "tax": int(inv.get("tax_amount", 0)),
+                "checked": not issues,
+                "issues": issues,
+            }
+        )
+
+    checked_rows = [r for r in rows if r["checked"]]
+    count = len(checked_rows)
+    sales_amount = sum(r["sales"] for r in checked_rows)
+    tax_amount = sum(r["tax"] for r in checked_rows)
+    total_amount = sales_amount + tax_amount
+
+    return {
+        "period": selected_period,
+        "periods": periods,
+        "from_date": from_date,
+        "to_date": to_date,
+        "rows": rows,
+        "count": count,
+        "sales_amount": sales_amount,
+        "tax_amount": tax_amount,
+        "total_amount": total_amount,
+        "company_id": company_id,
+    }
+
+
 @router.get("/filing", response_class=HTMLResponse)
 def invoice_filing_list(
     request: Request,
-    status: Annotated[str | None, Query()] = None,
-    q: Annotated[str, Query()] = "",
+    period: Annotated[str, Query()] = "11308",
+    from_date: Annotated[str, Query()] = "2024-07-01",
+    to_date: Annotated[str, Query()] = "2024-08-31",
 ) -> HTMLResponse:
-    """📑 申報資料列表（僅財務部工作區開放）。"""
+    """📑 申報資料（批次產生申報檔，僅財務部工作區開放）。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
-    return _render_invoice_list_view(request, section="filing", status=status, q=q)
+    request.state.active_sidebar_route = "/invoices/filing"
+    batch_filing = _build_batch_filing_context(
+        selected_period=period, from_date=from_date, to_date=to_date
+    )
+    return templates.TemplateResponse(
+        request,
+        "pages/invoices/filing.html",
+        {
+            "batch_filing": batch_filing,
+        },
+    )
+
+
+@router.post("/filing/export")
+def export_batch_filing(
+    request: Request,
+    period: Annotated[str, Form()] = "11308",
+    invoice_ids: Annotated[list[int] | None, Form()] = None,
+) -> Response:
+    """批次產生並下載格式 21 申報檔（每期一檔，檔名為 {buyer_tax_id}.TXT）。"""
+    if getattr(request.state, "invoice_max_step", 9) < 6:
+        raise DeniedError
+    ids = invoice_ids or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="請至少勾選一筆發票")
+    selected_invoices = [i for i in _INVOICE_STORE if int(i["id"]) in ids]
+    if not selected_invoices:
+        raise HTTPException(status_code=400, detail="找不到勾選的發票")
+    buyer_tax_id = selected_invoices[0].get("buyer_tax_id", "12345678")
+    lines = []
+    for serial, inv in enumerate(selected_invoices, start=1):
+        lines.append(_format_21_line(inv, period, serial, buyer_tax_id=buyer_tax_id))
+    content = "\r\n".join(lines) + "\r\n"
+    filename = f"{buyer_tax_id}.TXT"
+    encoded_fn = quote(filename)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"},
+    )
 
 
 @router.get("/voucher", response_class=HTMLResponse)
@@ -389,32 +728,45 @@ def invoice_voucher_list(
 
 
 @router.get("/new")
-def create_new_invoice() -> RedirectResponse:
+def create_new_invoice(request: Request) -> RedirectResponse:
     """建立暫存發票草稿並進入步驟 1（上傳發票）；未完成步驟 3 採購核對修正前不寫入發票清單。"""
     _DRAFT_INVOICE_STORE.clear()
     new_id = max((int(i["id"]) for i in _INVOICE_STORE), default=0) + 1
-    new_invoice: dict[str, Any] = {
-        "id": new_id,
-        "invoice_number": f"AB{12345677 + new_id}",
-        "invoice_date": "113/08/15",
-        "seller_tax_id": "24681357",
-        "buyer_tax_id": "12345678",
-        "item_description": "辦公用品",
-        "net_amount": 6000,
-        "tax_amount": 300,
-        "total_amount": 6300,
-        "stage": 1,
-        "status": "pending",
-        "review_status": "pending",
-        "is_completed": False,
-        "file_name": None,
-        "purpose": "供辦公室日常使用",
-        "account_code": "5601 辦公用品費",
-        "deduction_code": "1 - 進貨及費用",
-        "tax_type": "1 - 應稅",
-        "import_confirmed_at": None,
-        "filing_preview": None,
-    }
+    current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
+    new_invoice: dict[str, Any] = _ensure_invoice_14_fields(
+        {
+            "id": new_id,
+            "uploaded_by": current_user_id,
+            "format_identification": "三聯式手開發票",
+            "invoice_number": f"AB{12345677 + new_id}",
+            "invoice_date": "113/08/15",
+            "buyer_name": "範例科技股份有限公司",
+            "seller_name": "範例銷貨人",
+            "seller_tax_id": "24681357",
+            "buyer_tax_id": "12345678",
+            "item_description": "辦公用品",
+            "quantity": 1,
+            "unit_price": 6000,
+            "amount": 6000,
+            "net_amount": 6000,
+            "tax_category": "應稅",
+            "tax_amount": 300,
+            "total_amount": 6300,
+            "total_chinese": "陸仟參佰元整",
+            "remarks": "",
+            "stage": 1,
+            "status": "pending",
+            "review_status": "pending",
+            "is_completed": False,
+            "file_name": None,
+            "purpose": "供辦公室日常使用",
+            "account_code": "5601 辦公用品費",
+            "deduction_code": "1 - 進貨及費用",
+            "tax_type": "1 - 應稅",
+            "import_confirmed_at": None,
+            "filing_preview": None,
+        }
+    )
     _DRAFT_INVOICE_STORE[new_id] = new_invoice
     return RedirectResponse(f"/invoices/{new_id}/flow?step=1", status_code=303)
 
@@ -425,6 +777,8 @@ def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice)
+    fields_14 = _build_14_fields_rows(invoice)
 
     return templates.TemplateResponse(
         request,
@@ -432,6 +786,8 @@ def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
         {
             "invoice_id": invoice_id,
             "invoice": invoice,
+            "fields_14": fields_14,
+            "max_flow_step": getattr(request.state, "invoice_max_step", 9),
         },
     )
 
@@ -443,6 +799,8 @@ def _render_flow_page(
     *,
     error: str | None = None,
 ) -> HTMLResponse:
+    _ensure_invoice_14_fields(invoice)
+    fields_14 = _build_14_fields_rows(invoice)
     invoice_id = int(invoice["id"])
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
     if max_flow_step < 9 or step <= 3:
@@ -471,16 +829,22 @@ def _render_flow_page(
             "preview_text": invoice["filing_preview"],
         }
 
+    top_preview_line = _format_21_line(invoice, "11308", 1)
+    batch_filing = _build_batch_filing_context()
+
     return templates.TemplateResponse(
         request,
         "pages/invoices/flow.html",
         {
             "invoice": invoice,
+            "fields_14": fields_14,
             "step": step,
             "steps": steps,
             "checks": checks,
             "voucher": voucher,
             "filing": filing,
+            "top_preview_line": top_preview_line,
+            "batch_filing": batch_filing,
             "error": error,
             "max_flow_step": max_flow_step,
         },
@@ -500,6 +864,7 @@ def invoice_flow(
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice)
 
     return _render_flow_page(request, invoice, step)
 
@@ -514,6 +879,7 @@ async def upload_invoice_file(
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
 
     if file and file.filename:
         raw_bytes = await file.read()
@@ -540,11 +906,12 @@ async def upload_invoice_file(
 
 
 @router.get("/{invoice_id}/file")
-def get_invoice_file(invoice_id: int) -> Response:
+def get_invoice_file(request: Request, invoice_id: int) -> Response:
     """取得當次作業暫存之發票檔案預覽內容。"""
     invoice = _find_flow_invoice(invoice_id)
     if not invoice or not invoice.get("file_bytes"):
         raise HTTPException(status_code=404, detail="找不到發票檔案")
+    _check_invoice_access(request, invoice, require_owner=True)
     return Response(
         content=invoice["file_bytes"],
         media_type=invoice.get("file_media_type", "image/jpeg"),
@@ -564,28 +931,83 @@ def _commit_draft_after_correction(invoice_id: int, invoice: dict[str, Any]) -> 
 
 @router.post("/{invoice_id}/flow/correct")
 def correct_invoice_fields(
+    request: Request,
     invoice_id: int,
     invoice_number: Annotated[str, Form()],
     invoice_date: Annotated[str, Form()],
-    seller_tax_id: Annotated[str | None, Form()] = None,
+    format_identification: Annotated[str | None, Form()] = None,
+    buyer_name: Annotated[str | None, Form()] = None,
     buyer_tax_id: Annotated[str | None, Form()] = None,
     item_description: Annotated[str | None, Form()] = None,
+    quantity: Annotated[int | None, Form()] = None,
+    unit_price: Annotated[int | None, Form()] = None,
+    amount: Annotated[int | None, Form()] = None,
     net_amount: Annotated[int, Form()] = 0,
+    tax_category: Annotated[str | None, Form()] = None,
+    tax_amount: Annotated[int | None, Form()] = None,
+    total_amount: Annotated[int | None, Form()] = None,
+    total_chinese: Annotated[str | None, Form()] = None,
+    remarks: Annotated[str | None, Form()] = None,
+    seller_name: Annotated[str | None, Form()] = None,
+    seller_tax_id: Annotated[str | None, Form()] = None,
 ) -> RedirectResponse:
-    """步驟 3：核對修正發票資料、清除暫存影像、正式寫入發票清單並進入步驟 4（系統自動檢核）。"""
+    """步驟 3：核對修正 14 項發票資料、清除暫存影像、正式寫入發票清單並進入步驟 4（系統自動檢核）。"""
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    _ensure_invoice_14_fields(invoice)
 
+    if format_identification is not None:
+        invoice["format_identification"] = format_identification.strip() or "三聯式手開發票"
     invoice["invoice_number"] = invoice_number.strip()
     invoice["invoice_date"] = invoice_date.strip()
-    invoice["seller_tax_id"] = (seller_tax_id or "").strip()
-    invoice["buyer_tax_id"] = (buyer_tax_id or "").strip()
+    if buyer_name is not None:
+        invoice["buyer_name"] = buyer_name.strip()
+    if buyer_tax_id is not None:
+        invoice["buyer_tax_id"] = buyer_tax_id.strip()
     if item_description is not None:
         invoice["item_description"] = item_description.strip()
-    invoice["net_amount"] = max(0, net_amount)
-    invoice["tax_amount"] = round(invoice["net_amount"] * 0.05)
-    invoice["total_amount"] = invoice["net_amount"] + invoice["tax_amount"]
+        invoice["purpose"] = invoice["item_description"]
+    if seller_name is not None:
+        invoice["seller_name"] = seller_name.strip()
+    if seller_tax_id is not None:
+        invoice["seller_tax_id"] = seller_tax_id.strip()
+    if remarks is not None:
+        invoice["remarks"] = remarks.strip()
+
+    cleaned_net = max(0, net_amount)
+    cleaned_qty = max(1, quantity) if quantity is not None else int(invoice.get("quantity", 1))
+    cleaned_unit = max(0, unit_price) if unit_price is not None else cleaned_net
+    cleaned_amount = max(0, amount) if amount is not None else cleaned_net
+    invoice["quantity"] = cleaned_qty
+    invoice["unit_price"] = cleaned_unit
+    invoice["amount"] = cleaned_amount
+    invoice["net_amount"] = cleaned_net
+
+    cat = (tax_category or invoice.get("tax_category", "應稅")).strip()
+    if cat not in {"應稅", "零稅率", "免稅"}:
+        cat = "應稅"
+    invoice["tax_category"] = cat
+    tax_type_map = {"應稅": "1 - 應稅", "零稅率": "2 - 零稅率", "免稅": "3 - 免稅"}
+    invoice["tax_type"] = tax_type_map[cat]
+
+    if tax_amount is not None:
+        invoice["tax_amount"] = max(0, tax_amount) if cat == "應稅" else 0
+    else:
+        invoice["tax_amount"] = round(invoice["net_amount"] * 0.05) if cat == "應稅" else 0
+
+    computed_total = invoice["net_amount"] + invoice["tax_amount"]
+    invoice["total_amount"] = (
+        max(0, total_amount)
+        if (total_amount is not None and total_amount == computed_total)
+        else computed_total
+    )
+    invoice["total_chinese"] = (
+        total_chinese.strip()
+        if (total_chinese and total_chinese.strip() and total_amount == computed_total)
+        else _invoice_chinese_amount(invoice["total_amount"])
+    )
     _commit_draft_after_correction(invoice_id, invoice)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
@@ -601,6 +1023,8 @@ def advance_flow_step(
     if from_step >= max_flow_step and max_flow_step < 9:
         raise DeniedError
     invoice = _find_flow_invoice(invoice_id)
+    if invoice is not None:
+        _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
 
@@ -614,11 +1038,12 @@ def advance_flow_step(
 
 
 @router.post("/{invoice_id}/flow/finish-first-four")
-def finish_first_four_steps(invoice_id: int) -> RedirectResponse:
+def finish_first_four_steps(request: Request, invoice_id: int) -> RedirectResponse:
     """非財務部門完成前四步發票核對，標記待財務部接續處理並返回發票管理列表。"""
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
     _commit_draft_after_correction(invoice_id, invoice)
     invoice["first_four_checked"] = True
     invoice["stage"] = max(int(invoice.get("stage", 4)), 4)

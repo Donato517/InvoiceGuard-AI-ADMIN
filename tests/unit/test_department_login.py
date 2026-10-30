@@ -630,62 +630,145 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         DEPARTMENT: invoice_grant,
         OTHER: invoice_grant,
     }
-    login(browser)
-    welcome_page = browser.get("/welcome")
-    assert welcome_page.status_code == 200
-    sidebar = welcome_page.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
-    assert "發票上傳" in sidebar and 'href="/invoices/upload"' in sidebar
-    assert "發票管理" in sidebar and 'href="/invoices"' in sidebar
-    assert "財會檢核" not in sidebar
-    assert "申報資料" not in sidebar
-    assert "會計傳票" not in sidebar
 
-    list_page = browser.get("/invoices")
-    assert list_page.status_code == 200
-    assert "發票管理" in list_page.text
-    assert "/invoices/1/flow?step=4" in list_page.text
-    assert "/invoices/1/flow?step=9" not in list_page.text
-    assert "前四步核對已完成／待財務接續" in list_page.text
+    from app.routers.invoices import _INVOICE_STORE
 
-    step4_page = browser.get("/invoices/1/flow?step=4")
-    assert step4_page.status_code == 200
-    assert "系統自動檢核" in step4_page.text
-    assert "完成前四步，返回待處理發票" in step4_page.text
-    for finance_step_label in [
-        "財務審核",
-        "產生申報檔",
-        "匯入國稅局軟體",
-        "自動產生傳票",
-        "匯出結果",
-    ]:
-        assert finance_step_label not in step4_page.text
+    orig_user = _INVOICE_STORE[0].get("uploaded_by")
+    _INVOICE_STORE[0]["uploaded_by"] = str(state["account"]["user_id"])
+    try:
+        login(browser)
+        welcome_page = browser.get("/welcome")
+        assert welcome_page.status_code == 200
+        sidebar = welcome_page.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
+        assert "發票上傳" in sidebar and 'href="/invoices/upload"' in sidebar
+        assert "發票管理" in sidebar and 'href="/invoices"' in sidebar
+        assert "財會檢核" not in sidebar
+        assert "申報資料" not in sidebar
+        assert "會計傳票" not in sidebar
 
-    for forbidden_route in ["/invoices/review", "/invoices/filing", "/invoices/voucher"]:
-        assert browser.get(forbidden_route).status_code == 403
-    for forbidden_step in range(5, 10):
-        assert browser.get(f"/invoices/1/flow?step={forbidden_step}").status_code == 403
-    assert (
-        browser.post("/invoices/1/flow/advance", headers=ORIGIN, data={"from_step": 4}).status_code
-        == 403
-    )
-    assert (
-        browser.post("/invoices/1/review", headers=ORIGIN, data={"decision": "passed"}).status_code
-        == 403
-    )
+        list_page = browser.get("/invoices")
+        assert list_page.status_code == 200
+        assert "發票管理" in list_page.text
+        assert "/invoices/1/flow?step=4" in list_page.text
+        assert "/invoices/1/flow?step=9" not in list_page.text
+        assert "前四步核對已完成／待財務接續" in list_page.text
 
-    # 切換至財務部後，開放 🔍 財會檢核、📑 申報資料、🧾 會計傳票 與步驟 5～9
-    browser.post(
-        "/switch-department",
-        headers=ORIGIN,
-        data={"switch_department_id": str(OTHER), "next": "/invoices"},
-    )
-    fin_welcome = browser.get("/welcome")
-    fin_sidebar = fin_welcome.text.split('<nav aria-label="後台選單">', 1)[1].split("</nav>", 1)[0]
-    for finance_tab in ["發票上傳", "發票管理", "財會檢核", "申報資料", "會計傳票"]:
-        assert finance_tab in fin_sidebar
-    assert browser.get("/invoices/review").status_code == 200
-    assert browser.get("/invoices/filing").status_code == 200
-    assert browser.get("/invoices/voucher").status_code == 200
-    fin_step5 = browser.get("/invoices/1/flow?step=5")
-    assert fin_step5.status_code == 200
-    assert "財務審核" in fin_step5.text and "匯出結果" in fin_step5.text
+        # 本人上傳發票可檢視；他人上傳之發票（如 invoice 2），非財務部無權檢視或操作
+        assert "/invoices/2" not in list_page.text
+        assert browser.get("/invoices/2").status_code == 403
+        assert browser.get("/invoices/2/flow?step=4").status_code == 403
+
+        # 採購核對修正（步驟 3）應具備左右分欄與 14 項核對欄位，無原始檔時提示明確訊息
+        step3_page = browser.get("/invoices/1/flow?step=3")
+        assert step3_page.status_code == 200
+        assert "invoice-correction-split" in step3_page.text
+        assert "correction-original-column" in step3_page.text
+        assert "correction-field-column" in step3_page.text
+        assert "舊資料只有檔名，沒有保存原始檔" in step3_page.text
+        for expected_field_label in [
+            "發票聯式／識別",
+            "發票字軌號碼",
+            "發票日期",
+            "買受人名稱",
+            "買受人統編",
+            "品名／用途",
+            "數量",
+            "單價",
+            "金額",
+            "銷售額合計",
+            "課稅別與稅額",
+            "總計／國字大寫",
+            "備註",
+            "銷貨人",
+        ]:
+            assert expected_field_label in step3_page.text
+
+        step4_page = browser.get("/invoices/1/flow?step=4")
+        assert step4_page.status_code == 200
+        assert "系統自動檢核" in step4_page.text
+        assert "完成前四步，返回待處理發票" in step4_page.text
+        for finance_step_label in [
+            "財務審核",
+            "產生申報檔",
+            "匯入國稅局軟體",
+            "自動產生傳票",
+            "匯出結果",
+        ]:
+            assert finance_step_label not in step4_page.text
+
+        for forbidden_route in ["/invoices/review", "/invoices/filing", "/invoices/voucher"]:
+            assert browser.get(forbidden_route).status_code == 403
+        for forbidden_step in range(5, 10):
+            assert browser.get(f"/invoices/1/flow?step={forbidden_step}").status_code == 403
+        assert (
+            browser.post(
+                "/invoices/1/flow/advance", headers=ORIGIN, data={"from_step": 4}
+            ).status_code
+            == 403
+        )
+        assert (
+            browser.post(
+                "/invoices/1/review", headers=ORIGIN, data={"decision": "passed"}
+            ).status_code
+            == 403
+        )
+
+        # 切換至財務部後，開放 🔍 財會檢核、📑 申報資料、🧾 會計傳票 與步驟 5～9
+        browser.post(
+            "/switch-department",
+            headers=ORIGIN,
+            data={"switch_department_id": str(OTHER), "next": "/invoices"},
+        )
+        fin_welcome = browser.get("/welcome")
+        fin_sidebar = fin_welcome.text.split('<nav aria-label="後台選單">', 1)[1].split(
+            "</nav>", 1
+        )[0]
+        for finance_tab in ["發票上傳", "發票管理", "財會檢核", "申報資料", "會計傳票"]:
+            assert finance_tab in fin_sidebar
+        assert browser.get("/invoices/review").status_code == 200
+        assert browser.get("/invoices/filing").status_code == 200
+        assert browser.get("/invoices/voucher").status_code == 200
+        fin_step5 = browser.get("/invoices/1/flow?step=5")
+        assert fin_step5.status_code == 200
+        assert "財務審核" in fin_step5.text and "匯出結果" in fin_step5.text
+        # 步驟 5 財務審核需顯示 14 項核對欄位，但不含發票原圖／PDF 原始文件
+        assert "核對欄位（14 項）" in fin_step5.text
+        assert "發票聯式／識別" in fin_step5.text
+        assert "銷貨人" in fin_step5.text
+        assert "invoice-file-preview" not in fin_step5.text
+
+        # 財務部可檢視所有發票（包含他人上傳的發票）
+        fin_list = browser.get("/invoices")
+        assert fin_list.status_code == 200
+        assert "/invoices/2" in fin_list.text
+
+        # 步驟 6 產生申報檔：單張檢核 81 字元格式 21 預覽 + 批次產生申報檔卡片
+        fin_step6 = browser.get("/invoices/1/flow?step=6")
+        assert fin_step6.status_code == 200
+        assert "本張發票檢核" in fin_step6.text
+        assert "格式 21 單行預覽（81 字元" in fin_step6.text
+        assert "批次產生申報檔" in fin_step6.text
+
+        # 申報資料頁：顯示批次產生申報檔
+        filing_page = browser.get("/invoices/filing")
+        assert filing_page.status_code == 200
+        assert "批次產生申報檔" in filing_page.text
+        assert "已勾選" in filing_page.text
+        assert "產生並下載申報檔" in filing_page.text
+
+        # 批次匯出格式 21 申報檔
+        export_resp = browser.post(
+            "/invoices/filing/export",
+            headers=ORIGIN,
+            data={"period": "11308", "invoice_ids": [1, 2]},
+        )
+        assert export_resp.status_code == 200
+        assert export_resp.headers["content-type"].startswith("text/plain")
+        assert "12345678.TXT" in export_resp.headers["content-disposition"]
+        export_lines = [ln for ln in export_resp.text.splitlines() if ln]
+        assert len(export_lines) == 2
+        for eline in export_lines:
+            assert len(eline) == 81
+            assert eline.startswith("21123456789")
+    finally:
+        _INVOICE_STORE[0]["uploaded_by"] = orig_user

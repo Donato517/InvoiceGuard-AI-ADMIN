@@ -361,3 +361,71 @@ def test_new_invoice_only_saved_after_correction(admin_client: TestClient) -> No
     assert "/invoices/6/flow?step=4" in saved_list_res.text
 
     _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
+
+
+def test_batch_filing_page_and_export(admin_client: TestClient) -> None:
+    # 步驟 1 上傳按鈕無重複，僅保留與 [← 返回列表] 同行之按鈕
+    step1_res = admin_client.get("/invoices/1/flow?step=1")
+    assert step1_res.status_code == 200
+    assert step1_res.text.count("上傳並開始辨識") == 1
+    assert 'form="flow-upload-form"' in step1_res.text
+
+    # 步驟 3 左右分欄、14 項核對欄位、無原始圖檔提示，儲存按鈕無重複
+    step3_res = admin_client.get("/invoices/1/flow?step=3")
+    assert step3_res.status_code == 200
+    assert "invoice-correction-split" in step3_res.text
+    assert "核對欄位（14 項）" in step3_res.text
+    assert "舊資料只有檔名，沒有保存原始檔" in step3_res.text
+    assert step3_res.text.count("儲存並進入系統檢核") == 1
+    assert 'form="flow-correct-form"' in step3_res.text
+
+    # 步驟 5 財務審核：已核准之發票不應顯示「確認核准」與「退回修正」
+    step5_approved = admin_client.get("/invoices/1/flow?step=5")
+    assert step5_approved.status_code == 200
+    assert "確認核准" not in step5_approved.text
+    assert "退回修正" not in step5_approved.text
+    assert "此發票已完成審核（已核准）。" in step5_approved.text
+
+    # 步驟 5 財務審核：未核准之發票應顯示「確認核准」與「退回修正」
+    step5_pending = admin_client.get("/invoices/3/flow?step=5")
+    assert step5_pending.status_code == 200
+    assert "確認核准" in step5_pending.text
+    assert "退回修正" in step5_pending.text
+
+    # 發票審核詳情（財務審核）顯示 14 項欄位且不含發票原圖
+    detail_res = admin_client.get("/invoices/1")
+    assert detail_res.status_code == 200
+    assert "核對欄位（14 項）" in detail_res.text
+    assert "發票聯式／識別" in detail_res.text
+    assert "銷貨人" in detail_res.text
+    assert "invoice-file-preview" not in detail_res.text
+    assert "確認核准" not in detail_res.text
+    assert "退回修正" not in detail_res.text
+
+    # 步驟 6 產生申報檔（單張 81 字元預覽 + 批次產生申報檔卡片）
+    step6_res = admin_client.get("/invoices/1/flow?step=6")
+    assert step6_res.status_code == 200
+    assert "本張發票檢核" in step6_res.text
+    assert "格式 21 單行預覽（81 字元" in step6_res.text
+    assert "批次產生申報檔" in step6_res.text
+
+    # 申報資料頁（批次產生申報檔）
+    filing_res = admin_client.get("/invoices/filing")
+    assert filing_res.status_code == 200
+    assert "批次產生申報檔" in filing_res.text
+    assert "已勾選" in filing_res.text
+    assert "產生並下載申報檔" in filing_res.text
+
+    # 批次匯出申報檔
+    export_res = admin_client.post(
+        "/invoices/filing/export",
+        data={"period": "11308", "invoice_ids": [1, 2, 5]},
+    )
+    assert export_res.status_code == 200
+    assert export_res.headers["content-type"].startswith("text/plain")
+    assert "12345678.TXT" in export_res.headers["content-disposition"]
+    lines = [ln for ln in export_res.text.splitlines() if ln]
+    assert len(lines) == 3
+    for line in lines:
+        assert len(line) == 81
+        assert line.startswith("21123456789")

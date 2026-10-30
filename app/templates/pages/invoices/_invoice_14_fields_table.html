@@ -1,0 +1,25 @@
+{#
+  @template pages/invoices/_invoice_14_fields_table.html
+  @description 發票 14 項核對欄位唯讀清單（不含發票原圖／PDF 原始文件），供 AI OCR 預覽、財務審核與詳情頁檢視。
+  @context fields_14: list[dict]  [{index, label, value}]
+#}
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col">項次</th>
+        <th scope="col">核對欄位</th>
+        <th scope="col">內容</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in fields_14 %}
+        <tr>
+          <td>{{ row.index }}</td>
+          <td>{{ row.label }}</td>
+          <td>{{ row.value }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

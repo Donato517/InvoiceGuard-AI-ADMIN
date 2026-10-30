@@ -152,8 +152,144 @@ document.addEventListener('change', (event) => {
   if (event.target && event.target.id === 'invoice-file') {
     const file = event.target.files && event.target.files[0] ? event.target.files[0] : null
     renderInvoiceFilePreview(file)
+    return
+  }
+
+  if (event.target && event.target.dataset && event.target.dataset.invoice14) {
+    recalculateInvoice14Fields(event.target.dataset.invoice14)
   }
 })
+
+/**
+ * 將數值金額轉為繁體中文國字大寫金額（例如 6300 -> 陸仟參佰元整）。
+ * @param {number} amount 數值金額
+ * @returns {string}
+ */
+function invoiceChineseAmount(amount) {
+  const cents = Math.round((Number(amount) || 0) * 100)
+  if (!Number.isSafeInteger(cents) || cents < 0 || cents > 99999999999999) {
+    return ''
+  }
+  const digits = '零壹貳參肆伍陸柒捌玖'
+  const small = ['', '拾', '佰', '仟']
+  const large = ['', '萬', '億', '兆']
+  let integer = Math.floor(cents / 100)
+  const groups = []
+  let result = ''
+  let between = false
+  while (integer) {
+    groups.push(integer % 10000)
+    integer = Math.floor(integer / 10000)
+  }
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index]
+    if (!group) {
+      if (result) {
+        between = true
+      }
+      continue
+    }
+    if (result && (between || group < 1000)) {
+      result += '零'
+    }
+    between = false
+    let part = ''
+    let zero = false
+    for (let p = 3; p >= 0; p -= 1) {
+      const digit = Math.floor(group / 10 ** p) % 10
+      if (!digit) {
+        if (part) {
+          zero = true
+        }
+        continue
+      }
+      if (zero) {
+        part += '零'
+      }
+      zero = false
+      part += digits[digit] + small[p]
+    }
+    result += part + large[index]
+  }
+  result = (result || '零') + '元'
+  const jiao = Math.floor((cents % 100) / 10)
+  const fen = cents % 10
+  if (!jiao && !fen) {
+    return `${result}整`
+  }
+  if (jiao) {
+    result += `${digits[jiao]}角`
+  }
+  if (fen) {
+    result += `${!jiao ? '零' : ''}${digits[fen]}分`
+  }
+  return result
+}
+
+/**
+ * 步驟 3（採購核對修正）14 項欄位連動重算。
+ * @param {string} changedField 變更欄位識別名稱
+ */
+function recalculateInvoice14Fields(changedField) {
+  const qtyEl = document.getElementById('quantity')
+  const unitEl = document.getElementById('unit_price')
+  const amountEl = document.getElementById('amount')
+  const netEl = document.getElementById('net_amount')
+  const taxCatEl = document.getElementById('tax_category')
+  const taxAmtEl = document.getElementById('tax_amount')
+  const totalAmtEl = document.getElementById('total_amount')
+  const totalCnEl = document.getElementById('total_chinese')
+  if (!netEl || !taxAmtEl || !totalAmtEl || !totalCnEl) {
+    return
+  }
+
+  const qty = Math.max(1, Math.round(Number(qtyEl ? qtyEl.value : 1) || 1))
+  const unit = Math.max(0, Math.round(Number(unitEl ? unitEl.value : 0) || 0))
+  if (changedField === 'quantity' || changedField === 'unit_price') {
+    const computedAmount = qty * unit
+    if (amountEl) {
+      amountEl.value = String(computedAmount)
+    }
+    netEl.value = String(computedAmount)
+  } else if (changedField === 'amount' && amountEl) {
+    const amt = Math.max(0, Math.round(Number(amountEl.value) || 0))
+    netEl.value = String(amt)
+  }
+
+  const net = Math.max(0, Math.round(Number(netEl.value) || 0))
+  const taxCat = taxCatEl ? taxCatEl.value : '應稅'
+  if (
+    [
+      'quantity',
+      'unit_price',
+      'amount',
+      'net_amount',
+      'tax_category',
+    ].includes(changedField)
+  ) {
+    const computedTax = taxCat === '應稅' ? Math.round(net * 0.05) : 0
+    taxAmtEl.value = String(computedTax)
+  }
+
+  const tax = Math.max(0, Math.round(Number(taxAmtEl.value) || 0))
+  if (
+    [
+      'quantity',
+      'unit_price',
+      'amount',
+      'net_amount',
+      'tax_category',
+      'tax_amount',
+    ].includes(changedField)
+  ) {
+    const computedTotal = net + tax
+    totalAmtEl.value = String(computedTotal)
+    totalCnEl.value = invoiceChineseAmount(computedTotal)
+  } else if (changedField === 'total_amount') {
+    const total = Math.max(0, Math.round(Number(totalAmtEl.value) || 0))
+    totalCnEl.value = invoiceChineseAmount(total)
+  }
+}
 
 /**
  * 發票檔案拖曳上傳（dragover / dragleave / drop）
@@ -206,4 +342,90 @@ document.addEventListener('drop', (event) => {
   }
 
   renderInvoiceFilePreview(file)
+})
+
+/**
+ * 批次產生申報檔：動態計算勾選發票筆數、未稅合計、稅額合計與含稅總額。
+ */
+function updateFilingSummary() {
+  const allCheckbox = document.querySelector('input[data-filing="all"]')
+  const rowCheckboxes = Array.from(
+    document.querySelectorAll('input[data-filing="row"]:not(:disabled)')
+  )
+  if (!rowCheckboxes.length && !allCheckbox) {
+    return
+  }
+
+  let count = 0
+  let salesTotal = 0
+  let taxTotal = 0
+
+  rowCheckboxes.forEach((cb) => {
+    if (cb.checked) {
+      count += 1
+      salesTotal += Number(cb.dataset.sales) || 0
+      taxTotal += Number(cb.dataset.tax) || 0
+    }
+  })
+
+  if (allCheckbox) {
+    allCheckbox.checked =
+      rowCheckboxes.length > 0 && rowCheckboxes.every((cb) => cb.checked)
+    allCheckbox.indeterminate = count > 0 && count < rowCheckboxes.length
+  }
+
+  const countEl = document.getElementById('filing-checked-count')
+  if (countEl) {
+    countEl.textContent = `${count} 筆`
+  }
+  const salesEl = document.getElementById('filing-sales-total')
+  if (salesEl) {
+    salesEl.textContent = `$${salesTotal.toLocaleString('en-US')}`
+  }
+  const taxEl = document.getElementById('filing-tax-total')
+  if (taxEl) {
+    taxEl.textContent = `$${taxTotal.toLocaleString('en-US')}`
+  }
+  const grandEl = document.getElementById('filing-grand-total')
+  if (grandEl) {
+    grandEl.textContent = `$${(salesTotal + taxTotal).toLocaleString('en-US')}`
+  }
+  const exportBtn = document.getElementById('btn-filing-export')
+  if (exportBtn) {
+    exportBtn.disabled = count === 0
+  }
+}
+
+document.addEventListener('change', (event) => {
+  if (event.target.matches('input[data-filing="all"]')) {
+    const isChecked = event.target.checked
+    const rowCheckboxes = document.querySelectorAll(
+      'input[data-filing="row"]:not(:disabled)'
+    )
+    rowCheckboxes.forEach((cb) => {
+      cb.checked = isChecked
+    })
+    updateFilingSummary()
+  } else if (event.target.matches('input[data-filing="row"]')) {
+    updateFilingSummary()
+  }
+})
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest('#btn-filing-query')) {
+    const periodEl = document.getElementById('filing-period')
+    const fromEl = document.getElementById('filing-from-date')
+    const toEl = document.getElementById('filing-to-date')
+    const params = new URLSearchParams()
+    if (periodEl && periodEl.value) {
+      params.set('period', periodEl.value)
+    }
+    if (fromEl && fromEl.value) {
+      params.set('from_date', fromEl.value)
+    }
+    if (toEl && toEl.value) {
+      params.set('to_date', toEl.value)
+    }
+    window.location.href = `/invoices/filing?${params.toString()}`
+  }
 })

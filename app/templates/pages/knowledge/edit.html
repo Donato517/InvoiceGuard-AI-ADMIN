@@ -1,11 +1,11 @@
 {#
   @template pages/knowledge/edit.html
   @description 編輯知識庫名稱／文件名稱，或編輯文件內容（HTML 原型 renderEditor）。三種模式共用一個樣板。
-  @route GET /knowledge/{kb_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/content（需管理者登入）
+  @route GET /knowledge/{kb_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/content（需目前部門有知識庫查看權限）
   @context mode: str            kb_name / doc_name / doc_content
   @context kb: dict             {id, title}
   @context doc: dict | None     {id, title, file_name, revision}；mode 為 kb_name 時為 None
-  @context can_edit: bool       目前管理者是否有權限修改
+  @context can_edit: bool       目前部門可否管理此知識庫（送審部門、可管理部門或資訊部）；刪除另需刪除權限
   @context content: dict | None {text, text_editable, preview_url}；只在 doc_content 模式提供
   @context error: str | None    錯誤訊息
 #}
@@ -23,7 +23,7 @@
   </div>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   {% if not can_edit %}
-    <p class="alert alert--warning">此文件為其他部門所有、已被其他部門選用，或後端未授權；共用文件請聯絡工程師。</p>
+    <p class="alert alert--warning">目前部門不能管理這個知識庫；請由送審部門或資訊部修改。</p>
   {% endif %}
   {% if mode == "doc_content" %}
     <p class="alert alert--warning">內容變更後會重設為未核准並重新建立索引。TXT／Markdown 可直接改文字；PDF／DOCX 可替換原檔。</p>
@@ -81,7 +81,7 @@
           <p class="alert alert--info">此格式無法直接文字編輯，可下載原始文件或選擇新檔取代內容。</p>
         {% endif %}
         <div class="form-field">
-          <label for="replacement-file">替換原始檔（PDF、DOCX、TXT、Markdown；20 MB 以下）</label>
+          <label for="replacement-file">替換原始檔（PDF、DOCX、TXT、Markdown；4 MB 以下）</label>
           <input id="replacement-file"
                  name="file"
                  type="file"

@@ -1,9 +1,9 @@
 {#
   @template pages/knowledge/_upload_modal.html
   @description 上傳多個文件的對話框（HTML 原型 uploadDialog）。開關由 main.js 的 data-open-dialog / data-close-dialog 處理。
-  @route POST /knowledge/documents（multipart）→ 逐檔寫入 Storage 與 DB，回傳每檔結果
+  @route POST /knowledge/documents（multipart）→ 逐檔寫入 Storage（bucket rag）與 DB，回傳每檔結果
   @context kb: dict | None                 在既有知識庫內上傳時提供；新增知識庫時為 None
-  @context departments: list[dict]         可選擇的所屬部門 [{id, name}]
+  @context current_department_name: str    上傳部門（目前選取部門，由登入身分決定，不能在表單更改）
   @context new_knowledge_base: bool        true 時顯示「知識庫名稱」欄位
 #}
 <dialog id="upload-modal" class="modal" aria-labelledby="upload-heading">
@@ -30,14 +30,10 @@
                  name="knowledge_base_title"
                  maxlength="160"
                  required>
+          <span class="muted small-text">新知識庫須經資訊部核准後才能供部門問答。</span>
         </div>
       {% endif %}
-      <div class="form-field">
-        <label for="upload-department">所屬部門</label>
-        <select id="upload-department" name="department_id" required>
-          {% for dept in departments %}<option value="{{ dept.id }}">{{ dept.name }}</option>{% endfor %}
-        </select>
-      </div>
+      <p class="muted small-text">上傳部門：{{ current_department_name }}（目前選取的部門）</p>
       <div class="form-field">
         <label for="document-title">文件名稱（單檔可自訂，多檔使用各自檔名）</label>
         <input id="document-title" name="title" maxlength="160">
@@ -51,16 +47,10 @@
                  accept=".pdf,.docx,.txt,.md"
                  multiple
                  required>
-          <span class="muted">支援 PDF、DOCX、TXT、Markdown；每檔 20 MB 以下。</span>
+          <span class="muted">支援 PDF、DOCX、TXT、Markdown；每檔 4 MB 以下。PDF 目前最多 15 頁；DOCX 可上傳但尚無法索引。</span>
         </div>
       </div>
-      <div class="form-field">
-        <label for="document-status">文件審核設定</label>
-        <select id="document-status" name="status">
-          <option value="hold">未核准（預設）</option>
-          <option value="active">已核准</option>
-        </select>
-      </div>
+      <p class="muted small-text">新上傳一律未核准；完成索引後由資訊部核准。</p>
       <div id="batch-results"
            class="batch-results"
            role="status"

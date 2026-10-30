@@ -245,6 +245,18 @@ def rag_manager_row(state: dict[str, Any], **flags: bool) -> None:
     )
 
 
+@pytest.fixture
+def offline_knowledge_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """知識庫頁面改接 DB 後，權限測試只需要空的知識庫資料，不連 DB。"""
+    from app.services import rag_admin_service
+
+    monkeypatch.setattr(rag_admin_service, "list_departments", lambda: [])
+    monkeypatch.setattr(
+        rag_admin_service, "load_overview", lambda: rag_admin_service.KnowledgeOverview((), ())
+    )
+
+
+@pytest.mark.usefixtures("offline_knowledge_data")
 def test_rag_manager_catalog_row_opens_knowledge_page(
     browser: TestClient, state: dict[str, Any]
 ) -> None:
@@ -807,7 +819,12 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
 KNOWLEDGE_ROUTES = (
     ("GET", "/knowledge"),
     ("POST", "/knowledge/shared-tax/toggle-dept"),
+    ("POST", "/knowledge/shared-tax/review/approve"),
+    ("POST", "/knowledge/shared-tax/review/reject"),
+    ("POST", "/knowledge/shared-tax/review/resubmit"),
+    ("POST", "/knowledge/qa-source"),
     ("GET", "/knowledge/shared-tax/documents"),
+    ("POST", "/knowledge/shared-tax/documents/sample-tax/index"),
     ("POST", "/knowledge/shared-tax/documents/sample-tax/toggle-dept"),
     ("POST", "/knowledge/shared-tax/documents/sample-tax/status"),
     ("GET", "/knowledge/shared-tax/edit"),
@@ -857,6 +874,7 @@ def test_all_knowledge_routes_reject_logged_in_department_without_rag_permission
     assert not hasattr(response.context["request"].state, "e_configuration_authenticated")
 
 
+@pytest.mark.usefixtures("offline_knowledge_data")
 @pytest.mark.parametrize("allowed", [False, True])
 def test_rag_mapping_and_it_state_use_only_selected_department(
     browser: TestClient, state: dict[str, Any], module: EModule, allowed: bool

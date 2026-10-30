@@ -1,5 +1,9 @@
 # ADMIN Vercel / DB 模組與契約
 
+> 2026-10-30 後續核定：三模組已依要求同步至 API，兩站程式維持相同內容；下方本日早期分版敘述不再適用。來源綁定、欄位圖片、授權與逾時契約仍保留，沒有新增業務接線。
+
+> 2026-10-30 Document AI 三模組僅整合 ADMIN，與 API 分別版本化。新增 Pillow，OCR 與 Few-Shot 沿用既有 Google／Gemini 設定；設定工廠不讀 dotenv，不新增 DB 或 Storage 寫入。辨識結果進入裁圖前由受信任 service 呼叫 `bind_recognition()`；多張 TARGET 圖片的欄位必須宣告 `target_artifact_ids`。使用、限制與離線證據見 [檢驗報告](DOCUMENT_AI_REVIEW_20261030.md)。
+
 AI 入口見 [AGENTS.md](../AGENTS.md)／[CLAUDE.md](../CLAUDE.md)；
 本文件保留第一階段的實作範圍與歷史說明，目前能力以 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) 為準。
 新增或同步契約後執行 [無密鑰契約／分層檢查](PROJECT_CHECKS.md)。

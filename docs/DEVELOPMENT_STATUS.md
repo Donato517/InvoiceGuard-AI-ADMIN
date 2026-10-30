@@ -4,6 +4,10 @@
 
 # 開發狀態與工作邊界
 
+> 2026-10-30 後續更新：使用者要求將三模組同步至 API，兩站三檔恢復逐位元組比對；本日早期僅 ADMIN 分版紀錄被此範圍取代。三模組本身未再修改，evidence／Few-Shot 仍尚未接線業務流程。
+
+> 2026-10-30 最新 Document AI 狀態：僅 ADMIN 完成 `document_ai`、`document_ai_evidence`、`document_ai_fewshot` 模組整合及離線驗證，Document AI 改為分站版本化。保留原 OCR 介面，新增辨識輪次綁定、欄位圖片引用限制與 Few-Shot 設定工廠，依賴增加 Pillow。Google／Gemini 設定沿用既有名稱；未接線發票 UI、範例 CRUD、正式資料寫入、雲端呼叫或審批。下列較早兩站 AI 全部同版敘述對 Document AI 不再適用；詳見 [檢驗報告](DOCUMENT_AI_REVIEW_20261030.md)。
+
 
 > 2026-10-28 歡迎頁最新調整：僅顯示溫馨問候，移除設定流程及技術提示。功能入口保留在側欄，實際編輯頁仍顯示初始化提示。以下舊歡迎頁導覽描述為歷史紀錄。
 

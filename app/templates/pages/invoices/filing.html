@@ -1,0 +1,19 @@
+{#
+  @template pages/invoices/filing.html
+  @description 申報資料頁面（僅財務部開放），提供批次產生與下載格式 21 申報檔。
+  @route GET /invoices/filing
+  @context batch_filing: dict  批次申報資料
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}申報資料{% endblock %}
+{% block head %}
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <h2>申報資料</h2>
+    <p class="muted small-text">選擇申報所屬期，勾選檢核通過的已核准發票，產生本公司當期的格式 21 申報檔。</p>
+  </div>
+  {% include "pages/invoices/_batch_filing_card.html" %}
+{% endblock content %}

@@ -50,11 +50,15 @@
     {% if step == 1 %}
       <button type="submit" form="flow-upload-form" class="btn btn--primary">上傳並開始辨識 →</button>
     {% elif step == 3 %}
-      <button type="submit" form="flow-correct-form" class="btn btn--primary">完成核對並儲存進度 →</button>
-    {% elif step < 9 %}
+      <button type="submit" form="flow-correct-form" class="btn btn--primary">儲存並進入系統檢核 →</button>
+    {% elif step < (max_flow_step | default(9)) %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
         <input type="hidden" name="from_step" value="{{ step }}">
         <button type="submit" class="btn btn--primary">確認並繼續 →</button>
+      </form>
+    {% elif (max_flow_step | default(9)) < 9 %}
+      <form method="post" action="/invoices/{{ invoice.id }}/flow/finish-first-four">
+        <button type="submit" class="btn btn--primary">完成前四步，返回待處理發票</button>
       </form>
     {% elif not invoice.is_completed %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/complete">

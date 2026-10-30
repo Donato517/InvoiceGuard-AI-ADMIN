@@ -43,6 +43,7 @@ from app.services.e_registry import REGISTRY, Capability, capability, supported_
 DEPARTMENTS = "sys.departments"
 FEATURES = "sys.features"
 GRANTS = "sys.department-permissions"
+INVOICES = "inv.upload"
 
 
 @dataclass
@@ -343,6 +344,14 @@ def get_e_module() -> EModule:
     routes = {DEPARTMENTS: "/department", FEATURES: "/functions", GRANTS: "/department"}
     registry = tuple(replace(item, route=routes[item.code]) for item in REGISTRY) + (
         Capability("sys.accounts", "帳號管理", "系統管理", "/accounts", frozenset(Action)),
+        Capability(
+            INVOICES,
+            "發票上傳",
+            "發票作業",
+            "/invoices",
+            frozenset(Action),
+            system_only=False,
+        ),
     )
     adapter = DepartmentLoginAdapter(registry)
     return EModule(access=adapter, auth=adapter, registry=registry)

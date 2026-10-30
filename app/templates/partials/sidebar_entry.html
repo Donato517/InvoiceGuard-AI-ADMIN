@@ -2,7 +2,11 @@
 {% set entry_icons = {
   "/welcome": "🏠",
   "/dashboard": "📊",
-  "/invoices": "🧾",
+  "/invoices/upload": "📤",
+  "/invoices": "🗂️",
+  "/invoices/review": "🔍",
+  "/invoices/filing": "📑",
+  "/invoices/voucher": "🧾",
   "/knowledge": "📚",
   "/accounts": "👤",
   "/department": "🏢",
@@ -13,7 +17,8 @@
   "/system/job-runs": "⏱️"
 } %}
 {% if item.route %}
-  <a class="app-sidebar__link{% if request.url.path == item.route or request.url.path.startswith(item.route + '/') %} app-sidebar__link--active{% endif %}"
+  {% set is_active = (request.state.active_sidebar_route == item.route) if (request.state.active_sidebar_route is defined and request.state.active_sidebar_route) else (request.url.path == item.route or request.url.path.startswith(item.route + '/')) %}
+  <a class="app-sidebar__link{% if is_active %} app-sidebar__link--active{% endif %}"
      href="{{ item.route }}">
     <span class="app-sidebar__emoji" aria-hidden="true">{{ entry_icons.get(item.route, "⚙️") }}</span>
     <span>{{ item.name }}</span>

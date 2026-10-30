@@ -107,7 +107,8 @@ def disable_blocker(db: Session, department_id: UUID) -> str | None:
     """檢查實際外鍵與全部帳號關聯；無法核對的外鍵一律拒絕。
 
     短交易內 SHARE 鎖防止檢查與停用之間新增或修改關聯；兩秒無法取鎖便失敗回滾。
-    不因帳號停用或成員狀態而略過關聯，不刪除或重新分配使用者。
+    主要部門仍受 DB 複合外鍵保護；單純成員歸屬不阻擋停用。
+    不刪除或重新分配使用者，保留成員、功能與授權資料供重新啟用。
     """
     db.execute(text("SET LOCAL lock_timeout = '2s'"))
     # 若 RLS 會隱藏關聯資料，讓 PostgreSQL 拒絕查詢，不能把不可見誤認為沒有關聯。
@@ -117,9 +118,22 @@ def disable_blocker(db: Session, department_id: UUID) -> str | None:
             "LOCK TABLE invoiceguard_identity.user_accounts, public.user_departments IN SHARE MODE"
         )
     )
+    # 已核對 v1.3/v1.4 與實際 DB：單欄 UUID 引用不隨 is_active 變更。
+    # 主要部門複合外鍵另由 REFERENCES 查實際使用情形，不能只看外鍵是否存在。
+    # 保留精確 schema／表／來源及目標欄位比對；不同結構仍拒絕停用。
     allowed = {
         ("invoiceguard_identity", "user_accounts", ("primary_department_id",), ("department_id",)),
+        (
+            "invoiceguard_identity",
+            "user_accounts",
+            ("primary_department_id", "primary_department_active"),
+            ("department_id", "is_active"),
+        ),
         ("public", "user_departments", ("department_id",), ("department_id",)),
+        ("public", "department_permissions", ("department_id",), ("department_id",)),
+        ("public", "invoices", ("department_id",), ("department_id",)),
+        ("public", "rag_department_access", ("department_id",), ("department_id",)),
+        ("invoiceguard_identity", "user_sessions", ("selected_department_id",), ("department_id",)),
     }
     for row in db.execute(FOREIGN_KEYS).mappings():
         key = (
@@ -136,9 +150,8 @@ def disable_blocker(db: Session, department_id: UUID) -> str | None:
             )
     used = db.execute(REFERENCES, {"id": department_id}).mappings().one()
     if used["primary_used"]:
-        return "此部門仍是既有帳號的主要部門，無法停用"
-    if used["membership_used"]:
-        return "此部門仍有使用者部門關係，無法停用"
+        return "此部門仍是既有帳號的主要部門（包含已停用帳號），請先至帳號管理調整主要部門後再停用"
+    # membership_used 只記錄歸屬存在；停用權限不等於移除公司成員。
     return None
 
 

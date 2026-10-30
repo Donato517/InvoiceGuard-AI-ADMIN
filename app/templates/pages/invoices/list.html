@@ -16,7 +16,7 @@
 {% block content %}
   <div class="page-heading page-heading--between">
     <div>
-      <h2>發票審核管理</h2>
+      <h2>{{ section_title | default("發票審核管理") }}</h2>
       <p class="muted small-text">依狀態與關鍵字篩選發票，檢視或執行發票上傳、財會檢核、申報與傳票匯出作業。</p>
     </div>
     <a href="/invoices/new" class="btn btn--primary">＋ 新增發票</a>
@@ -98,11 +98,18 @@
                   <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
                 </td>
                 <td>
-                  <span class="muted small-text">{{ "已完成" if inv.is_completed else "步驟 " ~ inv.stage }}</span>
+                  {% if max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.is_completed or inv.stage > 4) %}
+                    <span class="badge badge--passed">前四步核對已完成／待財務接續</span>
+                  {% else %}
+                    <span class="muted small-text">{{ "已完成" if inv.is_completed else "步驟 " ~ inv.stage }}</span>
+                  {% endif %}
                 </td>
                 <td>
-                  <a href="/invoices/{{ inv.id }}/flow?step={{ 9 if inv.is_completed else (inv.stage if inv.stage else 4) }}"
-                     class="btn {% if inv.is_completed %}btn--secondary{% else %}btn--primary{% endif %} btn--small">{{ "檢視流程" if inv.is_completed else "審核流程 →" }}</a>
+                  {% set raw_step = 9 if inv.is_completed else (inv.stage if inv.stage else 4) %}
+                  {% set target_step = max_flow_step if (max_flow_step is defined and raw_step > max_flow_step) else raw_step %}
+                  {% set step_done = inv.is_completed or (max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.stage >= max_flow_step)) %}
+                  <a href="/invoices/{{ inv.id }}/flow?step={{ target_step }}"
+                     class="btn {% if step_done %}btn--secondary{% else %}btn--primary{% endif %} btn--small">{{ "檢視核對" if (max_flow_step is defined and max_flow_step < 9 and step_done) else ("檢視流程" if step_done else "審核流程 →") }}</a>
                 </td>
               </tr>
             {% endfor %}

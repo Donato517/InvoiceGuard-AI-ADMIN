@@ -21,7 +21,7 @@
       <h2>部門管理</h2>
       <p class="muted small-text">管理組織部門代碼、名稱與啟用狀態，並連結部門功能設定。</p>
     </div>
-    <p class="alert alert--info">本機開發測試：連接既有資料庫，請僅建立及操作虛構測試部門。正式部署前須接回授權機制。</p>
+    <p class="alert alert--info">停用部門後，其授權不再生效，並從可選的有效部門中隱藏；本列表仍保留部門及原授權設定，方便重新啟用。成員歸屬與帳號均保留；若仍被帳號設為主要部門，須先調整主要部門才能停用。</p>
     {% if message %}<p class="alert alert--success" role="status">{{ message }}</p>{% endif %}
     {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
     <section class="card">
@@ -52,7 +52,8 @@
                 <th scope="col">狀態</th>
                 <th scope="col">建立時間</th>
                 <th scope="col">修改時間</th>
-                <th scope="col">操作</th>
+                <th scope="col" class="e-department-list__actions">操作</th>
+                <th scope="col" class="e-department-list__state">啟用／停用</th>
               </tr>
             </thead>
             <tbody>
@@ -67,9 +68,28 @@
                   </td>
                   <td>{{ department.created_at | taipei_datetime }}</td>
                   <td>{{ department.updated_at | taipei_datetime }}</td>
-                  <td>
+                  <td class="e-department-list__actions">
                     <a class="btn btn--secondary btn--small"
                        href="/department/{{ department.department_id }}/edit">編輯／授權功能</a>
+                  </td>
+                  <td class="e-department-list__state">
+                    <form class="e-department-status"
+                          method="post"
+                          action="/department/{{ department.department_id }}/status"
+                          hx-post="/department/{{ department.department_id }}/status"
+                          hx-confirm="{{ '停用後此部門的授權將不再生效，資料與設定仍保留。確定停用？' if department.is_active else '啟用後將依原有部門授權設定恢復功能資格。確定啟用？' }}"
+                          hx-disabled-elt="find button">
+                      <input type="hidden" name="active" value="{{ 'false' if department.is_active else 'true' }}">
+                      <input type="hidden" name="q" value="{{ q }}">
+                      <button class="e-department-status__button"
+                              type="submit"
+                              role="switch"
+                              aria-checked="{{ 'true' if department.is_active else 'false' }}"
+                              aria-label="{{ department.department_name }}：{{ '停用部門' if department.is_active else '啟用部門' }}">
+                        <span class="e-department-status__track" aria-hidden="true"><span class="e-department-status__thumb"></span></span>
+                        <span class="e-department-status__label">{{ '啟用' if department.is_active else '停用' }}</span>
+                      </button>
+                    </form>
                   </td>
                 </tr>
               {% endfor %}

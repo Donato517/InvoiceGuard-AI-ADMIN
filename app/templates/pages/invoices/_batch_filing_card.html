@@ -1,0 +1,117 @@
+{#
+  @template pages/invoices/_batch_filing_card.html
+  @description 批次產生申報檔組件（對應 F09 規格畫面），供發票流程步驟 6 與申報資料頁使用。
+  @context batch_filing: dict  {period, periods, from_date, to_date, rows, count, sales_amount, tax_amount, total_amount, company_id}
+#}
+<section class="card filing-card">
+  <h2 class="card__title">批次產生申報檔</h2>
+  <div class="alert alert--warning">本機示範：以下檢核、小計與檔案由系統模擬，只用於確認畫面，不可作為正式申報檔。</div>
+  <form id="batch-filing-form" method="post" action="/invoices/filing/export">
+    <div class="filing-controls">
+      <div class="field">
+        <label for="filing-period">申報所屬期</label>
+        <select id="filing-period" name="period" data-filing="period">
+          {% for p_code, p_label in batch_filing.periods %}
+            <option value="{{ p_code }}"
+                    {% if p_code == batch_filing.period %}selected{% endif %}>{{ p_label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="filing-from-date">發票日期起</label>
+        <input type="date"
+               id="filing-from-date"
+               name="from_date"
+               value="{{ batch_filing.from_date }}">
+      </div>
+      <div class="field">
+        <label for="filing-to-date">發票日期迄</label>
+        <input type="date"
+               id="filing-to-date"
+               name="to_date"
+               value="{{ batch_filing.to_date }}">
+      </div>
+      <div>
+        <button type="button" class="btn btn--secondary" id="btn-filing-query">🔍 查詢已核准發票</button>
+      </div>
+    </div>
+    <p class="muted small-text">起訖日只用來篩選發票日期，可涵蓋前期漏報、補報的發票；寫入檔案的期別一律是「申報所屬期」。</p>
+    <div class="table-wrap">
+      <table class="table filing-table">
+        <thead>
+          <tr>
+            <th scope="col">
+              <input type="checkbox"
+                     id="filing-check-all"
+                     data-filing="all"
+                     checked
+                     aria-label="全選檢核通過的發票">
+            </th>
+            <th scope="col">發票號碼</th>
+            <th scope="col">日期</th>
+            <th scope="col">部門</th>
+            <th scope="col" class="num">未稅</th>
+            <th scope="col" class="num">稅額</th>
+            <th scope="col">檢核</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in batch_filing.rows %}
+            <tr class="{% if r.issues %}filing-row-bad{% endif %}">
+              <td>
+                <input type="checkbox"
+                       name="invoice_ids"
+                       value="{{ r.id }}"
+                       data-filing="row"
+                       data-sales="{{ r.sales }}"
+                       data-tax="{{ r.tax }}"
+                       aria-label="勾選 {{ r.invoice_number }}"
+                       {% if r.checked %}checked{% endif %}
+                       {% if r.issues %}disabled{% endif %}>
+              </td>
+              <td>{{ r.invoice_number }}</td>
+              <td>{{ r.invoice_date }}</td>
+              <td>{{ r.department_name }}</td>
+              <td class="num">${{ "{:,}".format(r.sales) }}</td>
+              <td class="num">${{ "{:,}".format(r.tax) }}</td>
+              <td>
+                {% if not r.issues %}
+                  <span class="filing-pill ok">✓ 通過</span>
+                {% else %}
+                  <span class="filing-pill bad" title="{{ r.issues[0].message }}">⚠ {{ r.issues[0].message }}</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="filing-summary filing-summary-two-cards">
+      <div class="filing-stat">
+        <span>已勾選</span>
+        <b id="filing-checked-count">{{ batch_filing.count }} 筆</b>
+      </div>
+      <div class="filing-stat filing-grand-total">
+        <span>已勾選發票合計（全部勾選）</span>
+        <div class="filing-total-line">
+          <span>未稅合計</span>
+          <strong id="filing-sales-total">${{ "{:,}".format(batch_filing.sales_amount) }}</strong>
+        </div>
+        <div class="filing-total-line">
+          <span>稅額合計</span>
+          <strong id="filing-tax-total">${{ "{:,}".format(batch_filing.tax_amount) }}</strong>
+        </div>
+        <div class="filing-total-line">
+          <span>含稅總額</span>
+          <strong id="filing-grand-total">${{ "{:,}".format(batch_filing.total_amount) }}</strong>
+        </div>
+      </div>
+    </div>
+    <div class="filing-export">
+      <div class="muted">
+        檔名：<code>{{ batch_filing.company_id }}.TXT</code>（每期一檔）
+      </div>
+      <button type="submit" id="btn-filing-export" class="btn btn--primary">⬇ 產生並下載申報檔</button>
+    </div>
+  </form>
+</section>

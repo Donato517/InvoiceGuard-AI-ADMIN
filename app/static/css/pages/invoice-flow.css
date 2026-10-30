@@ -206,9 +206,324 @@
   color: var(--color-warning);
 }
 
+/* ---- 14 項核對欄位網格（原型 .invoice14-grid / .invoice14-field / .invoice14-subfields）---- */
+.invoice14-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.0625rem;
+  margin-top: var(--space-4);
+}
+
+.invoice14-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.invoice14-field > label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.invoice14-field > label span {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4375rem;
+  height: 1.4375rem;
+  font-size: 0.75rem;
+  color: var(--color-step-active-text);
+  background-color: var(--color-step-active-bg);
+  border-radius: 50%;
+}
+
+.invoice14-field input,
+.invoice14-field textarea,
+.invoice14-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.invoice14-subfields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.review-fields-section {
+  margin-bottom: var(--space-5);
+}
+
+/* ==========================================================================
+   採購核對修正：左右分欄（原型 .invoice-correction-split）
+   ========================================================================== */
+.invoice-correction-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.375rem;
+  align-items: start;
+}
+
+.correction-original-column,
+.correction-field-column {
+  min-width: 0;
+  padding: var(--space-4);
+  background-color: #f9fbff;
+  border: 1px solid var(--color-border);
+  border-radius: 0.6875rem;
+}
+
+.correction-original-column {
+  position: sticky;
+  top: 0;
+}
+
+.correction-panel-title {
+  margin-bottom: 0.9375rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #315175;
+}
+
+.correction-original-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.correction-original-actions .muted {
+  width: 100%;
+}
+
+.correction-original-actions a {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+}
+
+.correction-original-image-wrap {
+  padding: var(--space-2);
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.correction-original-image {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+.correction-original-pdf {
+  display: block;
+  width: 100%;
+  height: 72vh;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.correction-original-empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 22.5rem;
+  padding: 1.5625rem;
+  font-size: 0.8125rem;
+  line-height: 1.8;
+  color: var(--color-text-muted);
+  text-align: center;
+  background: #f3f6fb;
+  border: 1px dashed #bdcce0;
+  border-radius: 0.5625rem;
+}
+
+/* ==========================================================================
+   申報檔與批次產生申報檔樣式（原型 .filing-*）
+   ========================================================================== */
+.num {
+  text-align: right;
+}
+
+.filing-card h3 {
+  margin-bottom: 1rem;
+}
+
+.filing-pill {
+  display: inline-block;
+  padding: 0.3125rem 0.6875rem;
+  font-size: 0.75rem;
+  cursor: default;
+  border-radius: 1.25rem;
+}
+
+.filing-pill.ok {
+  color: #23774d;
+  background: #e6f6ec;
+}
+
+.filing-pill.bad {
+  color: #b3342d;
+  background: #fde7e5;
+}
+
+.filing-pill.pending {
+  color: #60738c;
+  background: #edf2f8;
+}
+
+.filing-line {
+  padding: 0.875rem 1rem;
+  margin: 0 0 0.75rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #23344d;
+  white-space: pre;
+  overflow-x: auto;
+  background: #f3f6fb;
+  border-radius: 0.5625rem;
+}
+
+.filing-problems {
+  padding-left: 1.25rem;
+  margin: 0.875rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  color: #b3342d;
+}
+
+.filing-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 0.875rem;
+  align-items: end;
+  margin-bottom: 0.625rem;
+}
+
+.filing-controls .field {
+  margin: 0;
+}
+
+.filing-issues summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.filing-issues summary::-webkit-details-marker {
+  display: none;
+}
+
+.filing-issues ul {
+  min-width: 14.375rem;
+  padding-left: 1.125rem;
+  margin: 0.4375rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: #b3342d;
+  white-space: normal;
+}
+
+.filing-row-bad td {
+  background: #fffafa;
+}
+
+.filing-summary.filing-summary-two-cards {
+  display: grid;
+  grid-template-columns: minmax(9.375rem, 0.65fr) minmax(0, 1.35fr);
+  gap: 0.875rem;
+  margin: 1.25rem 0;
+}
+
+.filing-stat {
+  padding: 1rem 1.125rem;
+  background: #f6f9fd;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+}
+
+.filing-stat span {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.filing-stat b {
+  display: block;
+  margin-top: 0.375rem;
+  font-size: 1.5rem;
+}
+
+.filing-grand-total {
+  background: #eef5ff;
+  border-color: #c6d9f5;
+}
+
+.filing-total-line {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.4375rem;
+}
+
+.filing-total-line span {
+  font-size: 0.75rem;
+}
+
+.filing-total-line strong {
+  font-size: 1.25rem;
+}
+
+.filing-export {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.875rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.filing-section-title {
+  margin-bottom: 0;
+}
+
+.filing-preview-title {
+  margin: 1rem 0 0.5rem;
+}
+
+@media (max-width: 1100px) {
+  .invoice-correction-split {
+    grid-template-columns: 1fr;
+  }
+
+  .correction-original-column {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .filing-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 800px) {
   .download-list,
-  .two-cols {
+  .two-cols,
+  .invoice14-grid,
+  .invoice14-subfields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .filing-summary.filing-summary-two-cards {
     grid-template-columns: 1fr;
   }
 }

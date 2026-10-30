@@ -144,12 +144,19 @@ async def switch_department(request: Request, module: Module) -> RedirectRespons
             allowed_routes = {
                 entry.route for entry in module.sidebar_menu(identity) if entry.route
             } | {WELCOME_PATH, "/workspace", "/account"}
-            for route in allowed_routes:
-                if raw_next == route or raw_next.startswith(route + "/"):
-                    if route in {"/workspace", "/account"}:
-                        module.workspace_access(identity)
-                    target = raw_next
-                    break
+            if (
+                raw_next in {"/invoices/review", "/invoices/filing", "/invoices/voucher"}
+                and raw_next not in allowed_routes
+                and "/invoices" in allowed_routes
+            ):
+                target = "/invoices"
+            else:
+                for route in allowed_routes:
+                    if raw_next == route or raw_next.startswith(route + "/"):
+                        if route in {"/workspace", "/account"}:
+                            module.workspace_access(identity)
+                        target = raw_next
+                        break
         except EError:
             target = WELCOME_PATH
     response = RedirectResponse(

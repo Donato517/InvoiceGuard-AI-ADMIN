@@ -1,89 +1,262 @@
 {#
   @template pages/invoices/_flow_step_correct.html
-  @description 步驟 3：核對並修正辨識欄位（HTML 原型 flowStep 2）；儲存後正式寫入發票清單並清除暫存影像。
+  @description 步驟 3：採購核對修正（左右分欄：左側發票原圖／PDF，右側 14 項核對欄位）。
   @route POST /invoices/{invoice_id}/flow/correct
   @context invoice: dict  發票資料
 #}
 <p class="alert alert--info">
-  完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔），下次可直接從後續步驟繼續辦理。
+  左側為原始發票，右側共有 14 項核對欄位。數量與單價會自動重算金額與銷售額合計；應稅稅額沿用 5% 規則，請依實際發票修正。完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔）。
 </p>
-<div class="{% if invoice.file_bytes %}two-cols{% endif %}">
-  {% if invoice.file_bytes %}
-    <div class="invoice-file-preview">
-      {% if invoice.file_media_type == "application/pdf" %}
-        <iframe class="invoice-file-preview__frame"
-                title="發票檔案預覽"
-                src="/invoices/{{ invoice.id }}/file"></iframe>
+<div class="invoice-correction-split">
+  <section class="correction-original-column" aria-label="發票原始檔">
+    <div class="correction-panel-title">發票原圖／PDF 原始文件</div>
+    <div id="invoiceOriginalPane">
+      {% if invoice.file_bytes %}
+        <div class="correction-original-actions">
+          <span class="muted small-text">{{ invoice.file_name }}</span>
+          <a href="/invoices/{{ invoice.id }}/file"
+             target="_blank"
+             rel="noopener noreferrer">新視窗檢視原檔</a>
+          <a href="/invoices/{{ invoice.id }}/file"
+             download="{{ invoice.file_name }}"
+             class="btn btn--secondary btn--small">下載原始檔</a>
+        </div>
+        {% if invoice.file_media_type == "application/pdf" %}
+          <iframe class="correction-original-pdf"
+                  title="發票 PDF 原始文件預覽"
+                  src="/invoices/{{ invoice.id }}/file"></iframe>
+          <p class="muted small-text">若未顯示 PDF，請按新視窗檢視或下載原始檔。</p>
+        {% else %}
+          <div class="correction-original-image-wrap">
+            <img class="correction-original-image"
+                 src="/invoices/{{ invoice.id }}/file"
+                 alt="上傳的發票原圖">
+          </div>
+        {% endif %}
+      {% elif invoice.file_name %}
+        <div class="correction-original-empty">
+          <p>
+            <strong>{{ invoice.file_name }}</strong>
+          </p>
+          <p>舊資料只有檔名，沒有保存原始檔。請重新上傳原始發票，或由後端提供原檔。</p>
+          <small>不會以示範圖片、空白發票或重繪內容代替原始檔。</small>
+        </div>
       {% else %}
-        <img class="invoice-file-preview__img"
-             src="/invoices/{{ invoice.id }}/file"
-             alt="發票預覽：{{ invoice.file_name }}">
+        <div class="correction-original-empty">
+          <p>尚未上傳原始發票。</p>
+          <p>請先在發票上傳步驟選取 JPG、PNG 或 PDF。</p>
+          <small>不會以示範圖片、空白發票或重繪內容代替原始檔。</small>
+        </div>
       {% endif %}
-      <span class="muted small-text">上傳檔案：{{ invoice.file_name }}</span>
     </div>
-  {% endif %}
-  <form id="flow-correct-form"
-        method="post"
-        action="/invoices/{{ invoice.id }}/flow/correct"
-        class="form">
-    <div class="form-grid">
-      <div class="form-field">
-        <label for="invoice_number">發票號碼</label>
-        <input id="invoice_number"
-               name="invoice_number"
-               value="{{ invoice.invoice_number }}"
-               maxlength="10"
-               required>
+  </section>
+  <section class="correction-field-column" aria-label="14 項核對欄位">
+    <div class="correction-panel-title">核對欄位（14 項）</div>
+    <form id="flow-correct-form"
+          method="post"
+          action="/invoices/{{ invoice.id }}/flow/correct"
+          class="form">
+      <div class="invoice14-grid">
+        <div class="invoice14-field">
+          <label for="format_identification">
+            <span>1</span>發票聯式／識別
+          </label>
+          <input id="format_identification"
+                 name="format_identification"
+                 data-invoice14="format_identification"
+                 value="{{ invoice.format_identification or '三聯式手開發票' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="invoice_number">
+            <span>2</span>發票字軌號碼
+          </label>
+          <input id="invoice_number"
+                 name="invoice_number"
+                 data-invoice14="invoice_number"
+                 value="{{ invoice.invoice_number }}"
+                 maxlength="10"
+                 required
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="invoice_date">
+            <span>3</span>發票日期
+          </label>
+          <input id="invoice_date"
+                 name="invoice_date"
+                 data-invoice14="invoice_date"
+                 value="{{ invoice.invoice_date }}"
+                 required
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="buyer_name">
+            <span>4</span>買受人名稱
+          </label>
+          <input id="buyer_name"
+                 name="buyer_name"
+                 data-invoice14="buyer_name"
+                 value="{{ invoice.buyer_name or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="buyer_tax_id">
+            <span>5</span>買受人統編
+          </label>
+          <input id="buyer_tax_id"
+                 name="buyer_tax_id"
+                 data-invoice14="buyer_tax_id"
+                 value="{{ invoice.buyer_tax_id or '' }}"
+                 maxlength="8"
+                 inputmode="numeric"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="item_description">
+            <span>6</span>品名／用途
+          </label>
+          <input id="item_description"
+                 name="item_description"
+                 data-invoice14="item_description"
+                 value="{{ invoice.item_description or '' }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="quantity">
+            <span>7</span>數量
+          </label>
+          <input id="quantity"
+                 name="quantity"
+                 type="number"
+                 min="1"
+                 step="1"
+                 data-invoice14="quantity"
+                 value="{{ invoice.quantity or 1 }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="unit_price">
+            <span>8</span>單價
+          </label>
+          <input id="unit_price"
+                 name="unit_price"
+                 type="number"
+                 min="0"
+                 step="1"
+                 data-invoice14="unit_price"
+                 value="{{ invoice.unit_price if invoice.unit_price is not none else invoice.net_amount }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="amount">
+            <span>9</span>金額
+          </label>
+          <input id="amount"
+                 name="amount"
+                 type="number"
+                 min="0"
+                 step="1"
+                 data-invoice14="amount"
+                 value="{{ invoice.amount if invoice.amount is not none else invoice.net_amount }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="net_amount">
+            <span>10</span>銷售額合計
+          </label>
+          <input id="net_amount"
+                 name="net_amount"
+                 type="number"
+                 min="0"
+                 step="1"
+                 data-invoice14="net_amount"
+                 value="{{ invoice.net_amount }}"
+                 {% if invoice.is_completed %}readonly{% endif %}>
+        </div>
+        <div class="invoice14-field">
+          <label for="tax_category">
+            <span>11</span>課稅別與稅額
+          </label>
+          <div class="invoice14-subfields">
+            <select id="tax_category"
+                    name="tax_category"
+                    data-invoice14="tax_category"
+                    aria-label="課稅別"
+                    {% if invoice.is_completed %}disabled{% endif %}>
+              {% for cat in ["應稅", "零稅率", "免稅"] %}
+                <option value="{{ cat }}"
+                        {% if (invoice.tax_category or '應稅') == cat %}selected{% endif %}>{{ cat }}</option>
+              {% endfor %}
+            </select>
+            <input id="tax_amount"
+                   name="tax_amount"
+                   type="number"
+                   min="0"
+                   step="1"
+                   data-invoice14="tax_amount"
+                   aria-label="稅額"
+                   value="{{ invoice.tax_amount }}"
+                   {% if invoice.is_completed %}readonly{% endif %}>
+          </div>
+        </div>
+        <div class="invoice14-field">
+          <label for="total_amount">
+            <span>12</span>總計／國字大寫
+          </label>
+          <div class="invoice14-subfields">
+            <input id="total_amount"
+                   name="total_amount"
+                   type="number"
+                   min="0"
+                   step="1"
+                   data-invoice14="total_amount"
+                   aria-label="總計"
+                   value="{{ invoice.total_amount }}"
+                   {% if invoice.is_completed %}readonly{% endif %}>
+            <input id="total_chinese"
+                   name="total_chinese"
+                   data-invoice14="total_chinese"
+                   aria-label="國字大寫"
+                   value="{{ invoice.total_chinese or '' }}"
+                   {% if invoice.is_completed %}readonly{% endif %}>
+          </div>
+        </div>
+        <div class="invoice14-field">
+          <label for="remarks">
+            <span>13</span>備註
+          </label>
+          <textarea id="remarks"
+                    name="remarks"
+                    rows="2"
+                    data-invoice14="remarks"
+                    aria-label="備註"
+                    {% if invoice.is_completed %}readonly{% endif %}>{{ invoice.remarks or '' }}</textarea>
+        </div>
+        <div class="invoice14-field">
+          <label for="seller_name">
+            <span>14</span>銷貨人
+          </label>
+          <div class="invoice14-subfields">
+            <input id="seller_name"
+                   name="seller_name"
+                   data-invoice14="seller_name"
+                   aria-label="銷貨人名稱"
+                   placeholder="銷貨人名稱"
+                   value="{{ invoice.seller_name or '' }}"
+                   {% if invoice.is_completed %}readonly{% endif %}>
+            <input id="seller_tax_id"
+                   name="seller_tax_id"
+                   data-invoice14="seller_tax_id"
+                   aria-label="銷貨人統編"
+                   placeholder="銷貨人統編"
+                   maxlength="8"
+                   inputmode="numeric"
+                   value="{{ invoice.seller_tax_id or '' }}"
+                   {% if invoice.is_completed %}readonly{% endif %}>
+          </div>
+        </div>
       </div>
-      <div class="form-field">
-        <label for="invoice_date">發票日期（民國年/月/日）</label>
-        <input id="invoice_date"
-               name="invoice_date"
-               value="{{ invoice.invoice_date }}"
-               required>
-      </div>
-      <div class="form-field">
-        <label for="seller_tax_id">賣方統編</label>
-        <input id="seller_tax_id"
-               name="seller_tax_id"
-               value="{{ invoice.seller_tax_id or '' }}"
-               maxlength="8"
-               inputmode="numeric">
-      </div>
-      <div class="form-field">
-        <label for="buyer_tax_id">買方統編</label>
-        <input id="buyer_tax_id"
-               name="buyer_tax_id"
-               value="{{ invoice.buyer_tax_id or '' }}"
-               maxlength="8"
-               inputmode="numeric">
-      </div>
-      <div class="form-field">
-        <label for="item_description">品名</label>
-        <input id="item_description"
-               name="item_description"
-               value="{{ invoice.item_description or '' }}">
-      </div>
-      <div class="form-field">
-        <label for="net_amount">未稅金額</label>
-        <input id="net_amount"
-               name="net_amount"
-               type="number"
-               min="0"
-               step="1"
-               value="{{ invoice.net_amount }}">
-      </div>
-      <div class="form-field">
-        <label for="tax_amount">營業稅（5%）</label>
-        <input id="tax_amount" value="{{ invoice.tax_amount }}" readonly>
-      </div>
-      <div class="form-field">
-        <label for="total_amount">含稅總額</label>
-        <input id="total_amount" value="{{ invoice.total_amount }}" readonly>
-      </div>
-    </div>
-    <div class="toolbar__actions">
-      <button type="submit" class="btn btn--primary">儲存並進入系統檢核 →</button>
-    </div>
-  </form>
+    </form>
+  </section>
 </div>

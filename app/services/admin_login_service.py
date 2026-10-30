@@ -39,8 +39,33 @@ CATALOG_CODES = {
     "sys.departments": "department",
     "sys.features": "functions",
     "sys.department-permissions": "department",
+    "inv.upload": "Triplicate Uniform Invoice",
 }
+COMPANY_CATALOG_CODES = {
+    "sys.accounts",
+    "sys.departments",
+    "sys.features",
+    "sys.department-permissions",
+}
+INVOICE_CATALOG_ALIASES = frozenset({"Triplicate Uniform Invoice", "invoices", "inv.upload"})
 ACTION_FLAGS = {Action.VIEW: 1, Action.CREATE: 2, Action.EDIT: 4, Action.DELETE: 8}
+
+
+def _is_finance_department(
+    departments: tuple[EffectiveDepartment, ...], selected_department_id: UUID
+) -> bool:
+    for dept in departments:
+        if dept.department_id == selected_department_id:
+            code = dept.department_code.upper()
+            if "財務" in dept.department_name or code in {"FINANCE", "FIN", "ACCOUNTING", "ACC"}:
+                return True
+    return False
+
+
+def _normalize_catalog_code(code: str, name: str = "") -> str:
+    if code in INVOICE_CATALOG_ALIASES or "三聯式統一發票" in name or name == "發票上傳":
+        return "Triplicate Uniform Invoice"
+    return code
 
 
 @lru_cache(maxsize=1)
@@ -118,9 +143,15 @@ class DepartmentLoginAdapter:
         result = {}
         for row in rows:
             if row["is_active"] and row["app_scope"] in {"admin", "both"}:
-                result[row["function_code"]] = sum(
+                mask = sum(
                     flag for action, flag in ACTION_FLAGS.items() if row["can_" + action.value]
                 )
+                result[row["function_code"]] = mask
+                normalized = _normalize_catalog_code(
+                    row["function_code"], row.get("function_name", "")
+                )
+                if normalized != row["function_code"]:
+                    result.setdefault(normalized, mask)
         return result
 
     def login(self, email: str, password: SecretStr) -> IssuedSession:
@@ -306,7 +337,7 @@ class DepartmentLoginAdapter:
         # 配置頁仍維持其既有公司級字典／帳號範圍；業務資料不因此取得公司範圍。
         scope = (
             DataScope("company")
-            if code in CATALOG_CODES
+            if code in COMPANY_CATALOG_CODES
             else DataScope("departments", frozenset({identity.selected_department_id}))
         )
         return Decision(
@@ -376,13 +407,35 @@ class DepartmentLoginAdapter:
                 if item.code != "sys.department-permissions"
             }
             entries = []
+            user_departments = self._departments_by_user.get(current.user_id, ())
+            is_finance = _is_finance_department(user_departments, current.selected_department_id)
             for row in rows:
                 code = row["function_code"]
                 mask = flags.get(code, 0)
                 if not mask or code == "welcome":
                     continue
-                definition = definitions.get(code)
+                lookup_code = _normalize_catalog_code(code, row.get("function_name", ""))
+                definition = definitions.get(lookup_code)
                 can_open = bool(definition and Action.VIEW in definition.actions and mask & 1)
+                if definition and definition.code == "inv.upload":
+                    if can_open:
+                        entries.append(
+                            SidebarEntry("inv.upload", "發票上傳", "/invoices/upload", "")
+                        )
+                        entries.append(SidebarEntry("inv.manage", "發票管理", "/invoices", ""))
+                        if is_finance:
+                            entries.extend(
+                                (
+                                    SidebarEntry("inv.review", "財會檢核", "/invoices/review", ""),
+                                    SidebarEntry("inv.filing", "申報資料", "/invoices/filing", ""),
+                                    SidebarEntry(
+                                        "inv.voucher", "會計傳票", "/invoices/voucher", ""
+                                    ),
+                                )
+                            )
+                    else:
+                        entries.append(SidebarEntry("inv.upload", "發票上傳", None, "未授權查看"))
+                    continue
                 entries.append(
                     SidebarEntry(
                         definition.code if definition else code,
@@ -392,8 +445,17 @@ class DepartmentLoginAdapter:
                     )
                 )
             # 維持既有管理入口順序，其他功能接續；帳號與登出仍相鄰。
-            order = {"sys.departments": 0, "sys.features": 1, "sys.accounts": 3}
-            return tuple(sorted(entries, key=lambda item: (order.get(item.code, 2), item.code)))
+            order = {
+                "sys.departments": 0,
+                "sys.features": 1,
+                "inv.upload": 2,
+                "inv.manage": 2,
+                "inv.review": 2,
+                "inv.filing": 2,
+                "inv.voucher": 2,
+                "sys.accounts": 3,
+            }
+            return tuple(sorted(entries, key=lambda item: order.get(item.code, 2)))
 
         return self._run(operation)
 

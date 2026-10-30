@@ -96,6 +96,7 @@
                 <td>{{ inv.tax_amount | currency }}</td>
                 <td>
                   <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                  {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
                 </td>
                 <td>
                   {% if max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.is_completed or inv.stage > 4) %}

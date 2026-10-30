@@ -1,0 +1,79 @@
+{#
+  @template pages/invoices/_procurement_return.html
+  @description 步驟 3 上方的「退回補正」區（2-5）：列出財務退回的項目，申請人逐項選「已補正」或「申覆（不修改）」後重新送出；
+               規則由 procurement_case_service 判斷，失敗原因逐項顯示。
+  @route POST /invoices/{invoice_id}/procurement/resubmit、POST /invoices/{invoice_id}/flow/upload（重新上傳附件）
+  @context invoice: dict              發票資料
+  @context procurement_return: dict   {items: [{key, label, reason, is_changed}], actions, errors, submission_round, returned_at}
+#}
+{% set pr = procurement_return %}
+<section class="fr-section" aria-label="退回補正">
+  <h3 class="fr-section__title">
+    退回補正
+    <span class="badge badge--flagged">待補正</span>
+    <span class="muted small-text">第 {{ pr.submission_round }} 次送出被退回{% if pr.returned_at %}（{{ pr.returned_at.strftime("%Y-%m-%d %H:%M") }}）{% endif %}</span>
+  </h3>
+  <p class="alert alert--warning">
+    財務人員退回以下項目。請先在下方核對欄位修改並按「儲存補正內容」（附件請重新上傳），再逐項選擇處理方式後重新送出。
+  </p>
+  {% if pr.errors %}
+    <ul class="fr-issue-list" role="alert">
+      {% for message in pr.errors %}
+        <li class="fr-issue fr-issue--error">
+          <span class="fr-issue__level">無法送出</span>
+          <span>{{ message }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if not pr["items"] %}
+    <p class="alert alert--info">讀取不到退回項目，請聯絡財務人員。</p>
+  {% else %}
+    <form method="post"
+          action="/invoices/{{ invoice.id }}/procurement/resubmit"
+          class="form">
+      <ul class="fr-issue-list">
+        {% for item in pr["items"] %}
+          <li class="fr-issue {% if item.is_changed %}fr-issue--done{% else %}fr-issue--warning{% endif %}">
+            <span class="fr-issue__level">{% if item.is_changed %}已修改{% else %}尚未修改{% endif %}</span>
+            <span><strong>{{ item.label }}</strong>：{{ item.reason }}</span>
+            <input type="hidden" name="response_key" value="{{ item.key }}">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="response-action-{{ loop.index }}">處理方式</label>
+                <select id="response-action-{{ loop.index }}" name="response_action">
+                  <option value="">（請選擇）</option>
+                  {% for value, label in pr.actions.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="response-note-{{ loop.index }}">說明（申覆時必填）</label>
+                <input id="response-note-{{ loop.index }}"
+                       name="response_note"
+                       placeholder="例如：原發票即為此金額">
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+      <button type="submit" class="btn btn--primary">重新送出財務審核</button>
+    </form>
+    <details class="fr-details">
+      <summary>重新上傳附件</summary>
+      <form method="post"
+            action="/invoices/{{ invoice.id }}/flow/upload"
+            enctype="multipart/form-data"
+            class="form">
+        <div class="form-field">
+          <label for="return-reupload">發票或附件檔案</label>
+          <input id="return-reupload"
+                 name="file"
+                 type="file"
+                 accept=".pdf,.png,.jpg,.jpeg"
+                 required>
+        </div>
+        <button type="submit" class="btn btn--secondary">上傳並重新辨識</button>
+      </form>
+    </details>
+  {% endif %}
+</section>

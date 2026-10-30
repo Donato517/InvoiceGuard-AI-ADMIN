@@ -1,0 +1,106 @@
+{
+  "invoices": [
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "invoice_track": "AB",
+      "invoice_number": "12345678",
+      "invoice_date": "2026-10-20",
+      "seller_tax_id": "90000012",
+      "seller_name": "範例文具商行",
+      "total_amount": "6300.00",
+      "status": "returned_to_applicant",
+      "submission_round": 1,
+      "department_id": "dept-procurement",
+      "submitted_at": "2026-10-21T09:00:00+08:00"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222223",
+      "invoice_track": "AB",
+      "invoice_number": "12345679",
+      "invoice_date": "2026-10-22",
+      "seller_tax_id": "90000012",
+      "seller_name": "範例文具商行",
+      "total_amount": "2100.00",
+      "status": "pending_department_approval",
+      "submission_round": 1,
+      "department_id": "dept-procurement",
+      "submitted_at": "2026-10-23T10:00:00+08:00"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222224",
+      "invoice_track": "CD",
+      "invoice_number": "00000001",
+      "invoice_date": "2026-09-05",
+      "seller_tax_id": "12345675",
+      "seller_name": "範例設備股份有限公司",
+      "total_amount": "21000.00",
+      "status": "approved",
+      "submission_round": 2,
+      "department_id": "dept-procurement",
+      "submitted_at": "2026-09-06T11:00:00+08:00"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222225",
+      "invoice_track": "EF",
+      "invoice_number": "00000002",
+      "invoice_date": "2026-10-25",
+      "seller_tax_id": "90000012",
+      "seller_name": "範例文具商行",
+      "total_amount": "800.00",
+      "status": "pending_accounting_review",
+      "submission_round": 1,
+      "department_id": "dept-administration",
+      "submitted_at": "2026-10-26T08:00:00+08:00"
+    }
+  ],
+  "history": [
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "old_status": null,
+      "new_status": "pending_department_approval",
+      "reason": null,
+      "changed_by": "33333333-3333-4333-8333-333333333333",
+      "changed_at": "2026-10-21T09:00:00+08:00"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "old_status": "pending_department_approval",
+      "new_status": "returned_to_applicant",
+      "reason": "attachment：補上採購單",
+      "changed_by": "55555555-5555-4555-8555-555555555555",
+      "changed_at": "2026-10-22T14:00:00+08:00"
+    }
+  ],
+  "return_fields": [
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "submission_round": 1,
+      "field_scope": "header",
+      "item_id": null,
+      "field_name": "total_amount",
+      "ai_original_value": "6030",
+      "submitted_value": "6300",
+      "review_comment": "請附折讓單"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "submission_round": 1,
+      "field_scope": "item",
+      "item_id": "33333333-3333-4333-8333-333333333332",
+      "field_name": "unit_price",
+      "ai_original_value": "40",
+      "submitted_value": "400",
+      "review_comment": "單價與原圖不符"
+    },
+    {
+      "invoice_id": "22222222-2222-4222-8222-222222222222",
+      "submission_round": 1,
+      "field_scope": "header",
+      "item_id": null,
+      "field_name": "buyer_name",
+      "ai_original_value": "範例科技股份有限公",
+      "submitted_value": "範例科技股份有限公司",
+      "review_comment": null
+    }
+  ]
+}

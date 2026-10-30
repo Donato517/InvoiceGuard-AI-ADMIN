@@ -2,6 +2,8 @@
 
 # InvoiceGuard-AI-ADMIN：AI 開發入口
 
+> 2026-10-30 使用者核定：新增 `app/integrations/vertex_embedding.py`（Agent Platform 向量），以現有服務帳號呼叫 `gemini-embedding-2`、1536 維，不使用 GEMINI_API_KEY；ADMIN 與 API 逐位元組相同，由 `tests/unit/test_shared_integrations.py` 比對，取代下文「四個 AI 模組檔」的範圍。只提供模組，尚未接線功能；Vercel 與 START 不需新增設定。開發 RAG 前先讀 [RAG 開發說明](docs/RAG_DEVELOPMENT.md)。
+
 > 2026-10-30 後續核定：使用者已要求將 ADMIN 三模組同步至 API；兩站 document_ai／document_ai_evidence／document_ai_fewshot 從此恢復逐位元組同步，取代下方先前僅 ADMIN 分版的範圍。兩站各自使用自己的環境設定，evidence／Few-Shot 尚未接入業務流程。
 
 > 2026-10-30 使用者最新核定：僅 ADMIN 整合 `document_ai.py`、`document_ai_evidence.py`、`document_ai_fewshot.py`。Document AI 從本次起分站版本化，取代下文此模組須與 API 位元組相同的舊規則；其他共用模組維持原規則。模組尚未接線發票頁面、範例 CRUD 或審批。依賴增加 Pillow，沿用 Google／Gemini 設定；見 [檢驗報告](docs/DOCUMENT_AI_REVIEW_20261030.md)。

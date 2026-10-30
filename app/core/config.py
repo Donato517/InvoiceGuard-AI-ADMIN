@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     GOOGLE_SERVICE_ACCOUNT_JSON: SecretStr = Field(
         default_factory=lambda: SecretStr(""), repr=False
     )
+    # Agent Platform（原 Vertex AI）向量：沿用上方專案與服務帳號；不是機密，未設定時用預設值（與 API 相同）
+    VERTEX_EMBEDDING_MODEL: str = "gemini-embedding-2"
+    # 上限 2,000 為 pgvector 的 vector 型別 HNSW 索引限制；換模型或維度須全部重算向量
+    VERTEX_EMBEDDING_DIMENSIONS: int = Field(default=1536, ge=128, le=2000)
 
     # START 經 Vercel CLI 注入本機 ADMIN 程序的雲端設定：值只在該程序記憶體，不視為本機禁用機密
     # （DATABASE_URL 2026-10-25；AI 模組的 Gemini、Google 服務帳號、Groq 2026-10-29 使用者核定）。

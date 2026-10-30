@@ -1,60 +1,277 @@
 {#
   @template pages/invoices/_flow_step_review.html
-  @description 步驟 5：財務審核（HTML 原型 flowStep 4）：檢視 14 項核對欄位（不含發票原圖／PDF 原始文件），填寫會計欄位、核准或退回。
-  @route POST /invoices/{invoice_id}/review（decision: passed / rejected + comment，對應 API 規劃的 InvoiceReviewRequest）
-  @context invoice: dict          invoice.review_status 為 pending / approved / returned；另含 purpose、account_code、deduction_code、tax_type
-  @context fields_14: list[dict]  14 項核對欄位
+  @description 步驟 5：財務審核（2-4）。逐欄確認 AI 原值與送出值、確認檢核提醒、填課稅別與扣抵代號，
+               再核准、逐項退回補正或駁回；規則由 finance_review_service 判斷。
+  @route POST /invoices/{invoice_id}/finance-review/{fields|warnings|accounting|approve|return|reject}
+  @context invoice: dict              發票資料
+  @context fields_14: list[dict]      14 項核對欄位
+  @context finance_review: dict|None  審核資料 {case, status_label, reviewable, blockers, field_reviews,
+                                      warnings, trails, history, tax_types, deduction_codes, return_field_options}；
+                                      尚未送出的草稿為 None
 #}
-<p>
-  審核狀態：
-  <span class="badge {% if invoice.review_status == 'approved' %}badge--success{% else %}badge--warning{% endif %}">
-    {{ {"pending": "待審核", "approved": "核准", "returned": "退回"}[invoice.review_status] }}
-  </span>
-</p>
-<div class="review-fields-section">
-  <h3>核對欄位（14 項）</h3>
-  {% include "pages/invoices/_invoice_14_fields_table.html" %}
-</div>
-<form method="post" action="/invoices/{{ invoice.id }}/review" class="form">
-  <div class="form-grid">
-    <div class="form-field">
-      <label for="purpose">採購用途／備註</label>
-      <input id="purpose"
-             name="purpose"
-             value="{{ invoice.purpose or '' }}"
-             {% if invoice.is_completed or invoice.review_status == 'approved' %}readonly{% endif %}>
-    </div>
-    <div class="form-field">
-      <label for="account_code">會計科目</label>
-      <input id="account_code"
-             name="account_code"
-             value="{{ invoice.account_code or '' }}"
-             {% if invoice.is_completed or invoice.review_status == 'approved' %}readonly{% endif %}>
-    </div>
-    <div class="form-field">
-      <label for="deduction_code">扣抵代號</label>
-      <input id="deduction_code"
-             name="deduction_code"
-             value="{{ invoice.deduction_code or '' }}"
-             {% if invoice.is_completed or invoice.review_status == 'approved' %}readonly{% endif %}>
-    </div>
-    <div class="form-field">
-      <label for="tax_type">課稅別</label>
-      <input id="tax_type"
-             name="tax_type"
-             value="{{ invoice.tax_type or '' }}"
-             {% if invoice.is_completed or invoice.review_status == 'approved' %}readonly{% endif %}>
-    </div>
+{% if not finance_review %}
+  <p class="alert alert--info">此發票尚未送出，完成前四步後才會進入財務審核。</p>
+{% else %}
+  {% set fr = finance_review %}
+  {% set case = fr.case %}
+  {% set editable = fr.reviewable and not invoice.is_completed %}
+  <div class="invoice-correction-split fr-split">
+    {% include "pages/invoices/_invoice_original_pane.html" %}
+    <section class="correction-field-column" aria-label="財務審核">
+  <div class="fr-header">
+    <span>審核狀態：</span>
+    <span class="badge {% if case.status == 'approved' %}badge--success{% elif case.status in ['returned_to_applicant', 'rejected'] %}badge--danger{% else %}badge--warning{% endif %}">{{ fr.status_label }}</span>
+    <span class="muted small-text">第 {{ case.submission_round }} 次送出</span>
   </div>
-  {% if not invoice.is_completed and invoice.review_status != 'approved' %}
-    <div class="toolbar__actions">
-      <button type="submit" name="decision" value="passed" class="btn btn--success">確認核准</button>
-      <button type="submit"
-              name="decision"
-              value="rejected"
-              class="btn btn--danger">退回修正</button>
-    </div>
-  {% elif invoice.review_status == 'approved' %}
+  {% if case.status == 'approved' %}
     <p class="alert alert--success">此發票已完成審核（已核准）。</p>
+  {% elif case.status == 'returned_to_applicant' %}
+    <p class="alert alert--warning">已退回申請單位補正，等待重新送出。</p>
+  {% elif case.status == 'rejected' %}
+    <p class="alert alert--danger">此請款單已駁回，不能再重送。</p>
   {% endif %}
-</form>
+  {% if editable and fr.blockers %}
+    <section class="fr-section" aria-label="核准前待處理">
+      <h3 class="fr-section__title">核准前待處理（{{ fr.blockers | length }}）</h3>
+      <ul class="fr-issue-list">
+        {% for blocker in fr.blockers %}
+          <li class="fr-issue fr-issue--error">
+            <span class="fr-issue__level">待處理</span>
+            <span>{{ blocker.message }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+  <section class="fr-section" aria-label="修改欄位確認">
+    <h3 class="fr-section__title">修改欄位確認（AI 原值 → 送出值）</h3>
+    {% if fr.field_reviews %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">欄位</th>
+              <th scope="col">AI 原值</th>
+              <th scope="col">送出值</th>
+              <th scope="col">狀態</th>
+              <th scope="col">備註／操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in fr.field_reviews %}
+              {% set r = row.review %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td class="fr-original">
+                  {% if r.ai_original_value is mapping %}
+                    {{ r.ai_original_value.item_name }} {{ r.ai_original_value.line_amount }}
+                  {% else %}
+                    {{ r.ai_original_value if r.ai_original_value is not none else "-" }}
+                  {% endif %}
+                </td>
+                <td>{{ r.submitted_value if r.submitted_value is not none else "（已刪除）" }}</td>
+                <td>
+                  {% if r.is_checked %}
+                    <span class="filing-pill ok">✓ 已確認</span>
+                  {% elif r.review_comment %}
+                    <span class="filing-pill bad">退回：{{ r.review_comment }}</span>
+                  {% else %}
+                    <span class="filing-pill pending">待確認</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if editable and not r.is_checked %}
+                    <form method="post"
+                          action="/invoices/{{ invoice.id }}/finance-review/fields"
+                          class="fr-inline-form">
+                      <input type="hidden" name="field_name" value="{{ r.field_name }}">
+                      <input type="hidden" name="item_id" value="{{ r.item_id or '' }}">
+                      <input name="comment" placeholder="審核備註（選填）" aria-label="{{ row.label }} 審核備註">
+                      <button type="submit" class="btn btn--secondary btn--small">確認</button>
+                    </form>
+                  {% else %}
+                    <span class="muted small-text">{{ r.review_comment or "" }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted small-text">申請人沒有修改 AI 辨識結果，無需逐欄確認。</p>
+    {% endif %}
+  </section>
+  <section class="fr-section" aria-label="檢核提醒">
+    <h3 class="fr-section__title">檢核提醒（{{ fr.warnings | length }}）</h3>
+    {% if fr.warnings %}
+      <ul class="fr-issue-list">
+        {% for w in fr.warnings %}
+          <li class="fr-issue {% if w.acknowledged_by %}fr-issue--done{% else %}fr-issue--warning{% endif %}">
+            <span class="fr-issue__level">{% if w.acknowledged_by %}已確認{% else %}警告{% endif %}</span>
+            <span>{{ w.message }}</span>
+            {% if w.acknowledged_by %}
+              <span class="muted small-text">備註：{{ w.note }}</span>
+            {% elif editable %}
+              <form method="post"
+                    action="/invoices/{{ invoice.id }}/finance-review/warnings"
+                    class="fr-inline-form">
+                <input type="hidden" name="code" value="{{ w.code }}">
+                <input type="hidden" name="field" value="{{ w.field }}">
+                <input name="note" required placeholder="為什麼可以接受（必填）" aria-label="{{ w.message }} 確認備註">
+                <button type="submit" class="btn btn--secondary btn--small">確認提醒</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted small-text">送出時沒有檢核提醒。</p>
+    {% endif %}
+  </section>
+  {% if fr.trails %}
+    <section class="fr-section" aria-label="修改軌跡">
+      <h3 class="fr-section__title">申請人修改軌跡</h3>
+      <ul class="fr-trail-list">
+        {% for item in fr.trails %}
+          <li>
+            <strong>{{ item.label }}</strong>：{{ item.trail.values | map("string") | join(" → ") }}
+            <span class="muted small-text">（第 {{ item.trail.submission_round }} 次送出，修改 {{ item.trail.change_count }} 次）</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+  <div class="review-fields-section">
+    <h3>核對欄位（14 項）</h3>
+    {% include "pages/invoices/_invoice_14_fields_table.html" %}
+  </div>
+  <section class="fr-section" aria-label="會計欄位">
+    <h3 class="fr-section__title">會計欄位</h3>
+    <form method="post"
+          action="/invoices/{{ invoice.id }}/finance-review/accounting"
+          class="form">
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="tax_type">課稅別</label>
+          <select id="tax_type" name="tax_type" {% if not editable %}disabled{% endif %}>
+            <option value="">請選擇</option>
+            {% for code, label in fr.tax_types.items() %}
+              <option value="{{ code }}" {% if case.tax_type == code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="deduction_code">扣抵代號</label>
+          <select id="deduction_code"
+                  name="deduction_code"
+                  data-account-filter="#account_code"
+                  {% if not editable %}disabled{% endif %}>
+            <option value="">請選擇</option>
+            {% for code, label in fr.deduction_codes.items() %}
+              <option value="{{ code }}"
+                      {% if case.deduction_code == code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="purpose">採購用途／備註</label>
+          <input id="purpose"
+                 name="purpose"
+                 value="{{ invoice.purpose or '' }}"
+                 {% if not editable %}readonly{% endif %}>
+        </div>
+        <div class="form-field">
+          <label for="account_code">會計科目</label>
+          <select id="account_code"
+                  name="account_code"
+                  data-account-deduction="#deduction_code"
+                  {% if not editable %}disabled{% endif %}>
+            <option value="">請選擇</option>
+            {% for code, (name, deduction) in fr.account_codes.items() %}
+              <option value="{{ code }}"
+                      data-deduction-code="{{ deduction }}"
+                      {% if case.deduction_code and deduction != case.deduction_code %}hidden disabled{% endif %}
+                      {% if fr.account_code == code %}selected{% endif %}>{{ code }} {{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% if editable %}<p class="muted small-text">選擇會計科目會帶出扣抵代號；選了扣抵代號後，會計科目只列出該類的科目。</p>{% endif %}
+      {% if editable %}
+        <div class="toolbar__actions">
+          <button type="submit" class="btn btn--secondary">儲存會計欄位</button>
+        </div>
+      {% endif %}
+    </form>
+  </section>
+  {% if editable %}
+    <section class="fr-section fr-decision" aria-label="審核決定">
+      <h3 class="fr-section__title">審核決定</h3>
+      <form method="post" action="/invoices/{{ invoice.id }}/finance-review/approve">
+        <button type="submit" class="btn btn--success" {% if fr.blockers %}disabled aria-disabled="true"{% endif %}>確認核准</button>
+        {% if fr.blockers %}<span class="muted small-text">完成上方「核准前待處理」後才能核准。</span>{% endif %}
+      </form>
+      <details class="fr-details">
+        <summary>退回修正（逐項填寫）</summary>
+        <form method="post"
+              action="/invoices/{{ invoice.id }}/finance-review/return"
+              class="form">
+          {% for n in range(3) %}
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="return-field-{{ n }}">退回項目 {{ n + 1 }}</label>
+                <select id="return-field-{{ n }}" name="return_field">
+                  <option value="">（不填）</option>
+                  {% for name, item_id, label in fr.return_field_options %}
+                    <option value="{{ name }}{% if item_id %}|{{ item_id }}{% endif %}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="return-reason-{{ n }}">要補正什麼</label>
+                <input id="return-reason-{{ n }}"
+                       name="return_reason"
+                       placeholder="例如：請附折讓單">
+              </div>
+            </div>
+          {% endfor %}
+          <button type="submit" class="btn btn--danger">退回修正</button>
+        </form>
+      </details>
+      <details class="fr-details">
+        <summary>駁回（終止，不能再重送）</summary>
+        <form method="post"
+              action="/invoices/{{ invoice.id }}/finance-review/reject"
+              class="form">
+          <div class="form-field">
+            <label for="reject-reason">駁回原因</label>
+            <input id="reject-reason" name="reason" required>
+          </div>
+          <button type="submit" class="btn btn--danger">駁回</button>
+        </form>
+      </details>
+    </section>
+  {% endif %}
+  {% if fr.history %}
+    <section class="fr-section" aria-label="審核歷程">
+      <h3 class="fr-section__title">審核歷程</h3>
+      <ul class="fr-trail-list">
+        {% for item in fr.history %}
+          <li>
+            {{ item.change.changed_at.strftime("%Y-%m-%d %H:%M") }}　→ {{ item.label }}
+            {% if item.change.return_items %}
+              <ul>
+                {% for ri in item.change.return_items %}<li>{{ ri.field }}：{{ ri.reason }}</li>{% endfor %}
+              </ul>
+            {% elif item.change.reason %}
+              <span class="muted small-text">（{{ item.change.reason }}）</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+    </section>
+  </div>
+{% endif %}

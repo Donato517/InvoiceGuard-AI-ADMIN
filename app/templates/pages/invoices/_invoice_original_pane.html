@@ -1,0 +1,47 @@
+{#
+  @template pages/invoices/_invoice_original_pane.html
+  @description 發票原始檔窗格（左右分欄的左側），步驟 3 採購核對修正與步驟 5 財務審核共用。
+  @context invoice: dict  發票資料；有 file_bytes 時以 /invoices/{id}/file 顯示原圖或 PDF
+#}
+<section class="correction-original-column" aria-label="發票原始檔">
+  <div class="correction-panel-title">發票原圖／PDF 原始文件</div>
+  <div id="invoiceOriginalPane">
+    {% if invoice.file_bytes %}
+      <div class="correction-original-actions">
+        <span class="muted small-text">{{ invoice.file_name }}</span>
+        <a href="/invoices/{{ invoice.id }}/file"
+           target="_blank"
+           rel="noopener noreferrer">新視窗檢視原檔</a>
+        <a href="/invoices/{{ invoice.id }}/file"
+           download="{{ invoice.file_name }}"
+           class="btn btn--secondary btn--small">下載原始檔</a>
+      </div>
+      {% if invoice.file_media_type == "application/pdf" %}
+        <iframe class="correction-original-pdf"
+                title="發票 PDF 原始文件預覽"
+                src="/invoices/{{ invoice.id }}/file"></iframe>
+        <p class="muted small-text">若未顯示 PDF，請按新視窗檢視或下載原始檔。</p>
+      {% else %}
+        <div class="correction-original-image-wrap">
+          <img class="correction-original-image"
+               src="/invoices/{{ invoice.id }}/file"
+               alt="上傳的發票原圖">
+        </div>
+      {% endif %}
+    {% elif invoice.file_name %}
+      <div class="correction-original-empty">
+        <p>
+          <strong>{{ invoice.file_name }}</strong>
+        </p>
+        <p>舊資料只有檔名，沒有保存原始檔。請重新上傳原始發票，或由後端提供原檔。</p>
+        <small>不會以示範圖片、空白發票或重繪內容代替原始檔。</small>
+      </div>
+    {% else %}
+      <div class="correction-original-empty">
+        <p>尚未上傳原始發票。</p>
+        <p>請先在發票上傳步驟選取 JPG、PNG 或 PDF。</p>
+        <small>不會以示範圖片、空白發票或重繪內容代替原始檔。</small>
+      </div>
+    {% endif %}
+  </div>
+</section>

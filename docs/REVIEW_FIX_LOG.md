@@ -769,3 +769,31 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 新帳號：/accounts/new 本來就要求所屬與主要部門，停用 UNASSIGNED 後可選其他啟用部門；新增部門與新增帳號是兩個流程。舊 /dev/accounts 若繼續依賴被停用的 UNASSIGNED，既有程式會回預設部門不可用，不偷偷重新啟用或改指其他部門。本批不另改舊示範流程。
 - 回歸：修正前新案例重現 5 failed／5 passed；修正後六份相關測試 292 passed（20.13s），僅既有 Starlette/httpx warning。涵蓋預設／測試／一般代碼啟停、兩入口一致、主要部門／未知 FK 拒絕、授權保留及帳號登入回歸；錯誤提示補強後重跑同六份測試，最終仍為 292 passed（20.53s）；Ruff lint／5 檔格式、跨站 check_project（0 issues）與 diff --check 通過。
 - 正式 DB 僅唯讀檢查；未寫入、migration、Commit 或 Push。前段記錄中 UNASSIGNED 固定不能停用的敘述自此被取代。
+
+## 2026-10-30 ADMIN Document AI 三模組整合
+
+- 依使用者最新要求只整合 ADMIN。讀取既有模組、交付三檔與參考指令，原始下載檔及 API／前台／STARTUP 未修改；附件的「只檢驗不採用」不覆蓋本次直接整合要求。
+- 原包反例重現辨識輪次／檔案版本沒有完整綁定，以及候選可引用另一欄位 TARGET 圖片。新增 bind_recognition、來源 metadata／document hash 綁定、FieldRequest.target_artifact_ids 與回應欄位引用限制。既有單模組另重現 bool 分數被轉為 1.0 及預設 OCR read timeout 45 秒超過 ADMIN maxDuration 30 秒，整合版使用嚴格分數與預設 25 秒合作式預算。
+- 三檔位於 app/integrations，保留舊 OCR 介面與原 integrations/__init__.py。新增 FewShotClient.from_settings，沿用 GEMINI_API_KEY／GEMINI_MODEL；不把文字 chat 當多模態 adapter。新增 Pillow==13.0.0，沒有增加環境機密、DB／Storage 資源或業務功能。
+- 依只整合 ADMIN 的範圍，Document AI 改分站版本化；ADMIN 同步測試改驗公開契約，其他共用模組仍維持位元組比對。API 舊同步測試沒有修改，後續 API 授權範圍需對齊分版規則。
+- 基準完整 1336 passed、10 skipped；整合最終完整 1418 passed、10 skipped、0 failed／errors（71.76s），含新增 83 項獨立反例與契約測試。實跑 RSA 簽章／公鑰驗證、並行換 token／金鑰輪替、Unicode／頁碼、像素裁圖、授權／撤回／同案排除、真正多模態 payload、候選來源與錯誤路徑；所有正式服務均封鎖。
+- 三檔獨立／套件 6 種匯入順序、含 Gemini／Groq 共存、compileall、離線 fixture demo、架構 0 issues、環境 connectivity_checked=false、pip check、Ruff lint／142 檔格式均通過。一般程序權限僅用於 Windows TestClient socketpair，禁網與正式 DB 防護維持。
+- 初期副本重複目錄、Git archive 換行、探測替身型別與未產出的報告連結造成的失敗，已修正測試準備並保留紀錄；未改業務測試期待值掩蓋失敗。報告、命令、JUnit、雜湊見 docs/DOCUMENT_AI_REVIEW_20261030.md 及 docs/reviews/document-ai-20261030。
+- 未驗證真實 Google／Gemini、雲端已填參數與權限、辨識率、PDFium renderer、正式端到端流程；未部署、migration、正式資料讀寫、訓練、Commit 或 Push。
+
+## 2026-10-30 Claude：Document AI 模組說明與 AI 設定註解同步修正
+
+- 來源：Claude 獨立檢驗（API docs/reviews/claude-review-20261030-130853 的 D-1、D-2）。
+- **D-2｜設定註解仍寫「三模組僅 ADMIN 整合」**：app/core/config.py 的 AI 區段註解與 .env.example 標題，改為 Document AI 三模組、Gemini／Groq 與 API 同版（保留 2026-10-29 核定 ADMIN 可使用的紀錄）。只改註解，欄位、預設值與驗證不變。
+- **D-1｜共用模組說明寫成 ADMIN 專用**：document_ai.py、document_ai_fewshot.py 的檔頭與 docstring 改為兩站中性用語、直接列出 Google 官方文件網址、預設預算註解改為低於兩站函式上限。修改在 API 完成後逐位元組複製到本站，三檔兩站相同（document_ai `12559e0a…2169c`、evidence `93123881…ab472`、fewshot `c2df0727…3cb6`）；程式邏輯未動。
+- API 的 OCR client 關閉修正記在 API REVIEW_FIX_LOG 同日紀錄。
+- 驗證（禁網、無公司設定包裝器，見 API docs/reviews/fix-ocr-close-20261030-133215）：完整 pytest 1425 passed、9 skipped；check_project 單站與 --project-root 皆 PASS；Ruff lint 與 142 檔格式通過；環境 CLI configuration_valid=true；pip check 無破損。djlint 在包裝器內因 Windows 應用程式控制封鎖 DLL 而無法載入，直接執行 `djlint app/templates --lint` 為 53 檔 0 錯誤（本次未改樣板）。未部署、migration、正式資料操作、Commit 或 Push。
+
+## 2026-10-30 Codex：Document AI 發佈前檢查
+
+- 依使用者要求準備提交與 Push；程式範圍為既有 Document AI 三模組、相容性修正、Pillow 依賴及離線測試，evidence／Few-Shot 未新增業務接線。
+- 發佈文件補明歷史驗證與目前兩站同步狀態；原始 reviews/ 命令、JUnit、JSON、副本與提示文字保留本機，不納入版本控制，也不將本機證據連結宣稱為 GitHub 可用資源。
+- 原工作樹完整測試會複製未追蹤的 docs/reviews，遇到 Windows 長路徑複製錯誤；未放寬或修改測試。改以 Git HEAD 加明確提交清單，在專案外建立排除暫存證據、dotenv、Git 與 venv 的三站發佈快照，用既有 venv 及原本禁網／DB 替身執行完整 tests。
+- 發佈快照 pytest：1426 passed、9 skipped，0 failed／errors；僅既有 Starlette/httpx 棄用警告。沙箱內 Windows 程序內 IPC 無法完成的執行已停止，正式驗證使用一般程序權限，外部服務仍由 fixture 禁止。
+- check_project.py --project-root ..：PASS；Ruff lint：PASS；format --check：142 檔通過；environment --check：configuration_valid=true、connectivity_checked=false。ADMIN djLint 56 檔、0 errors。
+- 提交前檢查已涵蓋新增檔案與三模組逐位元組一致性；未連正式 DB／Storage／Google／Gemini／Groq，未執行 migration、手動部署或變更三站 venv。

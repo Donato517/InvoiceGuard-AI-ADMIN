@@ -429,3 +429,42 @@ document.addEventListener('click', (event) => {
     window.location.href = `/invoices/filing?${params.toString()}`
   }
 })
+
+// 財務審核（2-4）：會計科目與扣抵代號連動
+// 選科目 → 帶出該科目的扣抵代號；選扣抵代號 → 科目只列出同一類，不同類的已選科目會清空
+function filterAccountsByDeduction(deductionSelect) {
+  const accountSelect = document.querySelector(deductionSelect.dataset.accountFilter)
+  if (!accountSelect) {
+    return
+  }
+  const code = deductionSelect.value
+  for (const option of accountSelect.options) {
+    if (!option.value) {
+      continue
+    }
+    const mismatch = Boolean(code) && option.dataset.deductionCode !== code
+    option.hidden = mismatch
+    option.disabled = mismatch
+    if (mismatch && option.selected) {
+      accountSelect.value = ''
+    }
+  }
+}
+
+document.addEventListener('change', (event) => {
+  const accountSelect = event.target.closest('select[data-account-deduction]')
+  if (accountSelect) {
+    const option = accountSelect.options[accountSelect.selectedIndex]
+    const deduction = option ? option.dataset.deductionCode : ''
+    const target = document.querySelector(accountSelect.dataset.accountDeduction)
+    if (target && deduction) {
+      target.value = deduction
+      filterAccountsByDeduction(target)
+    }
+    return
+  }
+  const deductionSelect = event.target.closest('select[data-account-filter]')
+  if (deductionSelect) {
+    filterAccountsByDeduction(deductionSelect)
+  }
+})

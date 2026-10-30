@@ -16,3 +16,5 @@ pwdlib[argon2]==0.3.1
 # AI 模組（Document AI／Gemini／Groq，與 API 同版）的 HTTP 與 Google 服務帳號權杖；google-auth 會帶入 cryptography 編譯擴充，需注意 Smart App Control
 httpx==0.28.1
 google-auth==2.62.0
+# Document AI 證據裁圖／Few-Shot 圖片驗證（PDF renderer 為選用）
+Pillow==13.0.0

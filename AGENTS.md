@@ -2,6 +2,10 @@
 
 # InvoiceGuard-AI-ADMIN：AI 開發入口
 
+> 2026-10-30 後續核定：使用者已要求將 ADMIN 三模組同步至 API；兩站 document_ai／document_ai_evidence／document_ai_fewshot 從此恢復逐位元組同步，取代下方先前僅 ADMIN 分版的範圍。兩站各自使用自己的環境設定，evidence／Few-Shot 尚未接入業務流程。
+
+> 2026-10-30 使用者最新核定：僅 ADMIN 整合 `document_ai.py`、`document_ai_evidence.py`、`document_ai_fewshot.py`。Document AI 從本次起分站版本化，取代下文此模組須與 API 位元組相同的舊規則；其他共用模組維持原規則。模組尚未接線發票頁面、範例 CRUD 或審批。依賴增加 Pillow，沿用 Google／Gemini 設定；見 [檢驗報告](docs/DOCUMENT_AI_REVIEW_20261030.md)。
+
 > 2026-10-28 最新介面：部門內容頁 /department/{UUID}/edit 同頁儲存資料與四操作配置；移除獨立部門功能頁，舊 GET 只轉址、舊 POST 410。未接線功能可先存配置，不宣稱正式生效；免登入仍限本機。見 [E-DEPARTMENT-DETAIL](docs/E-DEPARTMENT-DETAIL.md)。
 
 > 2026-10-28 使用者最新核定：四個本機配置入口暫免登入以補齊設定，新增 /welcome；雲端仍關閉。這取代下文 10-27 的本機關閉規則，詳見 [E-LOCAL-SETUP](docs/E-LOCAL-SETUP.md)。正式 B／G 及主管授權未完成，代理只離線測試，正式 DB 由使用者操作。

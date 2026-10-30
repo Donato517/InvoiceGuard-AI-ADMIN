@@ -527,3 +527,117 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- 步驟 5 財務審核（2-4）：沿用 C 詳情頁的「AI 原值」與嚴重度呈現 ---- */
+.fr-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.fr-section {
+  margin: 20px 0;
+}
+
+.fr-section__title {
+  margin: 0 0 8px;
+  color: var(--color-card-title);
+  font-size: 1rem;
+}
+
+.fr-issue-list,
+.fr-trail-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fr-issue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-left: 4px solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-bg-muted);
+}
+
+.fr-issue--error {
+  border-left-color: var(--color-danger);
+}
+
+.fr-issue--warning {
+  border-left-color: var(--color-warning);
+}
+
+.fr-issue--done {
+  border-left-color: var(--color-success);
+}
+
+.fr-issue__level {
+  font-weight: 600;
+}
+
+.fr-issue__code {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.fr-original {
+  color: var(--color-text-muted);
+}
+
+.fr-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.fr-inline-form input {
+  min-width: 160px;
+}
+
+.fr-details {
+  margin-top: 12px;
+}
+
+.fr-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* 步驟 5 財務審核：凍結窗格。寬螢幕時整區固定一個畫面高，左側原檔不動，右側審核欄位自行捲動 */
+@media (min-width: 1101px) {
+  .fr-split {
+    height: calc(100vh - 12rem);
+    min-height: 32rem;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .fr-split > .correction-original-column {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .fr-split > .correction-field-column {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .fr-split .correction-original-image,
+  .fr-split .correction-original-pdf {
+    max-width: 100%;
+    max-height: calc(100vh - 18rem);
+  }
+}

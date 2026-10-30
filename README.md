@@ -2,6 +2,10 @@
 
 # InvoiceGuard-AI-ADMIN
 
+> 2026-10-30 後續更新：三個 Document AI 模組已依使用者要求同步至 API，兩站維持相同內容；下方先前 ADMIN 單獨版本化敘述為本日早期紀錄。模組的業務接線狀態不變。
+
+> 2026-10-30：ADMIN 已整合 Document AI 呼叫、影像證據與供應商 Few-Shot 三模組，保留舊 OCR 介面。Document AI 與 API 分別版本化；Gemini／Groq 等其他共用模組仍維持同步。模組使用及環境評估見 [檢驗報告](docs/DOCUMENT_AI_REVIEW_20261030.md)，尚未接線發票頁面與審批功能。
+
 > 2026-10-28 最新介面：部門內容頁 /department/{UUID}/edit 同頁儲存資料與四操作配置；移除獨立部門功能頁，舊 GET 只轉址、舊 POST 410。未接線功能可先存配置，不宣稱正式生效；免登入仍限本機。見 [E-DEPARTMENT-DETAIL](docs/E-DEPARTMENT-DETAIL.md)。
 
 > 2026-10-28 使用者最新核定：四個本機配置入口暫免登入以補齊設定，新增 /welcome；雲端仍關閉。這取代下文 10-27 的本機關閉規則，詳見 [E-LOCAL-SETUP](docs/E-LOCAL-SETUP.md)。正式 B／G 及主管授權未完成，代理只離線測試，正式 DB 由使用者操作。

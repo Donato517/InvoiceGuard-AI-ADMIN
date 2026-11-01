@@ -26,6 +26,8 @@ FINANCE = RagActor("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8
 IT = RagActor("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-00000000000e", True)
 KB = "11111111-1111-4111-8111-111111111111"
 CONTACT = "財務部"
+# 截止時間相減有浮點誤差，比對剩餘秒數時要容許
+TIME_EPSILON = 1e-6
 
 
 def hit(distance: float, n: int = 0) -> SearchHit:
@@ -461,7 +463,7 @@ def test_rounds_never_run_past_the_question_deadline() -> None:
 
     qa.compose_answer("問題", [hit(0.2)], chat, deadline=now + 9)
 
-    assert all(call[1]["timeout_seconds"] <= 9 for call in chat.answer_calls)
+    assert all(call[1]["timeout_seconds"] <= 9 + TIME_EPSILON for call in chat.answer_calls)
 
 
 class SlowClock:
@@ -529,8 +531,8 @@ def test_understanding_and_embedding_share_the_question_deadline(
         open_session=FakeSession,
     )
 
-    assert chat.calls[0][1]["timeout_seconds"] <= 3.0
-    assert budgets[0] <= 3.0
+    assert chat.calls[0][1]["timeout_seconds"] <= 3.0 + TIME_EPSILON
+    assert budgets[0] <= 3.0 + TIME_EPSILON
 
 
 def test_groq_client_failure_still_uses_fallback(review_hits: list[SearchHit]) -> None:
@@ -601,7 +603,7 @@ def test_ask_gives_embedding_only_the_remaining_time(
 
     _ask("問題", FakeChat("回答 [1]"), actor=IT, kb=None)
 
-    assert budgets[0] <= 2.0
+    assert budgets[0] <= 2.0 + TIME_EPSILON
 
 
 def test_exhausted_deadline_after_retrieval_is_a_service_failure(
@@ -786,6 +788,19 @@ def test_internal_item_marker_is_not_shown(review_hits: list[SearchHit]) -> None
 def test_source_number_rule_is_general(review_hits: list[SearchHit]) -> None:
     assert "來源編號必須是實際寫有該內容的段落" in qa.SYSTEM_PROMPT
     assert "標註的段落必須真的含有那一條" in qa.REVIEW_RULES
+
+
+def test_fallback_budget_never_exceeds_round_limit_by_float_error(
+    review_hits: list[SearchHit], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 這個時間點 (t + 25.0) - t 會得到 25.000000000000057
+    monkeypatch.setattr(qa.time, "monotonic", lambda: 500.00000000000017)
+    fallback = FakeFallback("備援回答 [1]")
+    chat = FakeChat(error=GroqError("groq_quota_exceeded"))
+
+    qa.compose_answer("問題", [hit(0.2)], chat, fallback_factory=lambda: fallback)
+
+    assert all(call[1]["timeout_seconds"] <= qa.ROUND_TIMEOUT_SECONDS for call in fallback.calls)
 
 
 def test_healthy_groq_never_calls_fallback(review_hits: list[SearchHit]) -> None:

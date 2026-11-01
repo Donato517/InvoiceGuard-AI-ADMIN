@@ -545,7 +545,7 @@ def _generate(
                 messages,
                 system_instruction=system,
                 max_tokens=ANSWER_MAX_TOKENS,
-                timeout_seconds=_remaining(round_deadline),
+                timeout_seconds=min(ROUND_TIMEOUT_SECONDS, _remaining(round_deadline)),
             )
     except GeminiError as error:
         raise _AnswerUnavailableError(

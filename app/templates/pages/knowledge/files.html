@@ -1,0 +1,111 @@
+{#
+  @template pages/knowledge/files.html
+  @description 獨立檔案庫，全員可見清單；寫入限上傳部門或資訊部。
+  @route GET /knowledge/files
+  @context rows: list[dict] file、source_label、date_label、parse_label、department、references、can_edit、index_note
+  @context q: str 檔名搜尋
+  @context is_it_reviewer: bool 資訊部可建立索引、核准或暫停
+  @context current_department_name: str 上傳部門
+  @context error: str | None 上一次操作不符規則的訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}檔案管理{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">{% endblock %}
+{% block content %}
+  {% from "pages/knowledge/_confirm_modal.html" import confirm_modal %}
+  <div class="page-heading">
+    <a href="/knowledge" class="btn btn--secondary">← 知識庫管理</a>
+    <h2>檔案管理</h2>
+  </div>
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <section class="card">
+    <div class="toolbar">
+      <form method="get" action="/knowledge/files" class="toolbar__actions">
+        <label for="file-search">搜尋檔案</label><input id="file-search"
+       type="search"
+       name="q"
+       value="{{ q }}"><button type="submit" class="btn btn--secondary">搜尋</button>
+      </form>
+      <button type="button"
+              class="btn btn--primary"
+              data-open-dialog="upload-modal">上傳檔案</button>
+    </div>
+    <p class="muted">全部門可見清單；已核准與索引完成是問答使用條件。共用檔案由上傳部門或資訊部修改。</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">檔案</th>
+            <th scope="col">來源</th>
+            <th scope="col">生效日</th>
+            <th scope="col">審核與索引</th>
+            <th scope="col">上傳部門</th>
+            <th scope="col">引用的知識庫</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set file = row.file %}
+            <tr>
+              <td class="cell-wrap">
+                <a href="/knowledge/files/{{ file.rag_file_id }}/content">{{ file.title }}</a>
+                <p class="muted">{{ file.original_filename or "" }}</p>
+              </td>
+              <td class="cell-wrap">{{ row.source_label }}{% if file.source_note %}<p class="muted">{{ file.source_note }}</p>{% endif %}</td><td>{{ row.date_label }}</td>
+              <td class="cell-wrap">{{ "已核准" if file.is_approved else "待審查" }}<p class="muted">{{ row.parse_label }}</p>{% if row.index_note %}<p>{{ row.index_note }}</p>{% endif %}</td>
+              <td>{{ row.department }}</td>
+              <td class="cell-wrap">{% for kb in row.references %}<p><a href="/knowledge/{{ kb.knowledge_base_id }}/documents">{{ kb.knowledge_name }}</a></p>{% else %}未被引用{% endfor %}</td>
+              <td>
+                {% if row.can_edit %}
+                  <button type="button"
+                          class="btn btn--secondary btn--small"
+                          data-open-dialog="rename-file-{{ file.rag_file_id }}">改名</button>
+                  {% if request.state.knowledge_can_delete | default(false) %}
+                    <button type="button"
+                            class="btn btn--danger btn--small"
+                            data-open-dialog="delete-file-{{ file.rag_file_id }}">刪除</button>
+                  {% endif %}
+                {% endif %}
+                {% if is_it_reviewer %}
+                  {% if file.parse_status in ["uploaded", "failed"] %}<form method="post"
+      action="/knowledge/files/{{ file.rag_file_id }}/index"
+      data-busy="正在建立索引…"><button type="submit" class="btn btn--secondary btn--small">建立索引</button></form>{% endif %}
+                  {% if file.is_approved or file.parse_status == "ready" %}<form method="post" action="/knowledge/files/{{ file.rag_file_id }}/status"><input type="hidden"
+       name="status"
+       value="{{ 'hold' if file.is_approved else 'active' }}"><button type="submit" class="btn btn--secondary btn--small">{{ "暫停檔案" if file.is_approved else "核准檔案" }}</button></form>{% endif %}
+                {% endif %}
+              </td>
+            </tr>
+{% else %}<tr><td colspan="7">沒有符合條件的檔案。</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
+  </section>
+  {% for row in rows %}
+    {% set file = row.file %}
+    {% if row.can_edit %}
+      {% call confirm_modal("rename-file-" ~ file.rag_file_id, "檔案改名", "/knowledge/files/" ~ file.rag_file_id ~ "/rename", "儲存名稱", "btn--success") %}
+        <div class="form-field">
+          <label for="file-title-{{ file.rag_file_id }}">檔案名稱</label>
+          <input id="file-title-{{ file.rag_file_id }}"
+                 name="title"
+                 value="{{ file.title }}"
+                 maxlength="160"
+                 required>
+        </div>
+      {% endcall %}
+      {% if request.state.knowledge_can_delete | default(false) %}
+        {% call confirm_modal("delete-file-" ~ file.rag_file_id, "無法刪除檔案" if row.references else "確認刪除檔案", "/knowledge/files/" ~ file.rag_file_id ~ "/delete", none if row.references else "確認刪除檔案") %}
+          {% if row.references %}
+            <p>「{{ file.title }}」仍被下列知識庫引用，請先移除關聯：</p>
+            <ul>{% for kb in row.references %}<li>{{ kb.knowledge_name }}</li>{% endfor %}</ul>
+          {% else %}
+            <p>確定刪除檔案「{{ file.title }}」？</p>
+            <p>此檔案沒有知識庫引用；確認後會刪除檔案、索引與 Storage 原檔。</p>
+          {% endif %}
+        {% endcall %}
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+  {% include "pages/knowledge/_upload_modal.html" %}
+{% endblock content %}

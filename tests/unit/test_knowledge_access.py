@@ -29,6 +29,7 @@ class FakeModule:
     def __init__(self, selected: UUID, *, allowed: bool = True) -> None:
         self.selected = selected
         self.allowed = allowed
+        self.delete_allowed = True
         self.checks: list[tuple[Any, ...]] = []
 
     def identity(self, token: Any) -> SimpleNamespace:
@@ -38,7 +39,7 @@ class FakeModule:
 
     def check(self, identity: Any, code: str, action: Action, target: Target) -> None:
         self.checks.append((code, action, target))
-        if not self.allowed:
+        if not self.allowed or (action == Action.DELETE and not self.delete_allowed):
             raise DeniedError
 
     def departments(self, identity: Any) -> tuple[EffectiveDepartment, ...]:
@@ -90,7 +91,11 @@ def test_access_checks_view_on_selected_department_and_sets_state() -> None:
 
     require_knowledge_access(request, module)
 
-    assert module.checks == [(KNOWLEDGE, Action.VIEW, Target(IT))]
+    assert module.checks == [
+        (KNOWLEDGE, Action.VIEW, Target(IT)),
+        (KNOWLEDGE, Action.DELETE, Target(IT)),
+    ]
+    assert request.state.knowledge_can_delete is True
     assert request.state.knowledge_identity.user_id == USER
     assert request.state.is_it_workspace is True
     assert request.state.header_departments == DEPARTMENTS
@@ -104,6 +109,16 @@ def test_access_marks_other_departments_as_non_it() -> None:
     require_knowledge_access(request, FakeModule(FINANCE))
 
     assert request.state.is_it_workspace is False
+
+
+def test_delete_denial_only_hides_buttons_and_does_not_deny_view() -> None:
+    module = FakeModule(FINANCE)
+    module.delete_allowed = False
+    request = make_request()
+    require_knowledge_access(request, module)
+    assert request.state.knowledge_can_delete is False
+    assert request.state.knowledge_identity.user_id == USER
+    assert request.state.e_configuration_authenticated is True
 
 
 def test_access_without_cookie_is_unauthenticated() -> None:

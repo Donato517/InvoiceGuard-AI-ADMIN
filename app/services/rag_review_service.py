@@ -55,6 +55,8 @@ def approve_knowledge_base(
     _require_it(is_it_reviewer)
     if kb.approval_status != APPROVAL_PENDING:
         raise RagRuleError("NOT_PENDING", "只有待審核的知識庫可以核准")
+    if kb.file_count < 1:
+        raise RagRuleError("EMPTY_KB", "空知識庫不能核准，請先加入檔案")
     return replace(
         kb,
         approval_status=APPROVAL_APPROVED,

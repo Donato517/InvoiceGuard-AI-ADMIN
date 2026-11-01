@@ -1,6 +1,6 @@
 """
 模組名稱：tests.unit.test_rag_retrieval_service
-功能說明：RAG 檢索測試——問題轉向量後交給 repository、無選用權限時不查詢、五項條件逐一不成立時排除、
+功能說明：RAG 檢索測試——問題轉向量後交給 repository、無選用權限時不查詢、四項條件逐一不成立時排除、
           模型不同排除、保留 DB 排序與整理來源。
 注意事項：以確定性的假用戶端與替換的 repository 函式驗證流程，不連資料庫、不呼叫 Google。
 """
@@ -37,14 +37,14 @@ GOOD = RetrievalCandidate(
     embedding_model=MODEL,
     file_title="營業稅電子資料申報繳稅作業要點",
     file_version=2,
-    knowledge_base_id="kb-tax",
-    knowledge_name="營業稅申報",
+    knowledge_base_ids=("kb-tax",),
+    knowledge_names=("營業稅申報",),
     approval_status="approved",
     is_active=True,
     use_for_qa=True,
-    use_document=True,
     is_approved=True,
     parse_status="ready",
+    file_count=1,
 )
 
 
@@ -119,8 +119,9 @@ def test_no_qa_access_returns_empty_without_searching(monkeypatch: pytest.Monkey
         ({"approval_status": APPROVAL_PENDING}, "kb_not_available"),
         ({"approval_status": APPROVAL_REJECTED}, "kb_not_available"),
         ({"is_active": False}, "kb_not_available"),
+        ({"file_count": 0}, "kb_not_available"),
+        ({"can_read": False}, "department_not_using_kb"),
         ({"use_for_qa": False}, "department_not_using_kb"),
-        ({"use_document": False}, "document_not_used"),
         ({"is_approved": False}, "document_not_approved"),
         ({"parse_status": PARSE_UPLOADED}, "document_not_ready"),
         ({"parse_status": PARSE_FAILED}, "document_not_ready"),

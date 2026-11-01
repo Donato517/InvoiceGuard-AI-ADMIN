@@ -17,7 +17,7 @@ InvoiceGuard AI 管理後台：發票審核、使用者管理、排程與稽核�
 | 語言 / 框架 | Python 3.12 + FastAPI + Jinja2 樣板（伺服器端產生 HTML） |
 | 互動 | HTMX（以 HTML 屬性做局部更新，幾乎不寫 JavaScript） |
 | 資料來源 | **自有 DB 模組**（SQLAlchemy），直接連與 API 相同的 PostgreSQL |
-| 登入 | 06_E 委派 B 共用 PortableAuth，HttpOnly opaque Cookie；正式 adapter 尚未接線，登入 POST 回 503 |
+| 登入 | 帳密驗證後簽發網站 Session，見 [登入說明](docs/E-LOGIN-ACCESS.md) |
 | 品質工具 | Ruff（Python）、djLint（樣板）、pytest |
 | 部署 | Vercel Python Runtime（自動偵測 `app/main.py`），不開放搜尋引擎索引 |
 | 相關專案 | [InvoiceGuard-AI-API](https://github.com/Donato517/InvoiceGuard-AI-API)（後端 API，資料表結構管理者）、[InvoiceGuard-AI](https://github.com/Donato517/InvoiceGuard-AI)（前台） |
@@ -62,9 +62,51 @@ START 最後自動開啟當次 HTTPS 的 `/login`，電腦與手機都直接看�
 若啟動器未隨 clone 取得，先向團隊取得核定啟動器，不自行建置另一套網站或下載公司機密。
 
 本機預設不讀 `.env`、不執行 `vercel env pull`。START 依 2026-10-25 核定，只把本站 Production 的
-`DATABASE_URL`、`S3_*`、`SUPABASE_STORAGE_BUCKET` 注入本機程序記憶體：本機連的是正式 DB／Storage，寫入即正式資料。
-模型、Session、Cron 等其他公司密鑰不在本機；出現在本機程序環境時本站拒絕啟動。
+`DATABASE_URL`、`S3_*`、`SUPABASE_STORAGE_BUCKET`，以及 Google AI 五項與 `GROQ_API_KEY` 注入本機程序記憶體：本機連的是正式 DB／Storage，寫入即正式資料。
+Session、Cron 等其他公司密鑰不在本機；出現在本機程序環境時本站拒絕啟動。
 開啟頁面及 `/health` 只表示程序正常，不能視為登入、CRUD、Storage 或雲端連線通過。
+
+## 更新到最新版（2026-11-01 知識庫問答）
+
+ADMIN 的知識庫問答改為新手操作導向、兩輪回答，並加上 Vertex 備援，時限延長到 60 秒。其他開發者更新後才能測試：
+
+1. 取得 ADMIN 與 API 的最新程式。InvoiceGuard-AI 前台沒有修改。
+2. 向維護者取得新版 `SETUP.cmd`、`START.cmd`，兩檔一起覆蓋 `InvoiceGuard-STARTUP` 的舊檔。STARTUP 不在 Git 內，舊版閘道會在 30 秒切斷問答。
+3. 在 START 總控視窗按 Ctrl+C 停止，再從 `InvoiceGuard-STARTUP` 目錄依序執行 `SETUP.cmd`、`START.cmd`。只換檔不重跑 SETUP，啟動器會提示版本不符。
+4. 登入後把目前部門切到資訊部，開 [知識庫問答](http://invoiceguard-ai-admin.localhost:8080/knowledge/chat)。這一頁只開放資訊部，而且資訊部要有 RAG知識庫管理（`rag_manager`）的查看權限；帳號沒有資訊部就進不去。
+5. 選部門與知識庫後提問，一題約 20～50 秒。送出時顯示「約需 20～50 秒」代表已是新版；查得到操作時回答會列「你可以這樣做」，查無資料時不會出現。
+
+**不需要做的事**：不用新增環境變數或 Python 套件，也不用執行 DB migration。正式資料已於 2026-11-01 重新索引，不要重複操作。
+
+**雲端**：Vercel 要部署新程式後才有 60 秒時限與新流程。部署前，從 Vercel 新上傳的檔案不會有項次標示；已索引的段落新舊程式都能讀。
+
+## Mac 開發者（尚未實機驗證）
+
+團隊有 Windows 與 Mac 兩種環境，但目前的開發與測試都在 Windows 進行，以下內容沒有在 Mac 上實測過。
+CI 跑 ubuntu 與 windows，沒有 macOS。Mac 開發者先跑下方檢查，結果不同時請回報，不要假設已通過。
+
+- **啟動入口**：`InvoiceGuard-STARTUP` 只有 `SETUP.cmd`、`START.cmd`，Mac 不能直接執行。雲端設定由 START 注入，
+  所以 Mac 目前沒有核定方式連正式 DB／Storage，可以做的是下方離線檢查。不要為此自行下載公司機密。
+- **本機登入金鑰**：`tmp/local-session-key` 建立時設為只有本人可讀（0600）。Windows 不適用此權限，對應測試
+  `test_local_key_file_is_private_on_posix` 在 Windows 會略過。
+- **知識庫項次標示**：`restore_item_numbers` 是純 Python，不依賴作業系統，由 `tests/unit/test_rag_indexing_service.py` 驗證。
+- **瀏覽器**：問答與對話框視窗沒有在 Safari 測過。
+
+```bash
+python3.12 -m venv .venv
+```
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+```bash
+.venv/bin/python -B scripts/check_project.py
+```
+
+```bash
+.venv/bin/python -B -m pytest -q --basetemp=tmp/pytest
+```
 
 ## 本站無密鑰檢查
 

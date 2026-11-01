@@ -1,0 +1,26 @@
+{#
+  @template pages/knowledge/_chat_choices.html
+  @description 可勾選的知識庫；選了部門才分已指派／未指派，兩區都能勾。
+  @route GET /knowledge/chat/choices（切換部門時替換）
+  @context groups: list[dict]  [{title, options[{id, title, checked}]}]
+  @context error: str | None   部門錯誤訊息
+#}
+<div id="chat-choices">
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  {% for group in groups %}
+    <fieldset class="chat-choice-group">
+      <legend>{{ group.title }}</legend>
+      {% for option in group.options %}
+        <label class="chat-choice">
+          <input type="checkbox"
+                 name="knowledge_base_id"
+                 value="{{ option.id }}"
+                 {% if option.checked %}checked{% endif %}>
+          <span>{{ option.title }}</span>
+        </label>
+      {% else %}
+        <p class="muted small-text">無</p>
+      {% endfor %}
+    </fieldset>
+  {% endfor %}
+</div>

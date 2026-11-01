@@ -1,14 +1,18 @@
 """登入整合：實際 SQL Repository、網站 Session、HTTP guard；僅合成資料、不連正式 DB。"""
 
+import os
+import stat
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeTimedSerializer
 from pydantic import SecretStr
 
 from app.constants import SESSION_COOKIE_NAME
@@ -17,8 +21,12 @@ from app.db.repositories import e_function_settings_repository
 from app.main import app
 from app.routers import e_admin
 from app.schemas.e_admin import Action, UnauthenticatedError, UnavailableError
-from app.services import e_function_settings_service
-from app.services.admin_login_service import DepartmentLoginAdapter, _serializer
+from app.services import admin_login_service, e_function_settings_service
+from app.services.admin_login_service import (
+    DepartmentLoginAdapter,
+    _local_session_key,
+    _serializer,
+)
 from app.services.e_admin_service import EModule, get_e_module
 
 USER = UUID("00000000-0000-4000-8000-000000000011")
@@ -28,6 +36,7 @@ BASE = "http://invoiceguard-ai-admin.localhost:8080"
 ORIGIN = {"Origin": BASE}
 EMAIL = "synthetic@example.invalid"
 PASSWORD = "synthetic-only-not-a-real-password"
+SESSION_SALT = "invoiceguard-admin-department-session-v1"
 
 
 class SidebarNavigation(HTMLParser):
@@ -411,6 +420,81 @@ def test_deployed_session_requires_existing_signing_configuration(
     monkeypatch.setattr(settings, "SESSION_SECRET_KEY", SecretStr(""))
     with pytest.raises(UnavailableError):
         module.login(EMAIL, SecretStr(PASSWORD))
+
+
+@pytest.fixture
+def key_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
+    path = tmp_path / "local-session-key"
+    monkeypatch.setattr(admin_login_service, "_local_session_key_path", lambda: path)
+    _local_session_key.cache_clear()
+    yield path
+    _local_session_key.cache_clear()
+
+
+def test_local_session_survives_worker_reload(
+    browser: TestClient, module: EModule, key_file: Path
+) -> None:
+    login(browser)
+    token = SecretStr(browser.cookies.get(SESSION_COOKIE_NAME))
+    # 重載後的 worker 是新程序，記憶體內的金鑰消失，只能讀回檔案。
+    _local_session_key.cache_clear()
+    assert module.auth.session_data(token) is not None
+    assert browser.get("/welcome").status_code == 200
+
+
+def test_deleting_local_key_file_invalidates_session(
+    browser: TestClient, module: EModule, key_file: Path
+) -> None:
+    login(browser)
+    token = SecretStr(browser.cookies.get(SESSION_COOKIE_NAME))
+    key_file.unlink()
+    _local_session_key.cache_clear()
+    assert module.auth.session_data(token) is None
+
+
+@pytest.mark.parametrize("content", [b"short", "非 ASCII 內容".encode() * 8])
+def test_local_key_file_with_invalid_content_is_replaced(key_file: Path, content: bytes) -> None:
+    key_file.write_bytes(content)
+    key = _local_session_key()
+    assert len(key) >= admin_login_service.LOCAL_SESSION_KEY_MIN_LENGTH
+    assert key_file.read_text(encoding="ascii") == key
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 不使用 POSIX 檔案權限")
+def test_local_key_file_is_private_on_posix(key_file: Path) -> None:
+    _local_session_key()
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+
+
+def test_unwritable_local_key_file_keeps_login_in_memory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a folder", encoding="ascii")
+    monkeypatch.setattr(
+        admin_login_service, "_local_session_key_path", lambda: blocked / "local-session-key"
+    )
+    _local_session_key.cache_clear()
+    try:
+        first = _local_session_key()
+        assert len(first) >= admin_login_service.LOCAL_SESSION_KEY_MIN_LENGTH
+        assert _local_session_key() == first
+    finally:
+        _local_session_key.cache_clear()
+
+
+def test_deployed_session_never_uses_local_key_file(
+    monkeypatch: pytest.MonkeyPatch, key_file: Path
+) -> None:
+    from app.core.config import settings
+
+    secret = "synthetic-session-secret-for-tests-only-0123456789"
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "SESSION_SECRET_KEY", SecretStr(secret))
+    monkeypatch.setattr(type(settings), "require_configuration", lambda self, scope: None)
+    token = _serializer().dumps({"v": 1})
+    assert not key_file.exists()
+    assert URLSafeTimedSerializer(secret, salt=SESSION_SALT).loads(token) == {"v": 1}
 
 
 @pytest.mark.parametrize("fault", ["inactive", "frontend_only"])
@@ -818,29 +902,33 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
 
 KNOWLEDGE_ROUTES = (
     ("GET", "/knowledge"),
-    ("POST", "/knowledge/shared-tax/toggle-dept"),
+    ("GET", "/knowledge/files"),
+    ("POST", "/knowledge/files/upload"),
+    ("POST", "/knowledge/files/sample-file/rename"),
+    ("POST", "/knowledge/files/sample-file/delete"),
+    ("GET", "/knowledge/files/sample-file/content"),
+    ("POST", "/knowledge/files/sample-file/content"),
+    ("GET", "/knowledge/files/sample-file/download"),
+    ("POST", "/knowledge/files/sample-file/status"),
+    ("POST", "/knowledge/files/sample-file/index"),
+    ("POST", "/knowledge/create"),
     ("POST", "/knowledge/shared-tax/review/approve"),
     ("POST", "/knowledge/shared-tax/review/reject"),
     ("POST", "/knowledge/shared-tax/review/resubmit"),
     ("POST", "/knowledge/qa-source"),
-    ("GET", "/knowledge/chat"),
-    ("POST", "/knowledge/chat/ask"),
+    ("POST", "/knowledge/shared-tax/toggle-dept"),
+    ("GET", "/knowledge/shared-tax/documents"),
     ("POST", "/knowledge/shared-tax/index-next"),
     ("POST", "/knowledge/shared-tax/reindex"),
-    ("GET", "/knowledge/shared-tax/documents"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/index"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/toggle-dept"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/status"),
     ("GET", "/knowledge/shared-tax/edit"),
     ("POST", "/knowledge/shared-tax/rename"),
     ("POST", "/knowledge/shared-tax/delete"),
-    ("GET", "/knowledge/shared-tax/documents/sample-tax/edit"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/rename"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/delete"),
-    ("GET", "/knowledge/shared-tax/documents/sample-tax/content"),
-    ("POST", "/knowledge/shared-tax/documents/sample-tax/content"),
-    ("GET", "/knowledge/shared-tax/documents/sample-tax/download"),
-    ("POST", "/knowledge/documents"),
+    ("GET", "/knowledge/chat"),
+    ("GET", "/knowledge/chat/choices"),
+    ("POST", "/knowledge/chat/ask"),
+    ("POST", "/knowledge/shared-tax/copy"),
+    ("POST", "/knowledge/shared-tax/files"),
+    ("POST", "/knowledge/shared-tax/files/sample-file/remove"),
 )
 
 
@@ -988,7 +1076,12 @@ def test_knowledge_router_covers_every_declared_get_and_post() -> None:
 
     routes = [route for route in knowledge.router.routes if isinstance(route, APIRoute)]
     actual = {
-        (method, route.path.replace("{kb_id}", "shared-tax").replace("{doc_id}", "sample-tax"))
+        (
+            method,
+            route.path.replace("{kb_id}", "shared-tax")
+            .replace("{doc_id}", "sample-tax")
+            .replace("{file_id}", "sample-file"),
+        )
         for route in routes
         for method in route.methods
         if method in {"GET", "POST"}
@@ -998,3 +1091,16 @@ def test_knowledge_router_covers_every_declared_get_and_post() -> None:
         any(item.dependency is knowledge.require_knowledge_access for item in route.dependencies)
         for route in routes
     )
+
+
+@pytest.mark.parametrize("authenticated", [False, True])
+def test_retired_document_selection_route_is_not_registered(
+    browser: TestClient, authenticated: bool
+) -> None:
+    """文件選用路由已停用，登入前後都回 404；現行路由仍由完整授權矩陣覆蓋。"""
+    if authenticated:
+        login(browser)
+    response = browser.post(
+        "/knowledge/shared-tax/documents/sample-tax/toggle-dept", headers=ORIGIN
+    )
+    assert response.status_code == 404

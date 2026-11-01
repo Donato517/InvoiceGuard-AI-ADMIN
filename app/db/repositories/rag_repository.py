@@ -1,9 +1,9 @@
 """模組名稱：app.db.repositories.rag_repository
-功能說明：以固定 SQL 及綁定參數存取 Schema v1.6 的 RAG 表（知識庫、部門選用、文件、索引工作、段落與檢索），交易由 service 控制。
+功能說明：以固定 SQL 及綁定參數存取 Schema v1.8 的 RAG 表（知識庫、部門選用、文件、索引工作、段落與檢索），交易由 service 控制。
 注意事項：
     - 不新增 ORM Model 或 migration；表結構由 API／專案負責人管理。
     - 向量以 CAST(:embedding AS extensions.vector) 寫入、OPERATOR(extensions.<=>) 比對，
-      寫法依 docs/RAG_DEVELOPMENT.md，尚未在正式 DB 實測；正式 DB 已套用 v1.6（vector(1536)，使用者回報）。
+      寫法依 docs/RAG_DEVELOPMENT.md；v1.8 ALTER 尚未執行，向量固定 vector(1536)。
     - repository 不 commit／rollback；UUID 參數一律在 SQL 中 CAST，回傳時轉為字串。
 """
 
@@ -20,7 +20,6 @@ from app.db.session import SessionLocal, get_engine
 from app.schemas.rag import (
     DepartmentAccess,
     DepartmentOption,
-    FileDepartmentUsage,
     IndexedChunk,
     KnowledgeBase,
     LatestJob,
@@ -33,13 +32,14 @@ from app.schemas.rag import (
 _KB_COLUMNS = """knowledge_base_id::text AS knowledge_base_id, knowledge_name, approval_status,
     is_active, submitted_by::text AS submitted_by,
     submitted_department_id::text AS submitted_department_id, reviewed_by::text AS reviewed_by,
-    reviewed_at, review_comment, knowledge_code"""
+    reviewed_at, review_comment, knowledge_code, file_count"""
 _ACCESS_COLUMNS = """knowledge_base_id::text AS knowledge_base_id,
     department_id::text AS department_id, can_read, can_manage, use_for_qa"""
-_FILE_COLUMNS = """rag_file_id::text AS rag_file_id, knowledge_base_id::text AS knowledge_base_id,
+_FILE_COLUMNS = """rag_file_id::text AS rag_file_id,
     title, file_version, parse_status, is_approved, approved_by::text AS approved_by, approved_at,
     owner_department_id::text AS owner_department_id, mime_type, bucket_name, storage_path,
-    original_filename, size_bytes, created_at"""
+    original_filename, size_bytes, created_at, source_type, effective_date,
+    effective_date_status, source_note, content_sha256"""
 _JOB_COLUMNS = """job_id::text AS job_id, rag_file_id::text AS rag_file_id, job_type, job_status,
     attempts, error_message, started_at, finished_at"""
 
@@ -87,7 +87,9 @@ SET_QA = text("""
 """)
 LIST_FILES = text(f"""
     SELECT {_FILE_COLUMNS} FROM public.rag_files
-    WHERE knowledge_base_id = CAST(:id AS uuid) ORDER BY created_at, rag_file_id
+    WHERE rag_file_id IN (SELECT rag_file_id FROM public.rag_knowledge_base_files
+                          WHERE knowledge_base_id = CAST(:id AS uuid))
+    ORDER BY created_at, rag_file_id
 """)
 LOCK_FILE = text(
     f"SELECT {_FILE_COLUMNS} FROM public.rag_files WHERE rag_file_id = CAST(:id AS uuid) FOR UPDATE"
@@ -103,6 +105,7 @@ REPLACE_FILE_CONTENT = text("""
     SET file_version = :file_version, is_approved = false, approved_by = NULL, approved_at = NULL,
         parse_status = :parse_status, bucket_name = :bucket_name, storage_path = :storage_path,
         original_filename = :original_filename, mime_type = :mime_type, size_bytes = :size_bytes,
+        content_sha256 = :content_sha256,
         updated_at = now()
     WHERE rag_file_id = CAST(:id AS uuid) AND file_version = :file_version - 1
 """)
@@ -114,6 +117,7 @@ INSERT_JOB = text("""
     INSERT INTO public.rag_jobs (rag_file_id, job_type, job_status)
     VALUES (CAST(:rag_file_id AS uuid), :job_type, :job_status) RETURNING job_id::text
 """)
+GET_JOB = text(f"SELECT {_JOB_COLUMNS} FROM public.rag_jobs WHERE job_id = CAST(:id AS uuid)")
 LOCK_JOB = text(f"""
     SELECT {_JOB_COLUMNS} FROM public.rag_jobs
     WHERE job_id = CAST(:id AS uuid) FOR UPDATE SKIP LOCKED
@@ -140,35 +144,55 @@ HAS_QA_ACCESS = text("""
           AND can_read AND use_for_qa
     )
 """)
-# 檢索五項條件：1 知識庫 approved 且啟用、2 部門 use_for_qa、3 文件於該部門 use_document、
-# 4 文件 is_approved、5 parse_status = ready；另限同一 embedding_model
-SEARCH_CHUNKS = text("""
+# 範圍先依檔案分組，保留全部已授權的來源名稱；部門與資訊部測試套用相同核准條件。
+_DEPARTMENT_SCOPE = """
+    JOIN public.rag_department_access da ON da.knowledge_base_id = kb.knowledge_base_id
+     AND da.department_id = CAST(:department_id AS uuid) AND da.can_read AND da.use_for_qa
+"""
+_REVIEW_SCOPE = "WHERE kb.knowledge_base_id = ANY(CAST(:ids AS uuid[]))"
+
+
+def _file_scope(*, review: bool = False) -> str:
+    """產生固定的授權檔案 CTE；僅由程式選擇固定 SQL，不接受請求片段。"""
+    access = _REVIEW_SCOPE if review else _DEPARTMENT_SCOPE + " WHERE true"
+    return f"""WITH scoped_files AS (
+        SELECT l.rag_file_id,
+               array_agg(kb.knowledge_base_id::text ORDER BY kb.knowledge_name, kb.knowledge_base_id) AS knowledge_base_ids,
+               array_agg(kb.knowledge_name ORDER BY kb.knowledge_name, kb.knowledge_base_id) AS knowledge_names,
+               min(kb.file_count) AS file_count
+        FROM public.rag_knowledge_base_files l
+        JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = l.knowledge_base_id
+        {access}
+          AND kb.approval_status = 'approved' AND kb.is_active AND kb.file_count >= 1
+        GROUP BY l.rag_file_id
+    )"""
+
+
+_HIT_SELECT = """
+    SELECT c.content, {distance} AS distance, f.title AS file_title, f.file_version,
+           c.chunk_index, sf.knowledge_names, f.rag_file_id::text AS rag_file_id
+    FROM scoped_files sf
+    JOIN public.rag_files f ON f.rag_file_id = sf.rag_file_id
+    JOIN public.rag_chunks c ON c.rag_file_id = f.rag_file_id
+    WHERE f.is_approved AND f.parse_status = 'ready'
+"""
+_DISTANCE = "c.embedding OPERATOR(extensions.<=>) CAST(:query_embedding AS extensions.vector)"
+SEARCH_CHUNKS = text(
+    _file_scope()
+    + f"""
     SELECT c.chunk_id::text AS chunk_id, c.rag_file_id::text AS rag_file_id, c.chunk_index,
-           c.content, c.embedding_model,
-           c.embedding OPERATOR(extensions.<=>) CAST(:query_embedding AS extensions.vector)
-               AS distance,
-           f.title AS file_title, f.file_version,
-           kb.knowledge_base_id::text AS knowledge_base_id, kb.knowledge_name,
-           kb.approval_status, kb.is_active, da.use_for_qa, u.use_document,
-           f.is_approved, f.parse_status
-    FROM public.rag_chunks c
-    JOIN public.rag_files f ON f.rag_file_id = c.rag_file_id
-    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = f.knowledge_base_id
-    JOIN public.rag_department_access da
-      ON da.knowledge_base_id = kb.knowledge_base_id
-     AND da.department_id = CAST(:department_id AS uuid)
-    JOIN public.rag_file_department_usage u
-      ON u.rag_file_id = f.rag_file_id AND u.department_id = CAST(:department_id AS uuid)
-    WHERE kb.approval_status = 'approved' AND kb.is_active
-      AND da.can_read AND da.use_for_qa
-      AND u.use_document
-      AND f.is_approved
-      AND f.parse_status = 'ready'
-      AND c.embedding_model = :embedding_model
-      AND c.embedding IS NOT NULL
-    ORDER BY distance
-    LIMIT :top_k
-""")
+           c.content, c.embedding_model, {_DISTANCE} AS distance,
+           f.title AS file_title, f.file_version, sf.knowledge_base_ids, sf.knowledge_names,
+           'approved' AS approval_status, true AS is_active, true AS can_read, true AS use_for_qa,
+           sf.file_count, f.is_approved, f.parse_status
+    FROM scoped_files sf
+    JOIN public.rag_files f ON f.rag_file_id = sf.rag_file_id
+    JOIN public.rag_chunks c ON c.rag_file_id = f.rag_file_id
+    WHERE f.is_approved AND f.parse_status = 'ready'
+      AND c.embedding_model = :embedding_model AND c.embedding IS NOT NULL
+    ORDER BY distance, c.chunk_id LIMIT :top_k
+"""
+)
 
 
 LIST_DEPARTMENTS = text("""
@@ -213,104 +237,65 @@ GET_FILE = text(
 )
 INSERT_FILE = text("""
     INSERT INTO public.rag_files
-        (rag_file_id, knowledge_base_id, bucket_name, storage_path, original_filename, mime_type,
-         uploaded_by, title, owner_department_id, size_bytes)
-    VALUES (CAST(:id AS uuid), CAST(:knowledge_base_id AS uuid), :bucket_name, :storage_path,
+        (rag_file_id, bucket_name, storage_path, original_filename, mime_type,
+         uploaded_by, title, owner_department_id, size_bytes, source_type, effective_date,
+         effective_date_status, source_note, content_sha256)
+    VALUES (CAST(:id AS uuid), :bucket_name, :storage_path,
             :original_filename, :mime_type, CAST(:uploaded_by AS uuid), :title,
-            CAST(:owner_department_id AS uuid), :size_bytes)
+            CAST(:owner_department_id AS uuid), :size_bytes, :source_type, :effective_date,
+            :effective_date_status, :source_note, :content_sha256)
 """)
 RENAME_FILE = text("""
     UPDATE public.rag_files SET title = :title, updated_at = now()
     WHERE rag_file_id = CAST(:id AS uuid)
 """)
 DELETE_FILE = text("DELETE FROM public.rag_files WHERE rag_file_id = CAST(:id AS uuid)")
-LIST_FILE_USAGE = text("""
-    SELECT u.rag_file_id::text AS rag_file_id, u.department_id::text AS department_id,
-           u.use_document, u.updated_by::text AS updated_by
-    FROM public.rag_file_department_usage u
-    JOIN public.rag_files f ON f.rag_file_id = u.rag_file_id
-    WHERE f.knowledge_base_id = CAST(:id AS uuid)
-    ORDER BY u.rag_file_id, u.department_id
-""")
-UPSERT_FILE_USAGE = text("""
-    INSERT INTO public.rag_file_department_usage
-        (rag_file_id, department_id, use_document, updated_by)
-    VALUES (CAST(:id AS uuid), CAST(:department_id AS uuid), :use_document,
-            CAST(:updated_by AS uuid))
-    ON CONFLICT (rag_file_id, department_id)
-    DO UPDATE SET use_document = EXCLUDED.use_document, updated_by = EXCLUDED.updated_by,
-                  updated_at = now()
-""")
 LIST_LATEST_JOBS = text("""
     SELECT DISTINCT ON (j.rag_file_id) j.rag_file_id::text AS rag_file_id, j.job_status,
            j.error_message
     FROM public.rag_jobs j
     JOIN public.rag_files f ON f.rag_file_id = j.rag_file_id
-    WHERE f.knowledge_base_id = CAST(:id AS uuid)
+    WHERE f.rag_file_id IN (SELECT rag_file_id FROM public.rag_knowledge_base_files
+                            WHERE knowledge_base_id = CAST(:id AS uuid))
     ORDER BY j.rag_file_id, j.created_at DESC, j.job_id
 """)
-# 資訊部測試問答：只限指定知識庫、已完成索引（ready）的文件，不看核准與部門選用；僅供資訊部使用
-SEARCH_REVIEW_CHUNKS = text("""
-    SELECT c.content,
-           c.embedding OPERATOR(extensions.<=>) CAST(:query_embedding AS extensions.vector)
-               AS distance,
-           f.title AS file_title, f.file_version, c.chunk_index, kb.knowledge_name,
-           f.rag_file_id::text AS rag_file_id
-    FROM public.rag_chunks c
-    JOIN public.rag_files f ON f.rag_file_id = c.rag_file_id
-    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = f.knowledge_base_id
-    WHERE kb.knowledge_base_id = CAST(:id AS uuid)
-      AND f.parse_status = 'ready'
-      AND c.embedding_model = :embedding_model
-      AND c.embedding IS NOT NULL
-    ORDER BY distance
-    LIMIT :top_k
-""")
-# 文字比對：問題提到「第 X 章／節／條」時，找去除空白後符合全部樣式（正規表示式）的段落；
-# 與向量檢索合併，補足向量不擅長的章節編號。distance 固定為 0（明確指名，視為相關）
-_KEYWORD_SELECT = """
-    SELECT c.content, 0.0 AS distance, f.title AS file_title, f.file_version, c.chunk_index,
-           kb.knowledge_name, f.rag_file_id::text AS rag_file_id
-    FROM public.rag_chunks c
-    JOIN public.rag_files f ON f.rag_file_id = c.rag_file_id
-    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = f.knowledge_base_id
+# 資訊部測試同樣只接受已核准、啟用且非空的知識庫，以及已核准、ready 的文件。
+SEARCH_REVIEW_CHUNKS = text(
+    _file_scope(review=True)
+    + _HIT_SELECT.format(distance=_DISTANCE)
+    + """
+      AND c.embedding_model = :embedding_model AND c.embedding IS NOT NULL
+    ORDER BY distance, c.chunk_id LIMIT :top_k
 """
-SEARCH_REVIEW_KEYWORDS = text(f"""{_KEYWORD_SELECT}
-    WHERE kb.knowledge_base_id = CAST(:id AS uuid)
-      AND f.parse_status = 'ready'
-      AND regexp_replace(c.content, '\\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
-    ORDER BY f.title, c.chunk_index
-    LIMIT :top_k
-""")
-# 一般部門：同檢索五項條件
-SEARCH_KEYWORDS = text(f"""{_KEYWORD_SELECT}
-    JOIN public.rag_department_access da
-      ON da.knowledge_base_id = kb.knowledge_base_id
-     AND da.department_id = CAST(:department_id AS uuid)
-    JOIN public.rag_file_department_usage u
-      ON u.rag_file_id = f.rag_file_id AND u.department_id = CAST(:department_id AS uuid)
-    WHERE kb.approval_status = 'approved' AND kb.is_active
-      AND da.can_read AND da.use_for_qa
-      AND u.use_document
-      AND f.is_approved
-      AND f.parse_status = 'ready'
-      AND regexp_replace(c.content, '\\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
-    ORDER BY f.title, c.chunk_index
-    LIMIT :top_k
-""")
+)
+SEARCH_REVIEW_KEYWORDS = text(
+    _file_scope(review=True)
+    + _HIT_SELECT.format(distance="0.0")
+    + r"""
+      AND regexp_replace(c.content, '\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
+    ORDER BY f.title, c.chunk_index, c.chunk_id LIMIT :top_k
+"""
+)
+SEARCH_KEYWORDS = text(
+    _file_scope()
+    + _HIT_SELECT.format(distance="0.0")
+    + r"""
+      AND regexp_replace(c.content, '\s', '', 'g') ~ ALL (CAST(:patterns AS text[]))
+    ORDER BY f.title, c.chunk_index, c.chunk_id LIMIT :top_k
+"""
+)
 # 重新排入索引：把知識庫內已完成或失敗的文件改回等待索引（切段規則調整後重建用）
 QUEUE_REINDEX = text("""
     UPDATE public.rag_files SET parse_status = 'uploaded', updated_at = now()
-    WHERE knowledge_base_id = CAST(:id AS uuid) AND parse_status IN ('ready', 'failed')
-""")
-COUNT_FILES = text("""
-    SELECT knowledge_base_id::text AS knowledge_base_id, count(*) AS total
-    FROM public.rag_files GROUP BY knowledge_base_id
+    WHERE rag_file_id IN (SELECT rag_file_id FROM public.rag_knowledge_base_files
+                          WHERE knowledge_base_id = CAST(:id AS uuid))
+      AND parse_status IN ('ready', 'failed')
 """)
 # 待建立索引的文件（uploaded／failed），依上傳先後
 LIST_FILES_TO_INDEX = text("""
-    SELECT knowledge_base_id::text AS knowledge_base_id, rag_file_id::text AS rag_file_id
-    FROM public.rag_files WHERE parse_status IN ('uploaded', 'failed')
+    SELECT l.knowledge_base_id::text AS knowledge_base_id, f.rag_file_id::text AS rag_file_id
+    FROM public.rag_knowledge_base_files l
+    JOIN public.rag_files f ON f.rag_file_id = l.rag_file_id WHERE parse_status IN ('uploaded', 'failed')
     ORDER BY created_at, rag_file_id
 """)
 FIND_PENDING_JOB = text("""
@@ -328,6 +313,18 @@ def open_session() -> Session:
 def vector_literal(values: Sequence[float]) -> str:
     """把向量轉成 pgvector 可接受的文字格式（例如 [0.1,0.2]），不需要 pgvector Python 套件。"""
     return "[" + ",".join(repr(float(value)) for value in values) + "]"
+
+
+def _search_hit(row: Any) -> SearchHit:
+    names = tuple(row["knowledge_names"])
+    return SearchHit(
+        **{
+            **row,
+            "distance": float(row["distance"]),
+            "knowledge_name": "、".join(names),
+            "knowledge_names": names,
+        }
+    )
 
 
 def list_knowledge_bases(db: Session) -> list[KnowledgeBase]:
@@ -427,6 +424,7 @@ def replace_file_content(db: Session, rag_file: RagFile) -> int:
             "original_filename": rag_file.original_filename,
             "mime_type": rag_file.mime_type,
             "size_bytes": rag_file.size_bytes,
+            "content_sha256": rag_file.content_sha256,
         },
     )
     return int(getattr(result, "rowcount", 0) or 0)
@@ -454,6 +452,12 @@ def insert_job(db: Session, job: RagJob) -> str:
             },
         ).scalar_one()
     )
+
+
+def get_job(db: Session, job_id: str) -> RagJob | None:
+    """讀取工作（不鎖定），先知道對應檔案才能依序鎖定；不存在時為 None。"""
+    row = db.execute(GET_JOB, {"id": job_id}).mappings().one_or_none()
+    return None if row is None else RagJob(**row)
 
 
 def lock_job(db: Session, job_id: str) -> RagJob | None:
@@ -513,7 +517,7 @@ def search_chunks(
     department_id: UUID,
     top_k: int,
 ) -> list[RetrievalCandidate]:
-    """以 pgvector 距離由小到大取出符合五項條件的段落。"""
+    """以 pgvector 距離由小到大取出符合四項條件的段落。"""
     params: dict[str, Any] = {
         "query_embedding": vector_literal(query_embedding),
         "embedding_model": embedding_model,
@@ -521,7 +525,14 @@ def search_chunks(
         "top_k": top_k,
     }
     return [
-        RetrievalCandidate(**{**row, "distance": float(row["distance"])})
+        RetrievalCandidate(
+            **{
+                **row,
+                "distance": float(row["distance"]),
+                "knowledge_base_ids": tuple(row["knowledge_base_ids"]),
+                "knowledge_names": tuple(row["knowledge_names"]),
+            }
+        )
         for row in db.execute(SEARCH_CHUNKS, params).mappings()
     ]
 
@@ -567,7 +578,7 @@ def rename_knowledge_base(db: Session, knowledge_base_id: str, knowledge_name: s
 
 
 def delete_knowledge_base(db: Session, knowledge_base_id: str) -> None:
-    """刪除知識庫；部門配置、文件、段落與工作由外鍵 CASCADE 一併刪除。"""
+    """刪除知識庫；部門配置與關聯由外鍵 CASCADE 刪除，檔案、段落與工作保留。"""
     db.execute(DELETE_KNOWLEDGE_BASE, {"id": knowledge_base_id})
 
 
@@ -604,7 +615,6 @@ def insert_file(db: Session, rag_file: RagFile, uploaded_by: str) -> None:
         INSERT_FILE,
         {
             "id": rag_file.rag_file_id,
-            "knowledge_base_id": rag_file.knowledge_base_id,
             "bucket_name": rag_file.bucket_name,
             "storage_path": rag_file.storage_path,
             "original_filename": rag_file.original_filename,
@@ -613,6 +623,11 @@ def insert_file(db: Session, rag_file: RagFile, uploaded_by: str) -> None:
             "title": rag_file.title,
             "owner_department_id": rag_file.owner_department_id,
             "size_bytes": rag_file.size_bytes,
+            "content_sha256": rag_file.content_sha256,
+            "source_type": rag_file.source_type,
+            "effective_date": rag_file.effective_date,
+            "effective_date_status": rag_file.effective_date_status,
+            "source_note": rag_file.source_note,
         },
     )
 
@@ -625,25 +640,6 @@ def rename_file(db: Session, rag_file_id: str, title: str) -> None:
 def delete_file(db: Session, rag_file_id: str) -> None:
     """刪除文件；部門選用、段落與工作由外鍵 CASCADE 一併刪除。"""
     db.execute(DELETE_FILE, {"id": rag_file_id})
-
-
-def list_file_usage(db: Session, knowledge_base_id: str) -> tuple[FileDepartmentUsage, ...]:
-    """列出知識庫內所有文件的部門選用。"""
-    rows = db.execute(LIST_FILE_USAGE, {"id": knowledge_base_id}).mappings()
-    return tuple(FileDepartmentUsage(**row) for row in rows)
-
-
-def upsert_file_usage(db: Session, usage: FileDepartmentUsage) -> None:
-    """寫入文件在某部門的選用。"""
-    db.execute(
-        UPSERT_FILE_USAGE,
-        {
-            "id": usage.rag_file_id,
-            "department_id": usage.department_id,
-            "use_document": usage.use_document,
-            "updated_by": usage.updated_by,
-        },
-    )
 
 
 def list_latest_jobs(db: Session, knowledge_base_id: str) -> dict[str, LatestJob]:
@@ -662,20 +658,17 @@ def search_review_chunks(
     db: Session,
     query_embedding: Sequence[float],
     embedding_model: str,
-    knowledge_base_id: str,
+    knowledge_base_ids: Sequence[str],
     top_k: int,
 ) -> list[SearchHit]:
-    """資訊部測試：在指定知識庫已完成索引的文件中，依距離由小到大取段落（含未核准文件）。"""
+    """資訊部測試：在勾選知識庫的已核准、ready 文件中檢索，共用檔案每段只回一次。"""
     params: dict[str, Any] = {
         "query_embedding": vector_literal(query_embedding),
         "embedding_model": embedding_model,
-        "id": knowledge_base_id,
+        "ids": list(knowledge_base_ids),
         "top_k": top_k,
     }
-    return [
-        SearchHit(**{**row, "distance": float(row["distance"])})
-        for row in db.execute(SEARCH_REVIEW_CHUNKS, params).mappings()
-    ]
+    return [_search_hit(row) for row in db.execute(SEARCH_REVIEW_CHUNKS, params).mappings()]
 
 
 def list_files_to_index(db: Session) -> dict[str, list[str]]:
@@ -691,24 +684,21 @@ def search_keyword_chunks(
     patterns: Sequence[str],
     top_k: int,
     *,
-    knowledge_base_id: str | None = None,
+    knowledge_base_ids: Sequence[str] | None = None,
     department_id: UUID | None = None,
 ) -> list[SearchHit]:
-    """以章節條文樣式（正規表示式，全部都要符合）比對段落；指定知識庫為資訊部測試，否則依部門五項條件。"""
+    """比對章節條文；指定知識庫清單為資訊部測試，否則依部門指派的四項條件。"""
     params: dict[str, Any] = {
         "patterns": list(patterns),
         "top_k": top_k,
     }
-    if knowledge_base_id is not None:
+    if knowledge_base_ids is not None:
         statement = SEARCH_REVIEW_KEYWORDS
-        params["id"] = knowledge_base_id
+        params["ids"] = list(knowledge_base_ids)
     else:
         statement = SEARCH_KEYWORDS
         params["department_id"] = str(department_id)
-    return [
-        SearchHit(**{**row, "distance": float(row["distance"])})
-        for row in db.execute(statement, params).mappings()
-    ]
+    return [_search_hit(row) for row in db.execute(statement, params).mappings()]
 
 
 def queue_reindex(db: Session, knowledge_base_id: str) -> int:
@@ -717,8 +707,135 @@ def queue_reindex(db: Session, knowledge_base_id: str) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
 
-def count_files(db: Session) -> dict[str, int]:
-    """每個知識庫的文件數。"""
+LIST_LIBRARY_FILES = text(
+    f"SELECT {_FILE_COLUMNS} FROM public.rag_files ORDER BY created_at DESC, rag_file_id"
+)
+LIST_UNHASHED_FILES = text(
+    f"SELECT {_FILE_COLUMNS} FROM public.rag_files WHERE content_sha256 IS NULL ORDER BY rag_file_id"
+)
+LIST_ALL_LATEST_JOBS = text("""
+    SELECT DISTINCT ON (rag_file_id) rag_file_id::text AS rag_file_id, job_status, error_message
+    FROM public.rag_jobs ORDER BY rag_file_id, created_at DESC, job_id
+""")
+LIST_FILE_REFERENCES = text(f"""
+    SELECT {_KB_COLUMNS} FROM public.rag_knowledge_bases
+    WHERE knowledge_base_id IN (SELECT knowledge_base_id FROM public.rag_knowledge_base_files
+                                WHERE rag_file_id = CAST(:id AS uuid))
+    ORDER BY knowledge_name, knowledge_base_id
+""")
+LIST_ALL_FILE_REFERENCES = text(f"""
+    SELECT l.rag_file_id::text AS rag_file_id, kb.*
+    FROM public.rag_knowledge_base_files l
+    JOIN (SELECT {_KB_COLUMNS} FROM public.rag_knowledge_bases) kb
+      ON kb.knowledge_base_id = l.knowledge_base_id::text
+    ORDER BY kb.knowledge_name, kb.knowledge_base_id
+""")
+INSERT_FILE_LINK = text("""
+    INSERT INTO public.rag_knowledge_base_files (knowledge_base_id, rag_file_id, added_by)
+    VALUES (CAST(:kb_id AS uuid), CAST(:file_id AS uuid), CAST(:actor AS uuid))
+    ON CONFLICT (knowledge_base_id, rag_file_id) DO NOTHING
+""")
+DELETE_FILE_LINK = text("""
+    DELETE FROM public.rag_knowledge_base_files
+    WHERE knowledge_base_id = CAST(:kb_id AS uuid) AND rag_file_id = CAST(:file_id AS uuid)
+""")
+FIND_DUPLICATE_FILE = text(f"""
+    SELECT {_FILE_COLUMNS} FROM public.rag_files
+    WHERE content_sha256 = :sha AND rag_file_id <> CAST(:exclude AS uuid)
+    ORDER BY rag_file_id LIMIT 1
+""")
+LOCK_CONTENT_HASH = text(
+    "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(:sha, 0))"
+)
+SET_LEGACY_HASH = text("""
+    UPDATE public.rag_files SET content_sha256 = :sha
+    WHERE rag_file_id = CAST(:id AS uuid) AND file_version = :version AND content_sha256 IS NULL
+""")
+GET_DEPARTMENT = text("""
+    SELECT department_id::text AS department_id, department_code, department_name
+    FROM public.departments WHERE department_id = CAST(:id AS uuid) AND is_active
+""")
+GET_DEPARTMENT_CODE = text("""
+    SELECT department_code FROM public.departments WHERE department_id = CAST(:id AS uuid)
+""")
+
+
+def list_library_files(db: Session) -> list[RagFile]:
+    """列出全部獨立檔案；核准與索引狀態不影響清單可見性。"""
+    return [RagFile(**row) for row in db.execute(LIST_LIBRARY_FILES).mappings()]
+
+
+def list_unhashed_files(db: Session) -> list[RagFile]:
+    """列出移轉後尚無原檔雜湊的舊檔案，供上傳前核對。"""
+    return [RagFile(**row) for row in db.execute(LIST_UNHASHED_FILES).mappings()]
+
+
+def list_all_latest_jobs(db: Session) -> dict[str, LatestJob]:
+    """讀取檔案庫每份檔案最近工作。"""
     return {
-        row["knowledge_base_id"]: int(row["total"]) for row in db.execute(COUNT_FILES).mappings()
+        row["rag_file_id"]: LatestJob(**row) for row in db.execute(LIST_ALL_LATEST_JOBS).mappings()
     }
+
+
+def list_file_references(db: Session, rag_file_id: str) -> tuple[KnowledgeBase, ...]:
+    """檔案被哪些知識庫引用，包含未核准或停用知識庫。"""
+    return tuple(
+        KnowledgeBase(**row)
+        for row in db.execute(LIST_FILE_REFERENCES, {"id": rag_file_id}).mappings()
+    )
+
+
+def list_all_file_references(db: Session) -> dict[str, tuple[KnowledgeBase, ...]]:
+    """一次讀取全部檔案的引用（rag_file_id → 知識庫），檔案清單不必逐檔查詢。"""
+    references: dict[str, tuple[KnowledgeBase, ...]] = {}
+    for row in db.execute(LIST_ALL_FILE_REFERENCES).mappings():
+        values = dict(row)
+        rag_file_id = values.pop("rag_file_id")
+        references[rag_file_id] = (*references.get(rag_file_id, ()), KnowledgeBase(**values))
+    return references
+
+
+def insert_file_link(db: Session, knowledge_base_id: str, rag_file_id: str, actor: str) -> None:
+    """加入關聯；計數與部門指派僅由資料庫 Trigger 維護。"""
+    db.execute(
+        INSERT_FILE_LINK, {"kb_id": knowledge_base_id, "file_id": rag_file_id, "actor": actor}
+    )
+
+
+def delete_file_link(db: Session, knowledge_base_id: str, rag_file_id: str) -> None:
+    """移除關聯；不刪原檔、不重新索引。"""
+    db.execute(DELETE_FILE_LINK, {"kb_id": knowledge_base_id, "file_id": rag_file_id})
+
+
+def lock_content_hash(db: Session, digest: str) -> None:
+    """序列化相同內容的寫入，避免並行上傳通過查重後重複新增。"""
+    db.execute(LOCK_CONTENT_HASH, {"sha": digest})
+
+
+def find_duplicate_file(
+    db: Session, digest: str, exclude: str = "00000000-0000-0000-0000-000000000000"
+) -> RagFile | None:
+    """查詢相同原始內容的檔案，替換時可排除自己。"""
+    row = (
+        db.execute(FIND_DUPLICATE_FILE, {"sha": digest, "exclude": exclude})
+        .mappings()
+        .one_or_none()
+    )
+    return None if row is None else RagFile(**row)
+
+
+def set_legacy_hash(db: Session, rag_file_id: str, version: int, digest: str) -> None:
+    """僅在版本未變時補上舊檔雜湊。"""
+    db.execute(SET_LEGACY_HASH, {"id": rag_file_id, "version": version, "sha": digest})
+
+
+def get_department(db: Session, department_id: str) -> DepartmentOption | None:
+    """依已驗證部門 UUID 讀取啟用中部門與上傳路徑代碼。"""
+    row = db.execute(GET_DEPARTMENT, {"id": department_id}).mappings().one_or_none()
+    return None if row is None else DepartmentOption(**row)
+
+
+def get_department_code(db: Session, department_id: str) -> str | None:
+    """依部門 UUID 讀取代碼，含已停用部門（既有檔案的上傳部門可能已停用）。"""
+    value = db.execute(GET_DEPARTMENT_CODE, {"id": department_id}).scalar_one_or_none()
+    return None if value is None else str(value)

@@ -102,7 +102,7 @@ InvoiceGuard-AI-ADMIN/
 │   │   └── dev_files.py          #   /dev/files 示範 Vercel 模組（圖片／RAG 檔案；僅本機）
 │   ├── services/                 # 商業邏輯層（auth / invoice_review / user / system / db_inspection；dev_account / dev_file 供 /dev 示範；data / file 為第一階段契約，未接線）
 │   ├── schemas/                  # Pydantic 資料契約（account / data / files / db_inspection / common）
-│   ├── integrations/             # supabase_storage（Vercel 模組：檔案存取，與 API 相同）、AI 模組 document_ai（Document AI OCR）／gemini／groq／chat_models（與 API 相同，2026-10-29 起；尚未接線功能）、vertex_embedding（Agent Platform 向量，與 API 相同，2026-10-30 起；尚未接線功能）、storage_client（第一階段契約，未接線）、remote_admin_client（無呼叫端）、vercel（執行環境資訊與設定檢查）
+│   ├── integrations/             # supabase_storage（Vercel 模組：檔案存取，與 API 相同）、AI 模組 document_ai（Document AI OCR）／gemini／groq／chat_models（與 API 相同，2026-10-29 起；ADMIN 知識庫已接線）、vertex_embedding（Agent Platform 向量，與 API 相同，2026-10-30 起；ADMIN 知識庫已接線）、storage_client（第一階段契約，未接線）、remote_admin_client（無呼叫端）、vercel（執行環境資訊與設定檢查）；vertex_chat（RAG 問答的 Vertex 備援，僅 ADMIN）
 │   ├── db/                       # ★ 資料庫模組（說明見 app/db/README.md）
 │   │   ├── README.md             #   Schema 總覽、與 API 的同步流程、存取規則
 │   │   ├── base.py               #   Base、約束命名規則、共用欄位 Mixin
@@ -188,7 +188,7 @@ InvoiceGuard-AI-ADMIN/
 | XSS | Jinja2 自動跳脫；**禁止**對資料庫資料使用 `\|safe` | `core/templating.py` |
 | 稽核 | 審核發票、停用帳號等操作寫入 `audit_logs` | `services/` |
 | 搜尋引擎 | `<meta name="robots">` 與 `X-Robots-Tag` 標頭 noindex；`/robots.txt` 不封鎖抓取（否則讀不到 noindex），值集中在 `core/constants.py` | `core/constants.py`、`routers/robots.py`、`base.html`、`vercel.json` |
-| 本機與示範檔案 | 本機無法登入（`SESSION_SECRET_KEY` 屬本機禁用機密）；`/dev` 示範檔案只在本機開放、不需登入，直接讀寫正式 DB／Storage | `core/deps.py`、`routers/dev_*.py` |
+| 本機與示範檔案 | 本機 `/login` 以 `tmp/` 內的開發用隨機金鑰簽章（見 [E-LOGIN-ACCESS.md](E-LOGIN-ACCESS.md)），舊 `require_admin` 路由仍受 `SESSION_SECRET_KEY` 限制；`/dev` 示範檔案只在本機開放、不需登入，直接讀寫正式 DB／Storage | `services/admin_login_service.py`、`core/deps.py`、`routers/dev_*.py` |
 | 存取限制（建議） | 正式環境可另開 Vercel Deployment Protection 或限制 IP | Vercel 設定 |
 
 ---
@@ -199,7 +199,7 @@ InvoiceGuard-AI-ADMIN/
 
 本機 JSON、Vercel Preview／Production 的實際來源與啟動驗證以 [環境與 URL 隔離](ENVIRONMENT_ISOLATION.md) 為準；dotenv 與 secrets 目錄永遠不載入。
 
-預設不讀取 `.env`。本機只由 START 注入核定的 `DATABASE_URL`、`S3_*`、`SUPABASE_STORAGE_BUCKET`（Production 值，連正式 DB／Storage）；其他機密（例如 `SESSION_SECRET_KEY`）出現在本機即拒絕啟動，所以本機無法登入。
+預設不讀取 `.env`。本機只由 START 注入核定的 `DATABASE_URL`、`S3_*`、`SUPABASE_STORAGE_BUCKET`（Production 值，連正式 DB／Storage）；其他機密（例如 `SESSION_SECRET_KEY`）出現在本機即拒絕啟動；本機 `/login` 改用開發用隨機金鑰，不使用公司機密。
 完整新增設定、檢查能力及未完成功能見 [MODULE_CONTRACT.md](MODULE_CONTRACT.md)。
 
 | 變數 | 說明 | 必填 |
@@ -229,7 +229,7 @@ InvoiceGuard-AI-ADMIN/
 |---|---|
 | Framework Preset | FastAPI（由 `requirements.txt` 與 `app/main.py` 自動偵測） |
 | Python 版本 | `.python-version`（3.12） |
-| Function 設定 | `vercel.json` → `functions["app/main.py"]`：`maxDuration`、`excludeFiles` |
+| Function 設定 | `vercel.json` → `functions["app/main.py"]`：`maxDuration`（60 秒，本機 START 閘道相同）、`excludeFiles` |
 | 靜態檔 | `app.mount("/static", ...)` 會在建置時提升到 CDN；**不要加全域 middleware**，否則靜態檔改由 Function 回應 |
 | Production | `main` 分支 |
 | Preview | 其他分支 / PR；`DATABASE_URL` 指向測試資料庫（或核定的隔離分支），**不可指向正式資料庫** |

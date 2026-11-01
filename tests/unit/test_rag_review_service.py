@@ -32,7 +32,7 @@ from app.services.rag_review_service import (
 )
 
 NOW = datetime(2026, 10, 30, 22, 0, tzinfo=UTC)
-KB = KnowledgeBase("kb-1", "營業稅申報")
+KB = KnowledgeBase("kb-1", "營業稅申報", file_count=1)
 
 
 def test_approve_pending_knowledge_base() -> None:
@@ -90,17 +90,17 @@ def test_resubmit_requires_rejected() -> None:
 
 
 def test_approve_file_requires_ready() -> None:
-    uploaded = RagFile("f-1", "kb-1", "營業稅法", parse_status=PARSE_UPLOADED)
+    uploaded = RagFile("f-1", "營業稅法", parse_status=PARSE_UPLOADED)
     with pytest.raises(RagRuleError) as error:
         approve_file(uploaded, "it-user", True, NOW)
     assert error.value.code == "NOT_READY"
-    failed = RagFile("f-1", "kb-1", "掃描檔", parse_status=PARSE_FAILED)
+    failed = RagFile("f-1", "掃描檔", parse_status=PARSE_FAILED)
     with pytest.raises(RagRuleError):
         approve_file(failed, "it-user", True, NOW)
 
 
 def test_approve_ready_file() -> None:
-    ready = RagFile("f-1", "kb-1", "營業稅法", parse_status=PARSE_READY)
+    ready = RagFile("f-1", "營業稅法", parse_status=PARSE_READY)
     approved = approve_file(ready, "it-user", True, NOW)
     assert (approved.is_approved, approved.approved_by, approved.approved_at) == (
         True,
@@ -114,7 +114,6 @@ def test_approve_ready_file() -> None:
 def test_content_replacement_bumps_version_and_queues_reindex() -> None:
     approved = RagFile(
         "f-1",
-        "kb-1",
         "營業稅法",
         file_version=2,
         parse_status=PARSE_READY,
@@ -130,13 +129,11 @@ def test_content_replacement_bumps_version_and_queues_reindex() -> None:
 
 
 def test_pending_reviews_lists_ready_files_first() -> None:
-    kbs = [KB, approve_knowledge_base(KnowledgeBase("kb-2", "其他"), "it", True, NOW)]
+    kbs = [KB, approve_knowledge_base(KnowledgeBase("kb-2", "其他", file_count=1), "it", True, NOW)]
     files = [
-        RagFile("f-1", "kb-1", "等待索引"),
-        RagFile("f-2", "kb-1", "已索引", parse_status=PARSE_READY),
-        RagFile(
-            "f-3", "kb-1", "已核准", parse_status=PARSE_READY, is_approved=True, approved_at=NOW
-        ),
+        RagFile("f-1", "等待索引"),
+        RagFile("f-2", "已索引", parse_status=PARSE_READY),
+        RagFile("f-3", "已核准", parse_status=PARSE_READY, is_approved=True, approved_at=NOW),
     ]
     pending = list_pending_reviews(kbs, files)
     assert [kb.knowledge_base_id for kb in pending.knowledge_bases] == ["kb-1"]

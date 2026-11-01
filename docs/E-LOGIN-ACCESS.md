@@ -14,7 +14,7 @@ LOCAL_SETUP_ENABLED=False，已關閉既有本機免登入例外。本次以既�
 
 沿用本站既有 itsdangerous 套件產生簽章 Cookie，資料包含 UUID、目前部門、憑證版本、到期時間及功能四操作 bitmask（查看=1、新增=2、修改=4、刪除=8）。不含密碼、雜湊或 API Key；不使用 localStorage／sessionStorage。Cookie 為 HttpOnly、SameSite=Lax、Path=/、無 Domain、無 Max-Age／Expires；正式環境 Secure。簽章資料可編碼讀取，不能把它當成加密保管機密。
 
-本機簽章金鑰只在目前 ADMIN 程序記憶體，服務重啟／程式重載後需重新登入，不讀寫公司密鑰。雲端沿用已存在的 SESSION_SECRET_KEY 設定；本次不修改或部署雲端設定。
+本機簽章金鑰是開發用隨機值，第一次使用時產生並存在 tmp/local-session-key（不進版控），不是公司密鑰，也不讀寫公司密鑰；程式重載或重啟 START 不必重新登入，Cookie 仍受 8 小時期限、帳號與部門有效性檢查。要讓本機登入全部失效，刪除此檔並重啟本站。tmp/ 無法寫入時退回只放程序記憶體，重載後需重新登入。檔案權限在 Mac 設為只有本人可讀，尚未實機驗證，見 [README](../README.md)。雲端沿用已存在的 SESSION_SECRET_KEY 設定，不使用此檔；本次不修改或部署雲端設定。
 
 登出清除目前瀏覽器 Cookie，不新增 DB Session 或撤銷表；已複製的有效 Cookie 不因清除瀏覽器而在全站撤銷，仍受簽章期限、帳號有效性、credential_version 與部門有效性檢查。這是網站 Session 的目前行為，不宣稱已實作資料庫 Session 撤銷。
 

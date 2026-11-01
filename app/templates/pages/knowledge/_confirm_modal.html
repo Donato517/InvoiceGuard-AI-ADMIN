@@ -1,0 +1,27 @@
+{#
+  @template pages/knowledge/_confirm_modal.html
+  @description 知識庫／檔案操作共用確認視窗；沿用 main.js 開關，一般 POST 成功後回原清單。
+  @route POST /knowledge/{kb_id}/delete、/knowledge/{kb_id}/files/{file_id}/remove、/knowledge/files/{file_id}/rename|delete
+  @context confirm_modal: macro 參數 dialog_id、title、action、confirm_label、confirm_class；caller 為說明與表單欄位
+#}
+{% macro confirm_modal(dialog_id, title, action, confirm_label="確認", confirm_class="btn--danger") %}
+  <dialog id="{{ dialog_id }}"
+          class="modal knowledge-confirm"
+          aria-labelledby="{{ dialog_id }}-heading">
+    <form method="post" action="{{ action }}">
+      <div class="modal__header">
+        <h2 id="{{ dialog_id }}-heading">{{ title }}</h2>
+        <button type="button"
+                class="btn btn--secondary btn--small"
+                data-close-dialog
+                aria-label="關閉">✕</button>
+      </div>
+      <div class="modal__body">{{ caller() }}</div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn--secondary" data-close-dialog>取消</button>
+        {% if confirm_label %}<button type="submit"
+        class="btn {{ confirm_class }}">{{ confirm_label }}</button>{% endif %}
+      </div>
+    </form>
+  </dialog>
+{% endmacro %}

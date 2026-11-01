@@ -2,21 +2,21 @@
   @template pages/knowledge/_upload_modal.html
   @description 上傳文件的對話框（HTML 原型 uploadDialog）：一次一份，文件名稱與檔案一一對應，方便資訊部逐份確認。
                開關由 main.js 的 data-open-dialog / data-close-dialog 處理；上傳中顯示處理中遮罩，成功後按鈕改為「完成」。
-  @route POST /knowledge/documents（multipart）→ 寫入 Storage（bucket rag）與 DB，回傳結果
-  @context kb: dict | None                 在既有知識庫內上傳時提供；新增知識庫時為 None
+  @route POST /knowledge/files/upload（multipart）→ 寫入 Storage（bucket rag）與 DB，回傳結果
+  @context kb: dict | None                 在知識庫內上傳時提供；檔案管理頁上傳時不提供
   @context current_department_name: str    上傳部門（目前選取部門，由登入身分決定，不能在表單更改）
-  @context new_knowledge_base: bool        true 時顯示「知識庫名稱」欄位
 #}
 <dialog id="upload-modal" class="modal" aria-labelledby="upload-heading">
   <form class="upload-form"
         method="post"
-        action="/knowledge/documents"
+        action="/knowledge/files/upload"
         enctype="multipart/form-data"
-        hx-post="/knowledge/documents"
+        hx-post="/knowledge/files/upload"
         hx-encoding="multipart/form-data"
         hx-target="#batch-results"
         hx-swap="innerHTML"
-        hx-on::after-request="this.classList.toggle('is-done', event.detail.successful)"
+        hx-on::before-swap="if (event.detail.xhr.status === 400) event.detail.shouldSwap = true"
+        hx-on::after-request="this.classList.toggle('is-done', event.detail.xhr.status === 200)"
         data-busy="正在上傳文件，請勿關閉視窗…">
     <div class="modal__header">
       <h2 id="upload-heading">上傳文件</h2>
@@ -27,20 +27,38 @@
     </div>
     <div class="modal__body">
       {% if kb %}<input type="hidden" name="knowledge_base_id" value="{{ kb.id }}">{% endif %}
-      {% if new_knowledge_base %}
-        <div class="form-field">
-          <label for="knowledge-base-title">知識庫名稱</label>
-          <input id="knowledge-base-title"
-                 name="knowledge_base_title"
-                 maxlength="160"
-                 required>
-          <span class="muted small-text">新知識庫須經資訊部核准後才能供部門問答。</span>
-        </div>
-      {% endif %}
       <p class="muted small-text">上傳部門：{{ current_department_name }}（目前選取的部門）</p>
       <div class="form-field">
         <label for="document-title">文件名稱（空白時使用檔名）</label>
         <input id="document-title" name="title" maxlength="160">
+      </div>
+      <div class="form-field">
+        <label for="source-type">來源類型（必填）</label>
+        <select id="source-type" name="source_type" required>
+          <option value="">請選擇</option>
+          <option value="government_regulation">政府法規</option>
+          <option value="company_policy">公司規定</option>
+          <option value="operations_manual">作業手冊</option>
+          <option value="mixed">混合</option>
+          <option value="other">其他</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="date-status">生效日狀態（必填）</label>
+        <select id="date-status" name="effective_date_status" required>
+          <option value="">請選擇</option>
+          <option value="known">已知日期</option>
+          <option value="unknown">未知</option>
+          <option value="not_applicable">不適用</option>
+        </select>
+        <label for="effective-date">生效日</label>
+        <input id="effective-date" type="date" name="effective_date">
+        <small class="muted">已知時必填日期；未知或不適用請留空，不以上傳日代替。</small>
+      </div>
+      <div class="form-field">
+        <label for="source-note">來源說明（選填）</label>
+        <textarea id="source-note" name="source_note" rows="2"></textarea>
+        <small class="muted">可填發布單位、網址、版本；混合與其他類型建議填寫。</small>
       </div>
       <div class="form-field">
         <label for="document-files">選擇文件</label>
@@ -53,7 +71,7 @@
           <span class="muted">一次上傳一份。支援 PDF、DOCX、TXT、Markdown，4 MB 以下；PDF 目前最多 15 頁，DOCX 可上傳但尚無法索引。</span>
         </div>
       </div>
-      <p class="muted small-text">新上傳一律未核准；由資訊部確認內容並建立索引後核准。</p>
+      <p class="muted small-text">新上傳一律待審查；由資訊部確認內容並建立索引後核准。</p>
       <div id="batch-results"
            class="batch-results"
            role="status"

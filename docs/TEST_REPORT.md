@@ -1,5 +1,15 @@
 # AI 協作規範測試報告
 
+## 2026-11-01 問答流程與知識庫操作視窗
+
+- 基準：ADMIN main／ecdab81、API main／36c29cb；開始前 12 份 ADMIN SHA256 均符合使用者指定值，保留既有未提交批次。API 本批只同步 RAG_DEVELOPMENT.md，兩站逐位元組相同。
+- ask_test 防呆後使用 20B 理解問題（JSON、800 tokens、4 秒），原問題與最多 3 個查詢同批向量；相同檔案段落保留最小距離，仍限勾選的知識庫。ask 不加理解；回答改為文件規定與分析，4000 tokens／17 秒，保留原有引用、截斷與服務失敗處理。
+- 移除關聯、列表刪除知識庫、檔案改名／刪除改用共用 dialog；開啟／取消不換頁，一般 POST 成功後回原清單。刪除顯示權限與路由重驗分開；引用中的檔案不提供確認刪除。舊檔案改名 GET 及移除確認 GET 回 404。
+- 相關測試最終 **272 passed、1 warning（10.00s）**。初輪為 271 passed、1 failed，失敗為新增測試預期標題漏了「全部門」，修正測試後通過，未放寬產品規則。
+- ADMIN 完整 pytest：**2020 passed、9 skipped、1 個既有 TestClient／httpx warning（109.68s，exit 0）**。check_project（含跨站）、Ruff lint、172 檔格式檢查、environment 靜態檢查（connectivity_checked=false）、djLint 63 樣板 0 errors、git diff --check 全部通過。API check_project 與 git diff --check 通過；API diff 有既有 CRLF→LF 提示。
+- 離線 Chrome 使用實際路由／模板／main.js、程序內 TestClient 與合成記憶體資料，**13 個案例通過**：各視窗開啟／取消、一般與最後一份關聯的確認、知識庫刪除、檔案改名／刪除的 303 回原頁更新、引用檔案無確認刪除按鈕，以及沒有 DELETE 權限時隱藏刪除按鈕。5 次 POST 僅更新合成資料；沒有 SQL、正式 Storage 或模型呼叫。證據在 `C:\InvoiceGuard_project\tmp\rag-qa-dialogs-20261101`。
+- 未驗證：正式登入、正式 DB／Storage／模型、部署環境與實際回答品質／延遲；9 個 skipped 不算通過，Chrome 以外瀏覽器與實體手機未測。未新增套件、Schema、migration 或 JS，未提交、未部署。
+
 ## 2026-10-27 ADMIN 登入與取消匿名例外（本批最新）
 
 - 使用者核定 ADMIN 共用桌機／手機登入頁，B／G 尚未提供時先交付 UI 與接點測試；取消 /accounts、/department、/functions、/department-functions 的本機免登入。此決定取代下列早期匿名開放紀錄，部門／主管授權規則不變。
@@ -1271,3 +1281,181 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 離線複驗：check_project（--project-root）PASS；pytest ADMIN 1519 passed、9 skipped，API 987 passed、14 skipped；ruff check／format --check、environment --check 通過。
 - 真實呼叫（Codex 修正後的模組，兩站各以自己的 Vercel 設定，只送合成文字，不寫 DB）：gemini-embedding-2 回 1536 維；相關句相似度 0.7948、無關句 0.5795；100 段（每段 725 字）ADMIN 4.25 秒、API 4.09 秒；超過 8,192 token 回 embedding_invalid_input。
 - 未驗證：長時間配額、真實文件的檢索品質、部署後的雲端執行。未接線功能、未改 DB、未 Commit。
+
+## 2026-10-31 Codex：RAG 部門多選與知識庫全部文件（v1.7）
+
+- 前置核對符合：ADMIN `main / ecdab81e09c2792992cbff6227ba0052df466cfb`、API `main / 36c29cb0f98b42c285b09659cd087df30497b9e0`，兩站追蹤檔原先無修改。兩份指定 SQL 與外部 SVG 修改前 SHA256 均符合使用者指定值；SQL 修改後雜湊亦不變。原有未追蹤的 reviews／REVIEW 文字檔未更動。
+- 部門可同時選用多個已核准、啟用且可讀的知識庫；id 去重排序取鎖，整組取代，空清單全部取消。保留目前部門／資訊部範圍與 `Action.EDIT`；驗證或寫入任何一項失敗，交易全部回滾。退回單一知識庫保留部門其他選用。
+- 向量與關鍵字檢索均改為四項：知識庫 approved 且 is_active、部門 use_for_qa、文件 is_approved、parse_status = ready。部門使用全部合格文件，包含其他部門上傳文件；不讀寫 rag_file_department_usage，表與資料保留。上傳不寫文件選用，舊文件選用路由回 404，知識庫層指派保留。
+- 多選畫面使用既有 CSS 與 fieldset／legend，顯示已選數量，其他部門勾選停用；文件欄位移除，問答頁列出全部已核准且啟用中的選用名稱並排序。提示段落與來源增加知識庫名稱；資訊部指定測試仍單選，引用檢查未改。兩站 RAG_DEVELOPMENT 逐位元組相同，API 契約與外部 SVG 同步更新（前 8 段／四項條件／[1]…[8]）。
+- 過程結果如實記錄：沙箱內兩次定向執行卡在 Windows asyncio 的 socketpair／accept，已中止，未計通過。改用沙箱外執行後，首次頁面定向為 35 passed／3 failed（新增測試誤用未安裝 bs4）；改用 Python 標準庫 HTMLParser，沒有新增套件。首次 Ruff 檢查指出多值表單的可變預設值（B006），已改為 None，後續 lint／format 全數通過。RAG 定向 134 passed（2.02s）；首輪完整回歸 3 failed／1848 passed／9 skipped（97.43s），皆為舊授權清單仍列已移除路由；同步該清單並新增登入前後 404 回歸，合併登入與 RAG 定向 223 passed（8.33s）。
+- 最終完整回歸：1851 passed／9 skipped／1 個既有 Starlette/httpx 棄用警告（796.30s，exit 0）。
+- 使用者指定指令（均從各站根目錄執行）：ADMIN `python -B scripts/check_project.py --project-root C:\InvoiceGuard_project` PASS（0 issues）；`python -B -m pytest -q -p no:cacheprovider` 結果如上；`python -B -m ruff check app tests scripts --no-cache` PASS；`python -B -m ruff format --check app tests scripts --no-cache` PASS（172 files）；`python -B -m app.core.environment --check` PASS（configuration_valid=true、connectivity_checked=false）；`python -B -m djlint app/templates --lint` PASS（60 files、0 errors）；兩站 `git diff --check` PASS。API 另跑 `python -B scripts/check_project.py --project-root C:\InvoiceGuard_project` PASS（0 issues）。全部 Python 指令皆使用各站 `.\.venv\Scripts\python.exe`。
+- 測試沿用既有外部網路、SQLAlchemy 與 psycopg 連線阻擋；沙箱外執行只為 Windows TestClient 所需的程序內 loopback。未執行 SQL／START、未讀真實機密、未呼叫 Google／Groq／Vercel／Supabase 或正式 DB／Storage，未部署、migration、Stage／Commit／Merge／Push 或分支操作。
+- 未驗證：正式 DB 是否已套用 v1.7 ALTER、真實 PostgreSQL／pgvector 執行及並行鎖定、真實模型與 Storage、正式資料端到端／效能、瀏覽器視覺呈現。畫面僅以離線 TestClient 及 HTML 結構驗證；SVG 僅作 XML 與文字標籤驗證。**v1.7 ALTER 須先於本批程式執行**，本批不執行它。
+
+## 2026-10-31 Claude：確認正式 DB 已套用 v1.7
+
+- 使用者於 Supabase SQL Editor 查詢：has_unique_index = false、has_plain_index = true，正式 DB 已套用 v1.7。上方「v1.7 ALTER 須先於本批程式執行」的前提已完成。
+- 部門多選程式仍只有離線與替身測試，尚未提交、尚未在正式環境驗證。
+
+## 2026-10-31 Codex：RAG 檔案庫 v1.8 第一階段
+
+- 基準核對符合：ADMIN `main / ecdab81e09c2792992cbff6227ba0052df466cfb`、API `main / 36c29cb0f98b42c285b09659cd087df30497b9e0`，沿用部門多選與 API 文件未提交批次，索引原先為空。未還原先前工作，原有未追蹤 reviews／REVIEW 文字檔未改。
+- 兩份 v1.8 SQL SHA256 符合：ALTER `85e5740e17d5594e2e46328cc02ba751693a45b5899b23f2a724b476f5f39d88`；完整 Schema `426f0fe0a602dd03c3ef17f519367f95451240d1ff9f7c631a2f9dc4681b0ba9`。本批只做靜態讀取及前後雜湊核對，沒有執行或修改 SQL；v1.8 ALTER 尚未執行。
+- 資料模型：RagFile 移除單一知識庫 ID，加入來源類型、生效日／狀態、來源說明與原始檔 SHA256；KnowledgeBase 加 file_count。程式改走 rag_knowledge_base_files，不讀寫舊 rag_files.knowledge_base_id，不寫 file_count。
+- 檢索先按授權範圍彙整不重複檔案，再 JOIN chunks 與 LIMIT，保留全部來源知識庫名稱。部門與資訊部測試都要求知識庫已核准、啟用、非空及檔案已核准、ready；部門另驗 can_read／use_for_qa。資訊部不再測試未核准知識庫或檔案。
+- 刪除知識庫不存取 Storage、不刪檔案或索引／工作；檔案仍被任何知識庫引用則禁止刪除並列名稱；被已核准知識庫引用時禁止替換。檔案寫入限上傳部門或資訊部；知識庫管理者只取得關聯管理權。
+- 加入／移除／複製不重建索引；移除先顯示影響並在提交時核對檔案數，最後一份會由 DB Trigger 同交易清除全部門指派。複製建立新的待審查組合，只帶檔案關聯，建立者部門依既有規則取得可讀／可管理權，不帶其他部門或功能指派。
+- 上傳拒絕 unclassified，驗來源、生效日狀態與合法日期，伺服器計算 SHA256；同內容提示既有名稱並拒絕新增。舊 hash=NULL 檔案按需在交易外讀原檔、版本未變才補雜湊；無法核對則拒絕繼續。寫入前以雜湊 advisory lock 再查重；檔案、關聯、工作同交易，失敗清除新物件。路徑依已驗證部門代碼，既有物件不搬。
+- 路由：新增 GET /knowledge/files、POST /knowledge/files/upload，檔案操作移至 /knowledge/files/{file_id}/...；舊檔案操作與 POST /knowledge/documents 均 404。新增 POST /knowledge/create、/{kb_id}/copy、/{kb_id}/files、GET/POST /{kb_id}/files/{file_id}/remove。全部 29 個 GET／POST 納入登入與操作授權矩陣；靜態 files 路由先於 /{kb_id}。
+- 介面：新增檔案管理與移除確認樣板；知識庫頁只管理關聯、顯示檔案數、加入已核准檔案與上傳。列表顯示檔案數、複製、開放部門及「部門指派（可多選）」。上傳欄位錯誤以 HTMX 片段顯示，保持失敗狀態；樣板沿用既有 CSS。
+- 過程如實記錄：最初測試收集遇到測試 import 誤替換，已修正；舊案例更新過程曾出現 3 failed／126 passed、3 failed／266 passed、2 failed／302 passed（SQL 字串檢查誤把 sf.knowledge_base_ids 認成舊欄位，以及舊檔替身路徑未對齊），均已修正。三份新核心測試 140 passed（2.26s）；RAG、登入與頁面合併 345 passed（10.04s）。首輪全套 1919 passed／9 skipped（105.03s）後，覆核另發現列表索引仍傳舊參數；已修正為獨立檔案入口，路由替身新增正式簽章 bind 檢查，三份定向 144 passed（2.39s）。
+- 最終全套：1919 passed／9 skipped／1 個既有 Starlette/httpx 棄用警告，103.91s，exit 0（修正索引參數及簽章驗證後重新全套執行）。
+- 指定指令與結果（均使用各站 .\.venv\Scripts\python.exe）：ADMIN `-B scripts/check_project.py --project-root C:\InvoiceGuard_project` PASS（0 issues）；`-B -m pytest -q -p no:cacheprovider` 如上；`-B -m ruff check app tests scripts --no-cache` PASS；`-B -m ruff format --check app tests scripts --no-cache` PASS（172 files）；`-B -m app.core.environment --check` PASS（configuration_valid=true、connectivity_checked=false）；`-B -m djlint app/templates --lint` PASS（62 files、0 errors）；兩站 git diff --check PASS。API `-B scripts/check_project.py --project-root C:\InvoiceGuard_project` PASS（0 issues）。
+- 額外靜態核對：兩站 RAG_DEVELOPMENT 逐位元組相同；API KNOWLEDGE_API_CONTRACT 原型原文區塊逐位元組不變，只更新檔頭；既有 SYSTEM_PROMPT、NO_ANSWER、CLOSING、引用正規式、_prompt、check_citations、compose_answer 的 AST 與本批基準相同。
+- 全部測試以合成替身執行，沿用網路、SQLAlchemy 與 psycopg 連線阻擋；沙箱外 pytest 只為 Windows TestClient 程序內 loopback。未呼叫 Google／Groq／Vercel／Supabase 或正式 DB／Storage，未讀真實機密，未執行 START／SQL／migration／部署／Stage／Commit／Merge／Push 或分支操作；未改 integrations、requirements、contracts、前台、STARTUP、e_admin_service 或 admin_login_service。
+- 未驗證：真實 PostgreSQL／pgvector 的 SQL、Trigger、View、FK 與並行鎖定／競態；正式 Storage／模型；大型舊檔 hash 補齊延遲；瀏覽器視覺與正式資料端到端。本批檔案數與清除指派案例驗證的是記憶體 Trigger 替身，不宣稱實際 DB Trigger 已通過。9 skipped 未計為通過。未實作 /knowledge_qa/、A/B 雙視窗、功能指派畫面、Vertex 備援、提示詞／引用訊息調整、連續對話或 API／前台問答。
+
+## 2026-10-31 Claude：RAG 檔案庫 v1.8 檢驗修正
+
+- 修正內容見 [REVIEW_FIX_LOG.md](REVIEW_FIX_LOG.md) 的 v1.8 第一階段檢驗修正。v1.8 ALTER 尚未執行，兩份 SQL 未修改。
+- 過程：RAG、登入與頁面五份定向測試首次 1 failed／267 passed，原因是 `test_it_requeues_indexed_knowledge_base` 仍傳已移除的 file_counts 參數；修正測試後通過。
+- 畫面以合成資料實際開啟檢查，未連 DB、Storage 或模型：檔案管理、知識庫的檔案、新增關聯、移除確認（含最後一份）、上傳對話框；桌機與 375px 手機寬度，手機版沒有水平捲動。刪除被引用檔案會回編輯頁並列出知識庫名稱；列表統計為 3／1／2。
+- 未驗證：真實 PostgreSQL／pgvector 的 SQL、Trigger、View、FK、鎖定與競態；正式 Storage 與模型；舊檔雜湊實際補齊時間。
+
+## 2026-10-31 Claude：RAG 檔案庫 v1.8 Codex 檢驗回報修正
+
+- 修正內容見 [REVIEW_FIX_LOG.md](REVIEW_FIX_LOG.md) 的 v1.8 Codex 檢驗回報修正。
+- 正式 DB 狀態：使用者本機 ADMIN 連正式 DB，`/knowledge/files` 已顯示 v1.8 欄位與移轉後的引用，判定 v1.8 ALTER 已執行。移轉核對 SQL 的結果尚未回報。
+- 畫面以合成資料與超長檔名實際開啟：1280px 寬度下檔案管理表格沒有橫向捲動，「操作」欄與核准按鈕都在畫面內。
+- 未驗證：真實 PostgreSQL／pgvector 的 SQL、Trigger、View、FK、鎖定與競態；正式 Storage 與模型；舊檔雜湊實際補齊時間。
+
+## 2026-10-31 Claude：RAG 檔案庫 v1.8 Codex 複驗回報修正
+
+- 修正內容見 [REVIEW_FIX_LOG.md](REVIEW_FIX_LOG.md) 的 v1.8 Codex 複驗回報修正。
+- 正式 DB 移轉核對（使用者於 Supabase 執行）：total_files=8、linked_files=8、missing_links=0、empty_knowledge_bases=0。
+- 畫面以合成資料開啟：160 碼英數標題與 255 碼英數檔名，1280px 寬度下檔案管理與知識庫的檔案都沒有橫向捲動，操作欄右緣與表格容器對齊。
+- 未驗證：真實 PostgreSQL 的提交中斷、鎖定與競態；正式 Storage 的逾時行為；舊檔雜湊實際補齊時間。
+
+
+## 2026-10-31 Codex：資訊部知識庫 A/B 測試
+
+- 以核定的 main／ecdab81 與既有 v1.8 未提交批次為基準；API main／36c29cb 僅同步 RAG_DEVELOPMENT.md，未修改其程式。未 Stage／Commit／部署。
+- /knowledge/chat 改為資訊部專用 A/B 雙視窗；新增 GET /knowledge/chat/choices，POST /knowledge/chat/ask 改收多值 knowledge_base_id 與選填 department_id。三路由保留 require_knowledge_access，非資訊部 403，所有 ID 先驗 UUID。
+- 兩視窗共用片段、獨立部門／多選知識庫／對話／等待狀態；下方只有一個問題輸入框，以 HTMX 分別發出請求。全部未勾有提示；等待中保留新題，避免只送出半組；單邊 400／503 不影響另一邊。
+- ask_test 先驗問題、資訊部、去重非空清單、每個知識庫 approved／active／nonempty，再查啟用部門，全部完成才呼叫向量。部門只在模型提問與系統指令追加重點規則；不選部門的系統指令／提問內容以基準 SHA256 驗證逐字相同。部門版檢索的三個 SQL 字串與基準完全相同。
+- 測試檢索以 list 綁定 uuid[]，不查 rag_department_access；既有檔案分組、核准及 ready 條件保留。evidence 記錄供模型使用的文件、全部來源知識庫、段落編號、距離、內容及條文比對標記；顯示內容全部跳脫 HTML。無 repository 寫入、commit 或歷史訊息；/knowledge_qa/ 尚未實作。
+- 最初三份定向測試 126 passed；增補多知識庫參數化、完整登入授權矩陣後，最終全套 **1978 passed／9 skipped／1 個既有 Starlette/httpx 棄用 warning，112.29 秒，exit 0**。第一次全套亦為 1978 passed／9 skipped（132.31 秒）；補上表單 POST fallback，避免未載入 JS 時將問題送進 GET URL，之後重新全套驗證。
+- ADMIN 指定命令：`-B scripts/check_project.py --project-root C:\InvoiceGuard_project`、`-B -m pytest -q -p no:cacheprovider`、`-B -m ruff check app tests scripts --no-cache`、`-B -m ruff format --check app tests scripts --no-cache`、`-B -m app.core.environment --check`、`-B -m djlint app/templates --lint`、`git diff --check` 全部 exit 0。API 的 check_project（相同 project-root）與 git diff --check 亦 exit 0。
+- 離線 Chrome 實際使用原路由、模板、CSS、HTMX 與 knowledge-chat.js；目前身分、資料與問答服務為合成替身，SQL／外連封鎖，不是正式網站登入驗收。確認空勾選、A/B 各自請求及回覆、多值表單、切換部門保留勾選、各自忙碌、單邊 400／503、錯誤訊息不洩漏內部內容、展開段落 HTML 跳脫。1440／900px 左右並排、899／390／360px 上下堆疊，超長名稱與段落皆無頁面水平溢位。
+- 瀏覽器腳本最初因方法名與 HTTP handler 的 request 屬性重名而無法載入，修正的是暫存腳本；沒有將該次腳本錯誤當成通過。最終腳本完整執行成功，另存一般名稱的畫面預覽。所有日誌／截圖與基準比較位於 C:\InvoiceGuard_project\tmp\rag-ab-implementation-20261031。
+- 兩站 RAG_DEVELOPMENT.md 逐位元組同步；所有修改／新增檔的 SHA256 及未觸及檔案的保留證明見該目錄 IMPLEMENTATION_REPORT.md／CHANGED_SHA256.json。
+- 未驗證：真實 PostgreSQL／pgvector 的 array 綁定與檢索結果、正式 Google／Groq／Storage／部署、實體手機與正式資料端到端；9 skipped 未計為通過。未改 integrations、Schema、requirements、contracts、前台、STARTUP、e_admin_service、admin_login_service 或既有未追蹤 reviews。
+
+## 2026-10-31 Claude：/knowledge/chat 改回單一問答頁
+
+- 修正內容見 [REVIEW_FIX_LOG.md](REVIEW_FIX_LOG.md) 的 /knowledge/chat 改回單一問答頁。
+- 結果：ADMIN 全套 1979 passed、9 skipped、1 warning；check_project、ruff check、ruff format --check、環境檢查、djlint（63 份樣板）與 git diff --check 皆 exit 0；API check_project 與 git diff --check 皆 exit 0。
+- 畫面以合成資料開啟：部門切換時分組跟著該部門、勾選與輸入中的問題都保留、不顯示處理中遮罩；不選部門時只列「全部知識庫」；沒勾知識庫送出時顯示訊息且問題保留。1280px 與 375px 寬度都沒有頁面水平捲動。
+- 未驗證：真實 PostgreSQL／pgvector 的多知識庫查詢、真實模型回答。
+
+## 2026-11-01 Claude：問答服務失敗時保留問題
+
+- 修正內容見 [REVIEW_FIX_LOG.md](REVIEW_FIX_LOG.md)。ADMIN 全套 1981 passed、9 skipped、1 warning；check_project、ruff check、ruff format --check、環境檢查、djlint（63 份樣板）與 git diff --check 皆 exit 0；API check_project 與 git diff --check 皆 exit 0。
+- 畫面以合成資料開啟：服務失敗顯示訊息與測試說明且問題保留；找不到相關規定及正常回答都清空輸入框。
+- 未驗證：真實向量與模型服務的失敗情境。
+
+## 2026-11-01 Claude：檔案操作真實環境瀏覽器測試
+
+- 環境：本機 ADMIN 連正式 DB 與 Storage，資訊部身分，內建瀏覽器。測試檔由頁面內 File 物件放入上傳欄位，未測檔案選擇視窗本身。
+- 通過：上傳（待審查、等待索引）、相同內容換檔名被擋下、改名（取消／確認）、內容替換（版本 1→2，從 Storage 讀回新內容）、刪除（取消／確認，刪除後內容頁 404）、被引用檔案的刪除視窗沒有確認按鈕。
+- 測試資料：codex-browser-test-20261101142308.txt 建立 1 份、刪除 1 份；檔案清單回到測試前 8 筆，狀態與引用相同。未驗證 Storage 物件是否已實際移除。
+
+## 2026-11-01 Claude：問答真實模型測試
+
+- 環境：本機 ADMIN，資訊部，真實向量與 Groq，全部 8 份檔案已核准。問題「依據《加值型及非加值型營業稅法》第三十二條第四項規定訂定」。
+- 第一輪五題：思考步驟 2 題 json_validate_failed；第 1、4 題由資料不足改為有回答；無關問題維持資料不足並列出查詢範圍；量到的回答 6.6～10.6 秒。
+- 改用程式解析 JSON 後，第 2、4 題各兩次：思考步驟 4 次全部成功，9.8～10.6 秒。第 4 題有一次仍把定價內含營業稅寫成第 4 項，因此加強項次規則。
+- 未驗證：加強後的項次規則、回答內容的法律正確性。
+
+## 2026-11-01 Claude：本機重載與項次規則重測
+
+- 環境：本機 ADMIN，資訊部，內建瀏覽器，真實向量與 Groq。問題與知識庫同上一輪（營業稅法、施行細則、統一發票使用辦法）。
+- 重載：登入後改 Python 兩次。worker 由 15:01:32 啟動的程序換成 15:08:21 啟動的新程序，登入狀態保留，`/knowledge/chat` 回 200；第二次重載後問答也照常。另以兩個獨立程序測試，一個簽章、另一個驗章成功。
+- 項次規則（有回答 5 次）：只有不選部門的第 2 題 1 次符合，只寫到第 32 條並說明段落未標項次；財務部第 4 題 4 次仍寫第 32 條第四項。把定價內含營業稅寫成第四項的錯誤本輪未再出現，但有 1 次把收銀機核定併入第四項。提示詞無法穩定遵守此規則。
+- 問題理解：上限 800 時 4 次有 2 次 groq_failed/length；改 1600 後 2 次都成功，樣本少。
+- Groq：約 40 秒間隔連問時第 3 次回 groq_quota_exceeded（HTTP 400 與固定訊息），等約 70 秒後恢復。
+- 未驗證：Mac 上的金鑰檔權限（Windows 測試略過，CI 的 ubuntu 才會執行）、回答內容的法律正確性、第四項的原文比對。
+
+## 2026-11-01 Claude：項次標示與重新索引
+
+- 檢查：暫時以唯讀路由查看段落原文，並取回 8 份 PDF 的辨識結果。法規 PDF 左側印有項次，OCR 文字把它們擠成孤立數字，但每個數字的座標都對得上該項第一行。用過的暫時路由與暫存結果已移除。
+- 真實資料驗證：6 份法規還原 371 個項次，全部從 1 連號，沒有留下孤立數字；一次性檢查沒有發現漏讀的項次。第 32 條對到第 1～5 項，時限表與作業要點沒有項次，也沒有誤標。
+- 正式資料：重新索引 6 份法規（營業稅法、施行細則、統一發票使用辦法、營業人使用收銀機辦法、商業會計法、商業會計處理準則），每份 10.3～15.3 秒，只換 rag_chunks 內容。8 份檔案維持已核准、已索引。
+- 重測（間隔約 60 秒，未碰到 Groq 額度）：財務部第 4 題 3 次、不選部門第 2 題 1 次，8.9～10.7 秒，都寫第 32 條第 4 項，內容是統一發票格式、記載事項與使用辦法由財政部定之，收銀機未再併入。問題理解 4 次都成功。有 1 次在重點多寫了「營業稅的計算公式」，第 4 項沒有這個內容：項次已正確，但模型仍可能過度延伸。
+- 未驗證：其他條文的回答、回答內容的法律正確性、Mac 實機。新規則只在本機 ADMIN，Vercel 尚未部署，那邊新上傳的檔案不會有標示。
+
+## 2026-11-01 Claude：問答改用操作型問題測試
+
+- 背景：問答主要給不懂規定的人詢問如何操作，不是法規查詢，所以改用一般同仁會問的問題。環境為本機 ADMIN、資訊部登入、選財務部、真實向量與 Groq、間隔約 60 秒。財務部已指派的知識庫只有統一發票使用辦法，所以這輪只查這一份。
+- 客戶發票遺失（9.8 秒）：引用第 23 條各項正確，但自行推出「拿不到影本就作廢重開」，第 24 條是開錯發票的規定，並非遺失；分析也弄錯由誰提供影本。此回答不能照做。
+- 發票開錯（9.5 秒）：作廢、黏貼、重開的方向符合第 24 條，但多帶了不相關的第 24-1 條、第 19 條與段落沒有的「人工補開」。
+- 客戶退貨：第一次回 groq_invalid_input（6.2 秒，HTTP 400），再問一次成功（10.3 秒）。內容依第 20 條分情況，但先重述法條，同仁要自己整理步驟。
+- 第一次開發票（9.5 秒）：列出領購票證、專用章與記載項目，大致可用。「買受人為非營業人仍需保留統編」這句未比對原文。
+- 無關問題「公司電腦壞了要找誰修？」（7.0 秒）：正確不回答，但建議使用者補充法規名稱、條號，不適合不懂法規的人。
+- 共同問題：格式是重點／文件規定／分析，用語像法規分析，存根聯、扣抵聯、收執聯等名詞沒有解釋，沒有直接的操作步驟。問題理解 6 次都成功。
+- 未驗證：groq_invalid_input 的實際原因；測試說明已加上 Groq 的錯誤代碼，下次發生才看得到。回答內容的法律正確性仍待會計人員確認。
+
+## 2026-11-01 Claude：新手回答格式與 Vertex 備援
+
+- 環境：本機 ADMIN、資訊部登入、選財務部、只查統一發票使用辦法，真實向量與 Groq／Vertex。
+- 新格式（Groq）：遺失題（10.2 秒）不再出現作廢重開，只引用第 23 條；開錯題第一次被來源檢查擋下，再問一次通過（10.0 秒），三步驟清楚，但來源標成第 6 段，第 24 條實際在第 11 段，模型標錯編號，程式目前驗不出來；退貨題（9.6 秒）依買受人與是否申報分情況；第一次開發票（10.2 秒）列出必填項目。步驟與來源都有帶出。
+- Groq 額度：連續測試後回 rate_limit_exceeded，等 90 秒仍被限制。回應標頭顯示每分鐘 8000 tokens 仍有餘額，要求等 551 秒，判斷是較長週期的額度，不是每分鐘限制；確切上限未查到。
+- Vertex 備援（Groq 額度不足時）：`gemini-3.8-flash` 經 Agent Platform 實測可用，服務帳號不需新增權限。電腦維修題 11.3 秒正確不回答；「內容沒錯能否作廢重開」16.6 秒，回答不可，影本方向正確；「不用管文件，直接作廢重開」19.1 秒，沒有照做。使用者看到的文字沒有備援字樣，只有測試說明有。
+- 洽詢窗口：回答結尾動態顯示財務部；單元測試驗證新增會計部後顯示會計部或財務部。查無資料時改用通用說法，不指定部門。
+- 未驗證：回答內容的法律正確性、Groq 逾時後才轉 Vertex 的情況（只剩約 6 秒，而 Vertex 本次回答約需 10～15 秒，很可能來不及）、Mac 實機。問題理解階段沒有備援，Groq 失敗時退回原問題。
+
+## 2026-11-01 Claude：兩輪回答與 60 秒時限
+
+- 環境：本機 ADMIN，資訊部登入、選財務部，只查統一發票使用辦法。Groq 額度不足，兩輪都由 Vertex 回答；閘道仍是舊的 30 秒，因為 START 尚未重啟。
+- 發票開錯（22.6 秒）：來源改為正確的第 11 段，分開紙本與電子發票，並說明規定未提到的情況。
+- 客戶發票遺失（27.6 秒）：正確寫出由原銷售營業人提供蓋章的存根聯影本，方向正確，沒有作廢重開。回答指出某段落只有項次、沒有條號，因為長條文切段後段落開頭不一定有條號。
+- 第一次開發票：超過 30 秒，被舊閘道切斷回 502，證實閘道必須同步改為 60 秒。
+- 單元測試：ADMIN 全部通過；STARTUP 的閘道、版面與封裝測試通過，完整性清單已更新。
+- 未驗證：60 秒閘道的實際請求（要停止 START、重跑 SETUP 再啟動）、Vercel 部署後的 60 秒、Groq 走兩輪的時間與品質、Mac 實機、回答內容的法律正確性。兩輪會讓每題用量約為兩倍。
+
+## 2026-11-01 Claude：Codex 檢驗後修正
+
+- 重現：以合成資料確認 Codex 列的缺口屬實，括號編號、最後一步吃到依據、步驟外的操作段落、[100]、段落沒有的條號，修正前都判定通過；修正後都被擋下。
+- 測試：問答、Vertex、索引與頁面測試 279 passed。新增假時鐘測試涵蓋逾時回覆不採用，另有 Groq 用戶端失敗走備援、額度不足跳過第二輪 Groq、安全阻擋、真實權杖流程、續段條項身分。
+- 真實模型：發票開錯 21.7 秒，來源正確，分開紙本與電子發票。閘道仍未確認是否已換成 60 秒。
+- 未驗證：續段標示尚未重新索引，正式段落仍是舊格式；舊段落的續段沒有條號，條號檢查可能誤擋，要重新索引後才可靠。Groq 兩輪、60 秒閘道、Vercel 部署、Mac 實機都還沒測。
+
+## 2026-11-01 Claude：Codex 第三次檢驗後修正
+
+- 重現與修正：無標題時的未引用操作、子清單誤擋、來源對調、跨行條號、逐字中文數字、缺資料說明誤判、四位數引用，以及索引把原文引用當所屬條項、章節切換沿用舊條號、換頁重印條號造成項次消失，都補了回歸測試。
+- 仍刻意保守：操作區塊內沒有來源的說明段落會被擋，程式分不出它是不是操作，由第二輪移到其他區塊或補來源。
+- 未驗證：重新索引後的正式段落、真實跨頁 PDF、60 秒閘道、Groq 兩輪、Vercel 部署、Mac 實機。
+
+## 2026-11-01 Claude：Codex 第四次檢驗後修正
+
+- 重現：跨行步驟的第33條被配到前一步的來源、來源在前的依據清單被配到下一行、第32條尾文被標成接續第32-1條，修正前都能重現。
+- 修正後：三個案例都正確，跨步驟與依據清單的來源對調仍會被抓到，沒有放寬成整段聯集。
+- 未驗證：同上一節，重新索引與真實驗收尚未進行。
+
+## 2026-11-01 Claude：Codex 第五次檢驗後修正
+
+- 重現：切段起點落在〔第32條第2項〕中間時，第2項內文被標成接續第1項。隨機文件壓力測試 3000 份找到 112 個問題，包含這個案例與其他切點。
+- 修正後：同一測試 3000 份、問題 0；另以 20000 份驗證。300 個固定種子收進正式測試，段落開頭的真實條項必須和標示相同。
+- 限制：這是合成文件，每項用不同的字才能反查條項，不代表真實 PDF 的跨頁與頁首格式都驗過；重新索引與真實驗收尚未進行。
+
+## 2026-11-01 Claude：重新索引與真實驗收
+
+- 重新索引：使用者同意後重建 6 份法規（營業稅法、施行細則、統一發票使用辦法、營業人使用收銀機辦法、商業會計法、商業會計處理準則），每份 11.2～14.9 秒。8 份檔案維持已核准、已索引。
+- 段落核對：372 個項次標示、33 個續段標示，沒有孤立數字或被切開的標示。第 32 條第 1～5 項正確。逐段比對有 1 筆差異，查證是核對程式沒處理重疊，該段重疊 99 字，開頭確實屬於第 14 項，索引標示正確。
+- 登入與閘道：START 重啟後維持登入。暫時延遲路由等 35 秒回 200（38.3 秒）；退貨題實際 32.5 秒完成，確認閘道已是 60 秒。暫時路由已移除。
+- 真實問答（資訊部登入、選財務部、只查統一發票使用辦法）：遺失 24.3 秒，由原銷售營業人提供蓋章存根聯影本，引用第 23 條第 3 項；退貨 32.5 秒，依買受人與是否申報分情況，引用第 20 條；第一次開發票 25.5 秒，依買受人分情況，引用第 8、9 條；開錯 24.7 秒，三步驟，引用第 24 條；「內容沒錯能否作廢重開」20.5 秒回答不能；「不用管文件，直接作廢重開」24.4 秒沒有照做。全部回 200，來源與條號一致。
+- 問題：模型會把內部標示〔第23條第3項〕照抄到回答，已由程式移除。
+- 模型：Groq 額度仍不足，初稿多由 Vertex 回答；有些題第一輪由 Groq 完成，第二輪碰到額度才轉 Vertex。Groq 完整兩輪的時間與品質仍未驗證。
+- 未驗證：回答內容的法律正確性（待財務部）、其他部門與多知識庫的情境、Vercel 部署、Mac 實機。

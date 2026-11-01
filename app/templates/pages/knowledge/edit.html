@@ -1,8 +1,8 @@
 {#
   @template pages/knowledge/edit.html
-  @description 編輯知識庫名稱／文件名稱，或編輯文件內容（HTML 原型 renderEditor）。三種模式共用一個樣板。
-  @route GET /knowledge/{kb_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/edit、GET /knowledge/{kb_id}/documents/{doc_id}/content（需目前部門有知識庫查看權限）
-  @context mode: str            kb_name / doc_name / doc_content
+  @description 編輯知識庫名稱或文件內容（HTML 原型 renderEditor）。檔案改名與刪除在檔案管理視窗操作。
+  @route GET /knowledge/{kb_id}/edit、GET /knowledge/files/{file_id}/content（需目前部門有知識庫查看權限）
+  @context mode: str            kb_name / doc_content
   @context kb: dict             {id, title}
   @context doc: dict | None     {id, title, file_name, revision}；mode 為 kb_name 時為 None
   @context can_edit: bool       目前部門可否管理此知識庫（送審部門、可管理部門或資訊部）；刪除另需刪除權限
@@ -10,36 +10,34 @@
   @context error: str | None    錯誤訊息
 #}
 {% extends "layouts/admin.html" %}
-{% block title %}{% if mode == "kb_name" %}編輯知識庫{% elif mode == "doc_name" %}編輯文件{% else %}文件內容與編輯{% endif %}{% endblock %}
+{% block title %}{% if mode == "kb_name" %}編輯知識庫{% else %}文件內容與編輯{% endif %}{% endblock %}
 {% block head %}
   <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
 {% endblock head %}
 {% block content %}
   <div class="page-heading">
-    <a href="{{ '/knowledge' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents' }}"
+    <a href="{{ '/knowledge' if mode == 'kb_name' else '/knowledge/files' }}"
        class="btn btn--secondary btn--small">← 返回{{ "知識庫清單" if mode == "kb_name" else "文件清單" }}</a>
-    <h2>{% if mode == "kb_name" %}編輯知識庫{% elif mode == "doc_name" %}編輯文件{% else %}文件內容與編輯{% endif %}</h2>
+    <h2>{% if mode == "kb_name" %}編輯知識庫{% else %}文件內容與編輯{% endif %}</h2>
     <p class="muted small-text">{{ kb.title if mode == "kb_name" else doc.title }}</p>
   </div>
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   {% if not can_edit %}
-    <p class="alert alert--warning">目前部門不能管理這個知識庫；請由送審部門或資訊部修改。</p>
+    <p class="alert alert--warning">目前部門沒有修改權限；檔案限上傳部門或資訊部修改，知識庫限管理部門或資訊部修改。</p>
   {% endif %}
   {% if mode == "doc_content" %}
-    <p class="alert alert--warning">內容變更後會重設為未核准並重新建立索引。TXT／Markdown 可直接改文字；PDF／DOCX 可替換原檔。</p>
+    <p class="alert alert--warning">被已核准知識庫引用時不能替換，請上傳新檔案。其餘內容變更後重設為待審查並重新建立索引。TXT／Markdown 可直接改文字；PDF／DOCX 可替換原檔。</p>
   {% endif %}
   <section class="card">
-    {% if mode != "doc_content" %}
+    {% if mode == "kb_name" %}
       {# ---- 改名／刪除 ---- #}
-      <form method="post"
-            action="{{ '/knowledge/' ~ kb.id ~ '/rename' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents/' ~ doc.id ~ '/rename' }}"
-            class="form">
+      <form method="post" action="/knowledge/{{ kb.id }}/rename" class="form">
         <div class="form-field">
-          <label for="title">{{ "知識庫名稱" if mode == "kb_name" else "文件名稱" }}</label>
+          <label for="title">知識庫名稱</label>
           <input id="title"
                  name="title"
                  maxlength="160"
-                 value="{{ kb.title if mode == 'kb_name' else doc.title }}"
+                 value="{{ kb.title }}"
                  {% if not can_edit %}disabled{% endif %}
                  required>
         </div>
@@ -49,24 +47,18 @@
                   {% if not can_edit %}disabled{% endif %}>儲存名稱</button>
         </div>
       </form>
-      {% if can_edit %}
+      {% if can_edit and request.state.knowledge_can_delete | default(false) %}
         <form method="post"
-              action="{{ '/knowledge/' ~ kb.id ~ '/delete' if mode == 'kb_name' else '/knowledge/' ~ kb.id ~ '/documents/' ~ doc.id ~ '/delete' }}"
+              action="/knowledge/{{ kb.id }}/delete"
               data-confirm="刪除後無法復原，確定要刪除嗎？">
-          <button type="submit" class="btn btn--danger">{{ "刪除知識庫" if mode == "kb_name" else "刪除文件" }}</button>
+          <button type="submit" class="btn btn--danger">刪除知識庫</button>
         </form>
       {% endif %}
-      <p class="muted small-text">
-        {% if mode == "kb_name" %}
-          重新命名影響所有部門；刪除會移除知識庫、部門配置及其中的文件。
-        {% else %}
-          刪除會移除此文件與其在本知識庫中的部門選用設定。
-        {% endif %}
-      </p>
+      <p class="muted small-text">重新命名影響所有部門；刪除只移除知識庫、部門配置與關聯，保留共用檔案及索引。</p>
     {% else %}
       {# ---- 內容 ---- #}
       <form method="post"
-            action="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/content"
+            action="/knowledge/files/{{ doc.id }}/content"
             enctype="multipart/form-data"
             class="form"
             data-busy="正在儲存內容…">
@@ -91,7 +83,7 @@
         </div>
         <div class="toolbar__actions">
           {% if can_edit %}<button type="submit" class="btn btn--success">儲存內容</button>{% endif %}
-          <a href="/knowledge/{{ kb.id }}/documents/{{ doc.id }}/download"
+          <a href="/knowledge/files/{{ doc.id }}/download"
              class="btn btn--secondary">下載原始文件</a>
         </div>
       </form>

@@ -26,12 +26,12 @@ from app.schemas.e_admin import Action, DeniedError, Target
 from app.schemas.rag import (
     APPROVAL_APPROVED,
     APPROVAL_LABELS,
+    EFFECTIVE_DATE_LABELS,
     ERROR_LABELS,
     JOB_FAILED,
-    PARSE_FAILED,
     PARSE_LABELS,
-    PARSE_READY,
     PARSE_UPLOADED,
+    SOURCE_TYPE_LABELS,
     TEXT_EDITABLE_EXTENSIONS,
     DepartmentAccess,
     DepartmentOption,
@@ -69,6 +69,11 @@ def require_knowledge_access(request: Request, module: Module) -> None:
     departments = module.departments(identity)
     menu = module.sidebar_menu(identity)
     is_it_workspace = _is_it_department(departments, identity.selected_department_id)
+    try:
+        module.check(identity, KNOWLEDGE, Action.DELETE, Target(identity.selected_department_id))
+        can_delete = True
+    except DeniedError:
+        can_delete = False
     # 所有驗權與顯示資料都成功取得後，才一次發佈本次請求的登入狀態。
     request.state.e_configuration_authenticated = True
     request.state.e_configuration_menu = menu
@@ -76,6 +81,7 @@ def require_knowledge_access(request: Request, module: Module) -> None:
     request.state.header_selected_department_id = identity.selected_department_id
     request.state.knowledge_identity = identity
     request.state.is_it_workspace = is_it_workspace
+    request.state.knowledge_can_delete = can_delete
 
 
 router = APIRouter(
@@ -178,7 +184,7 @@ def _qa_choices(
     departments: Sequence[DepartmentOption],
     actor: RagActor,
 ) -> list[dict[str, Any]]:
-    """每個部門可選用問答的知識庫（已核准、啟用中、已指派）與目前選用。"""
+    """每個部門可選用問答的知識庫（已核准、啟用、非空且已開放）與目前選用。"""
     choices = []
     for dept in departments:
         mine = [r for r in rows if r.department_id == dept.department_id]
@@ -188,9 +194,11 @@ def _qa_choices(
             for kb in kbs
             if kb.approval_status == APPROVAL_APPROVED
             and kb.is_active
+            and kb.file_count >= 1
             and kb.knowledge_base_id in readable
         ]
-        current = next((r.knowledge_base_id for r in mine if r.use_for_qa), "")
+        selected = {r.knowledge_base_id for r in mine if r.use_for_qa}
+        current = [option["id"] for option in options if option["id"] in selected]
         choices.append(
             {
                 "id": dept.department_id,
@@ -256,19 +264,19 @@ def _render_knowledge_list(
                 "badges": _kb_badges(kb, mine, departments, actor),
                 "toggle_url": f"/knowledge/{kb.knowledge_base_id}/toggle-dept",
                 "approval_status": kb.approval_status,
-                "approval_label": APPROVAL_LABELS.get(kb.approval_status, "待審核"),
+                "approval_label": APPROVAL_LABELS.get(kb.approval_status, "待審查"),
                 "review_comment": kb.review_comment,
                 "qa_department_names": [
                     _department_name(departments, r.department_id) for r in mine if r.use_for_qa
                 ],
                 "can_manage": can_manage_knowledge_base(kb, mine, actor),
                 "to_index": len(overview.files_to_index.get(kb.knowledge_base_id, [])),
-                "file_count": overview.file_counts.get(kb.knowledge_base_id, 0),
+                "file_count": kb.file_count,
             }
         )
 
-    # 至少一個部門已指派即計為在使用中；沒有任何部門指派計為未使用
-    used = {r.knowledge_base_id for r in rows if r.can_read}
+    # 至少一個部門已指派（use_for_qa）即計為在使用中；只開放未指派不算使用
+    used = {r.knowledge_base_id for r in rows if r.use_for_qa}
     active_count = sum(1 for k in kbs if k.knowledge_base_id in used)
     counts = {
         "total": len(kbs),
@@ -302,6 +310,305 @@ def _list_error(request: Request, error: RagRuleError) -> HTMLResponse:
 
 
 # ---- 知識庫審核與部門選用 ----
+
+
+# ---- 獨立檔案庫（必須先於 /{kb_id} 路由）----
+
+
+def _load_doc(file_id: str) -> RagFile:
+    try:
+        return rag_service.load_file(file_id)
+    except RagRuleError as error:
+        raise HTTPException(status_code=404, detail=error.message) from None
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+
+
+def _upload_error(error: RagRuleError) -> HTMLResponse:
+    """上傳對話框以 HTMX 顯示片段；其他檔案操作是一般表單，回完整頁面。"""
+    not_found = _not_found(error)
+    if not_found:
+        raise not_found
+    return HTMLResponse(
+        f'<p class="alert alert--danger">{escape(error.message)}</p>', status_code=400
+    )
+
+
+def _library_error(request: Request, error: RagRuleError) -> HTMLResponse:
+    not_found = _not_found(error)
+    if not_found:
+        raise not_found
+    return _render_file_library(request, error=error.message, status_code=400)
+
+
+def _file_content_error(request: Request, file_id: str, error: RagRuleError) -> HTMLResponse:
+    not_found = _not_found(error)
+    if not_found:
+        raise not_found
+    return _render_file_content(request, file_id, error=error.message, status_code=400)
+
+
+def _render_file_library(
+    request: Request,
+    q: str = "",
+    *,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    try:
+        view = rag_service.load_file_library()
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    departments = _departments()
+    actor = _viewer(request)
+    rows = []
+    for f in view.files:
+        if (
+            q.strip()
+            and q.strip().casefold() not in (f.title + " " + (f.original_filename or "")).casefold()
+        ):
+            continue
+        rows.append(
+            {
+                "file": f,
+                "source_label": SOURCE_TYPE_LABELS.get(f.source_type, "未分類"),
+                "date_label": f.effective_date.isoformat()
+                if f.effective_date
+                else EFFECTIVE_DATE_LABELS.get(f.effective_date_status, "未知"),
+                "parse_label": PARSE_LABELS.get(f.parse_status, "等待索引"),
+                "department": _department_name(departments, f.owner_department_id or ""),
+                "references": view.references.get(f.rag_file_id, ()),
+                "can_edit": rag_service.can_manage_file(f, actor),
+                "index_note": _index_note(f, view),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "pages/knowledge/files.html",
+        {
+            "rows": rows,
+            "q": q,
+            "is_it_reviewer": actor.is_it,
+            "current_department_name": _department_name(departments, actor.department_id),
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+@router.get("/files", response_class=HTMLResponse)
+def file_library(request: Request, q: Annotated[str, Query()] = "") -> HTMLResponse:
+    """全部門檔案清單與搜尋，含待審查檔案。"""
+    return _render_file_library(request, q)
+
+
+@router.post("/files/upload", response_class=HTMLResponse)
+async def upload_documents(
+    request: Request,
+    module: Module,
+    files: Annotated[list[UploadFile], File()],
+    source_type: Annotated[str, Form()],
+    effective_date_status: Annotated[str, Form()],
+    effective_date: Annotated[str | None, Form()] = None,
+    source_note: Annotated[str | None, Form()] = None,
+    knowledge_base_id: Annotated[str | None, Form()] = None,
+    title: Annotated[str | None, Form()] = None,
+) -> HTMLResponse:
+    """上傳獨立檔案；可同交易加入指定知識庫，上傳部門不接受表單自報。"""
+    actor = _authorize(request, module, Action.CREATE)
+    named = [f for f in files if f.filename]
+    if len(named) != 1:
+        return HTMLResponse(
+            '<p class="alert alert--danger">一次上傳一份文件，請逐份上傳。</p>', status_code=400
+        )
+    item = UploadItem(
+        named[0].filename or "",
+        await named[0].read(),
+        title,
+        source_type,
+        effective_date_status,
+        effective_date,
+        source_note,
+    )
+    try:
+        results = rag_service.upload_documents(
+            _uuid(knowledge_base_id) if knowledge_base_id else None, [item], actor
+        )
+    except RagRuleError as error:
+        return _upload_error(error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    result = _upload_result([(o.ok, f"{o.filename}：{o.message}") for o in results])
+    if not all(o.ok for o in results):
+        result.status_code = 400
+    return result
+
+
+def _extension(rag_file: RagFile) -> str:
+    return (rag_file.original_filename or "").rsplit(".", 1)[-1].lower()
+
+
+def _render_file_content(
+    request: Request,
+    file_id: str,
+    *,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    rag_file = _load_doc(file_id)
+    editable = _extension(rag_file) in TEXT_EDITABLE_EXTENSIONS
+    text = None
+    if editable:
+        try:
+            _file, raw = rag_service.read_file_content(file_id)
+            text = raw.decode("utf-8-sig")
+        except (UnicodeDecodeError, RagUnavailableError):
+            editable = False
+    content = {"text": text, "text_editable": editable, "preview_url": None}
+    return _edit_page(
+        request,
+        mode="doc_content",
+        kb={},
+        doc=_doc_view(rag_file),
+        can_edit=rag_service.can_manage_file(rag_file, _viewer(request)),
+        content=content,
+        error=error,
+        status_code=status_code,
+    )
+
+
+@router.post("/files/{file_id}/rename", response_model=None)
+def rename_document(
+    request: Request, module: Module, file_id: str, title: Annotated[str, Form()]
+) -> Response:
+    """上傳部門或資訊部修改檔案名稱。"""
+    actor = _authorize(request, module, Action.EDIT)
+    file_id = _uuid(file_id)
+    try:
+        rag_service.rename_file(file_id, title, actor)
+    except RagRuleError as error:
+        return _library_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge/files", status_code=303)
+
+
+@router.post("/files/{file_id}/delete", response_model=None)
+def delete_document(request: Request, module: Module, file_id: str) -> Response:
+    """無任何引用時才刪檔案；不符合時顯示引用名稱。"""
+    actor = _authorize(request, module, Action.DELETE)
+    file_id = _uuid(file_id)
+    try:
+        rag_service.delete_file(file_id, actor)
+    except RagRuleError as error:
+        return _library_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge/files", status_code=303)
+
+
+@router.get("/files/{file_id}/content", response_class=HTMLResponse)
+def document_content_page(request: Request, file_id: str) -> HTMLResponse:
+    """檢視原檔與編輯文字。"""
+    return _render_file_content(request, _uuid(file_id))
+
+
+@router.post("/files/{file_id}/content", response_model=None)
+async def update_document_content(
+    request: Request,
+    module: Module,
+    file_id: str,
+    text: Annotated[str | None, Form()] = None,
+    file: Annotated[UploadFile | None, File()] = None,
+) -> Response:
+    """替換檔案內容；已核准知識庫引用時由服務拒絕。"""
+    actor = _authorize(request, module, Action.EDIT)
+    file_id = _uuid(file_id)
+    current = _load_doc(file_id)
+    if file is not None and file.filename:
+        filename, raw = file.filename, await file.read()
+    elif text is not None and _extension(current) in TEXT_EDITABLE_EXTENSIONS:
+        filename, raw = current.original_filename or "", text.encode("utf-8")
+    else:
+        return _render_file_content(
+            request,
+            file_id,
+            error="請修改文字或選擇替換檔案",
+            status_code=400,
+        )
+    try:
+        rag_service.replace_file_content(file_id, filename, raw, actor)
+    except RagRuleError as error:
+        return _file_content_error(request, file_id, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse(f"/knowledge/files/{file_id}/content", status_code=303)
+
+
+@router.get("/files/{file_id}/download")
+def download_document(file_id: str) -> Response:
+    """依資料表記錄的原路徑下載檔案。"""
+    try:
+        rag_file, raw = rag_service.read_file_content(_uuid(file_id))
+    except RagRuleError as error:
+        raise HTTPException(status_code=404, detail=error.message) from None
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    filename = quote(rag_file.original_filename or "document")
+    return Response(
+        content=raw,
+        media_type=rag_file.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.post("/files/{file_id}/status", response_model=None)
+def update_document_status(
+    request: Request, module: Module, file_id: str, status: Annotated[str, Form()]
+) -> Response:
+    """資訊部核准或暫停獨立檔案。"""
+    actor = _authorize_review(request, module)
+    file_id = _uuid(file_id)
+    try:
+        if status == "active":
+            rag_service.approve_file(file_id, UUID(actor.user_id), True)
+        elif status == "hold":
+            rag_service.suspend_file(file_id, True)
+        else:
+            raise RagRuleError("BAD_STATUS", "未知的審核操作")
+    except RagRuleError as error:
+        return _library_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge/files", status_code=303)
+
+
+@router.post("/files/{file_id}/index", response_model=None)
+def index_document(request: Request, module: Module, file_id: str) -> Response:
+    """資訊部建立檔案索引；同一檔案供所有關聯知識庫共用。"""
+    actor = _authorize_review(request, module)
+    try:
+        rag_service.index_document(_uuid(file_id), actor)
+    except RagRuleError as error:
+        return _library_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse("/knowledge/files", status_code=303)
+
+
+@router.post("/create", response_model=None)
+def create_knowledge_base(
+    request: Request, module: Module, title: Annotated[str, Form()]
+) -> Response:
+    """建立待審查空知識庫，之後由檔案庫選檔。"""
+    actor = _authorize(request, module, Action.CREATE)
+    try:
+        kb = rag_service.create_knowledge_base(title, actor)
+    except RagRuleError as error:
+        return _list_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse(f"/knowledge/{kb.knowledge_base_id}/documents", status_code=303)
 
 
 @router.post("/{kb_id}/review/approve", response_model=None)
@@ -354,16 +661,14 @@ def set_department_qa_source(
     request: Request,
     module: Module,
     department_id: Annotated[str, Form()],
-    knowledge_base_id: Annotated[str, Form()] = "",
+    knowledge_base_id: Annotated[list[str] | None, Form()] = None,
 ) -> Response:
-    """設定部門問答選用的知識庫（每個部門一個；空白為取消選用）；只能設定目前部門，資訊部除外。"""
+    """整組設定部門問答知識庫；未勾選全部取消，只能設定目前部門，資訊部除外。"""
     actor = _authorize(request, module, Action.EDIT)
     department_id = _uuid(department_id)
+    selected_ids = [_uuid(value) for value in knowledge_base_id or ()]
     try:
-        if knowledge_base_id:
-            rag_service.set_qa_source(_uuid(knowledge_base_id), department_id, actor)
-        else:
-            rag_service.clear_qa_source(department_id, actor)
+        rag_service.set_qa_sources(selected_ids, department_id, actor)
     except RagRuleError as error:
         return _list_error(request, error)
     except RagUnavailableError as error:
@@ -379,7 +684,7 @@ def toggle_kb_department(
     department_id: Annotated[str, Form()],
     enable: Annotated[str, Form()],
 ) -> HTMLResponse:
-    """切換知識庫的部門指派（HTMX 片段替換）。"""
+    """切換知識庫的開放部門（HTMX 片段替換）。"""
     actor = _authorize(request, module, Action.EDIT)
     kb_id = _uuid(kb_id)
     try:
@@ -410,35 +715,9 @@ def toggle_kb_department(
 # ---- 文件清單 ----
 
 
-def _doc_badges(
-    kb: KnowledgeBase,
-    rag_file: RagFile,
-    view: rag_service.DocumentsView,
-    departments: Sequence[DepartmentOption],
-    actor: RagActor,
-) -> list[dict[str, Any]]:
-    # 只有已指派此知識庫的部門才會列在文件的使用部門中
-    assigned = {r.department_id for r in view.access_rows if r.can_read}
-    using = {
-        u.department_id
-        for u in view.usage_rows
-        if u.rag_file_id == rag_file.rag_file_id and u.use_document
-    }
-    manager = can_manage_knowledge_base(kb, view.access_rows, actor)
-    return [
-        {
-            "id": d.department_id,
-            "name": d.department_name,
-            "state": "on" if d.department_id in using else "off",
-            "can_toggle": manager or d.department_id == actor.department_id,
-            "owner": d.department_id == rag_file.owner_department_id,
-        }
-        for d in departments
-        if d.department_id in assigned
-    ]
-
-
-def _index_note(rag_file: RagFile, view: rag_service.DocumentsView) -> str | None:
+def _index_note(
+    rag_file: RagFile, view: rag_service.DocumentsView | rag_service.FileLibrary
+) -> str | None:
     """最近一次索引失敗或等待重試的原因（固定代碼轉中文）。"""
     job = view.latest_jobs.get(rag_file.rag_file_id)
     if job is None or not job.error_message:
@@ -455,7 +734,7 @@ def document_list(
     q: Annotated[str, Query()] = "",
     approval: Annotated[str, Query()] = "all",
 ) -> HTMLResponse:
-    """知識庫文件清單：統計、搜尋、核准篩選、文件部門選用、索引、核准／暫停。"""
+    """知識庫的檔案：統計、搜尋、核准篩選、加入與移除關聯。"""
     return _render_document_list(request, _uuid(kb_id), q=q, approval=approval)
 
 
@@ -498,14 +777,8 @@ def _render_document_list(
             "title": f.title,
             "file_name": f.original_filename or "",
             "status": "active" if f.is_approved else "hold",
-            "processing_status": f.parse_status,
             "processing_label": PARSE_LABELS.get(f.parse_status, "等待索引"),
             "index_note": _index_note(f, view),
-            "can_approve": f.parse_status == PARSE_READY,
-            "can_index": actor.is_it and f.parse_status in {PARSE_UPLOADED, PARSE_FAILED},
-            "created_at": f.created_at,
-            "badges": _doc_badges(kb, f, view, departments, actor),
-            "toggle_url": f"/knowledge/{kb_id}/documents/{f.rag_file_id}/toggle-dept",
         }
         for f in files
     ]
@@ -518,6 +791,7 @@ def _render_document_list(
     kb_view = {
         "id": kb_id,
         "title": kb.knowledge_name,
+        "file_count": kb.file_count,
         "badges": _kb_badges(kb, view.access_rows, departments, actor),
         "toggle_url": f"/knowledge/{kb_id}/toggle-dept",
     }
@@ -526,14 +800,17 @@ def _render_document_list(
         "pages/knowledge/documents.html",
         {
             "kb": kb_view,
-            "departments": _department_views(departments),
             "current_department_name": _department_name(departments, actor.department_id),
             "counts": counts,
             "rows": rows,
             "q": q,
             "approval": approval,
-            "is_it_reviewer": actor.is_it,
             "can_manage": manager,
+            "available_files": [
+                f
+                for f in view.available_files
+                if f.rag_file_id not in {x.rag_file_id for x in view.files}
+            ],
             "error": error,
         },
         status_code=status_code,
@@ -547,69 +824,6 @@ def _documents_error(request: Request, kb_id: str, error: RagRuleError) -> HTMLR
     return _render_document_list(request, kb_id, error=error.message, status_code=400)
 
 
-@router.post("/{kb_id}/documents/{doc_id}/toggle-dept", response_class=HTMLResponse)
-def toggle_document_department(
-    request: Request,
-    module: Module,
-    kb_id: str,
-    doc_id: str,
-    department_id: Annotated[str, Form()],
-    enable: Annotated[str, Form()],
-) -> HTMLResponse:
-    """切換文件在部門的選用（HTMX 片段替換）。"""
-    actor = _authorize(request, module, Action.EDIT)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    try:
-        view = rag_service.set_file_usage(
-            kb_id, doc_id, _uuid(department_id), enable.lower() == "true", actor
-        )
-    except RagRuleError as error:
-        not_found = _not_found(error)
-        if not_found:
-            raise not_found from None
-        return HTMLResponse(
-            f'<p class="alert alert--danger">{escape(error.message)}</p>', status_code=400
-        )
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    rag_file = next((f for f in view.files if f.rag_file_id == doc_id), None)
-    if rag_file is None:
-        raise HTTPException(status_code=404, detail="找不到指定文件")
-    return templates.TemplateResponse(
-        request,
-        "pages/knowledge/_dept_badges.html",
-        {
-            "badges": _doc_badges(view.knowledge_base, rag_file, view, _departments(), actor),
-            "toggle_url": f"/knowledge/{kb_id}/documents/{doc_id}/toggle-dept",
-            "target": f"dept-badges-doc-{doc_id}",
-        },
-    )
-
-
-@router.post("/{kb_id}/documents/{doc_id}/status", response_model=None)
-def update_document_status(
-    request: Request,
-    module: Module,
-    kb_id: str,
-    doc_id: str,
-    status: Annotated[str, Form()],
-) -> Response:
-    """資訊部核准（active，文件須已索引）或暫停（hold）文件。"""
-    actor = _authorize_review(request, module)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    try:
-        rag_service.load_file(kb_id, doc_id)
-        if status == "active":
-            rag_service.approve_file(doc_id, UUID(actor.user_id), actor.is_it)
-        else:
-            rag_service.suspend_file(doc_id, actor.is_it)
-    except RagRuleError as error:
-        return _documents_error(request, kb_id, error)
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
-
-
 @router.post("/{kb_id}/index-next", response_model=None)
 def index_next_document(request: Request, module: Module, kb_id: str) -> Response:
     """資訊部在知識庫列表直接建立索引：處理此知識庫最早一份待索引的文件（一次一份）。"""
@@ -619,7 +833,7 @@ def index_next_document(request: Request, module: Module, kb_id: str) -> Respons
         pending = rag_service.load_overview().files_to_index.get(kb_id, [])
         if not pending:
             raise RagRuleError("NOTHING_TO_INDEX", "這個知識庫沒有待建立索引的文件")
-        rag_service.index_document(kb_id, pending[0], _viewer(request))
+        rag_service.index_document(pending[0], _viewer(request))
     except RagRuleError as error:
         return _list_error(request, error)
     except RagUnavailableError as error:
@@ -638,23 +852,6 @@ def queue_knowledge_base_reindex(request: Request, module: Module, kb_id: str) -
     except RagUnavailableError as error:
         raise _unavailable(error) from None
     return RedirectResponse("/knowledge", status_code=303)
-
-
-@router.post("/{kb_id}/documents/{doc_id}/index", response_model=None)
-def index_document(request: Request, module: Module, kb_id: str, doc_id: str) -> Response:
-    """資訊部手動索引一份文件（擷取文字、切段、向量），一次一份，不在背景執行。"""
-    actor = _authorize_review(request, module)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    try:
-        rag_service.index_document(kb_id, doc_id, actor)
-    except RagRuleError as error:
-        return _documents_error(request, kb_id, error)
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
-
-
-# ---- 編輯、刪除、內容與下載 ----
 
 
 def _edit_page(
@@ -739,175 +936,16 @@ def rename_knowledge_base(
 
 @router.post("/{kb_id}/delete", response_model=None)
 def delete_knowledge_base(request: Request, module: Module, kb_id: str) -> Response:
-    """刪除知識庫及其所有文件。"""
+    """只刪除知識庫與關聯，保留共用檔案。"""
     actor = _authorize(request, module, Action.DELETE)
     kb_id = _uuid(kb_id)
     try:
         rag_service.delete_knowledge_base(kb_id, actor)
     except RagRuleError as error:
-        not_found = _not_found(error)
-        if not_found:
-            raise not_found from None
-        return _render_kb_edit(request, kb_id, error=error.message, status_code=400)
+        return _list_error(request, error)
     except RagUnavailableError as error:
         raise _unavailable(error) from None
     return RedirectResponse("/knowledge", status_code=303)
-
-
-def _load_doc(
-    kb_id: str, doc_id: str
-) -> tuple[KnowledgeBase, tuple[DepartmentAccess, ...], RagFile]:
-    try:
-        return rag_service.load_file(kb_id, doc_id)
-    except RagRuleError as exc:
-        raise HTTPException(status_code=404, detail=exc.message) from None
-    except RagUnavailableError as exc:
-        raise _unavailable(exc) from None
-
-
-def _render_doc_edit(
-    request: Request, kb_id: str, doc_id: str, *, error: str | None = None, status_code: int = 200
-) -> HTMLResponse:
-    kb, rows, rag_file = _load_doc(kb_id, doc_id)
-    return _edit_page(
-        request,
-        mode="doc_name",
-        kb={"id": kb_id, "title": kb.knowledge_name},
-        doc=_doc_view(rag_file),
-        can_edit=can_manage_knowledge_base(kb, rows, _viewer(request)),
-        error=error,
-        status_code=status_code,
-    )
-
-
-@router.get("/{kb_id}/documents/{doc_id}/edit", response_class=HTMLResponse)
-def edit_document_name_page(request: Request, kb_id: str, doc_id: str) -> HTMLResponse:
-    """編輯文件名稱頁面。"""
-    return _render_doc_edit(request, _uuid(kb_id), _uuid(doc_id))
-
-
-@router.post("/{kb_id}/documents/{doc_id}/rename", response_model=None)
-def rename_document(
-    request: Request, module: Module, kb_id: str, doc_id: str, title: Annotated[str, Form()]
-) -> Response:
-    """重新命名文件。"""
-    actor = _authorize(request, module, Action.EDIT)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    try:
-        rag_service.rename_file(kb_id, doc_id, title, actor)
-    except RagRuleError as error:
-        not_found = _not_found(error)
-        if not_found:
-            raise not_found from None
-        return _render_doc_edit(request, kb_id, doc_id, error=error.message, status_code=400)
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
-
-
-@router.post("/{kb_id}/documents/{doc_id}/delete", response_model=None)
-def delete_document(request: Request, module: Module, kb_id: str, doc_id: str) -> Response:
-    """刪除文件。"""
-    actor = _authorize(request, module, Action.DELETE)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    try:
-        rag_service.delete_file(kb_id, doc_id, actor)
-    except RagRuleError as error:
-        not_found = _not_found(error)
-        if not_found:
-            raise not_found from None
-        return _render_doc_edit(request, kb_id, doc_id, error=error.message, status_code=400)
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
-
-
-def _extension(rag_file: RagFile) -> str:
-    name = rag_file.original_filename or ""
-    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
-
-
-def _render_content(
-    request: Request, kb_id: str, doc_id: str, *, error: str | None = None, status_code: int = 200
-) -> HTMLResponse:
-    kb, rows, rag_file = _load_doc(kb_id, doc_id)
-    text: str | None = None
-    editable = _extension(rag_file) in TEXT_EDITABLE_EXTENSIONS
-    if editable:
-        try:
-            _file, raw = rag_service.read_file_content(kb_id, doc_id)
-            text = raw.decode("utf-8-sig")
-        except RagUnavailableError as exc:
-            error = error or str(exc)
-            editable = False
-        except UnicodeDecodeError:
-            editable = False
-    return _edit_page(
-        request,
-        mode="doc_content",
-        kb={"id": kb_id, "title": kb.knowledge_name},
-        doc=_doc_view(rag_file),
-        can_edit=can_manage_knowledge_base(kb, rows, _viewer(request)),
-        content={"text": text, "text_editable": editable, "preview_url": None},
-        error=error,
-        status_code=status_code,
-    )
-
-
-@router.get("/{kb_id}/documents/{doc_id}/content", response_class=HTMLResponse)
-def document_content_page(request: Request, kb_id: str, doc_id: str) -> HTMLResponse:
-    """檢視與編輯文件內容（TXT／Markdown 可直接改文字，其他格式可替換原檔）。"""
-    return _render_content(request, _uuid(kb_id), _uuid(doc_id))
-
-
-@router.post("/{kb_id}/documents/{doc_id}/content", response_model=None)
-async def update_document_content(
-    request: Request,
-    module: Module,
-    kb_id: str,
-    doc_id: str,
-    text: Annotated[str | None, Form()] = None,
-    file: Annotated[UploadFile | None, File()] = None,
-) -> Response:
-    """更新文件文字內容或上傳替換檔案；內容變更後撤銷核准並重新等待索引。"""
-    actor = _authorize(request, module, Action.EDIT)
-    kb_id, doc_id = _uuid(kb_id), _uuid(doc_id)
-    _kb, _rows, rag_file = _load_doc(kb_id, doc_id)
-    if file is not None and file.filename:
-        filename, content = file.filename, await file.read()
-    elif text is not None and _extension(rag_file) in TEXT_EDITABLE_EXTENSIONS:
-        filename, content = rag_file.original_filename or "", text.encode("utf-8")
-    else:
-        return _render_content(
-            request, kb_id, doc_id, error="請修改文字或選擇替換檔案", status_code=400
-        )
-    try:
-        rag_service.replace_file_content(kb_id, doc_id, filename, content, actor)
-    except RagRuleError as error:
-        not_found = _not_found(error)
-        if not_found:
-            raise not_found from None
-        return _render_content(request, kb_id, doc_id, error=error.message, status_code=400)
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    return RedirectResponse(f"/knowledge/{kb_id}/documents/{doc_id}/content", status_code=303)
-
-
-@router.get("/{kb_id}/documents/{doc_id}/download")
-def download_document(kb_id: str, doc_id: str) -> Response:
-    """下載原始文件。"""
-    try:
-        rag_file, content = rag_service.read_file_content(_uuid(kb_id), _uuid(doc_id))
-    except RagRuleError as error:
-        raise HTTPException(status_code=404, detail=error.message) from None
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    filename = quote(rag_file.original_filename or "document")
-    return Response(
-        content=content,
-        media_type=rag_file.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
-    )
 
 
 # ---- 上傳 ----
@@ -923,105 +961,179 @@ def _upload_result(lines: Sequence[tuple[bool, str]]) -> HTMLResponse:
     )
 
 
-@router.post("/documents", response_class=HTMLResponse)
-async def upload_documents(
-    request: Request,
-    module: Module,
-    files: Annotated[list[UploadFile], File()],
-    knowledge_base_id: Annotated[str | None, Form()] = None,
-    knowledge_base_title: Annotated[str | None, Form()] = None,
-    title: Annotated[str | None, Form()] = None,
-) -> HTMLResponse:
-    """上傳一份文件到既有或新建立的知識庫（HTMX 回傳結果片段）；上傳部門為目前部門。"""
-    actor = _authorize(request, module, Action.CREATE)
-    named = [f for f in files if f.filename]
-    if len(named) > 1:
-        return HTMLResponse(
-            '<div class="alert alert--danger">一次上傳一份文件，請逐份上傳。</div>', status_code=400
-        )
-    items = [
-        UploadItem(
-            f.filename or "",
-            await f.read(),
-            title.strip() if title and title.strip() and len(named) == 1 else None,
-        )
-        for f in named
-    ]
-    try:
-        if knowledge_base_id:
-            kb_id = _uuid(knowledge_base_id)
-        else:
-            kb_id = rag_service.create_knowledge_base(
-                knowledge_base_title or "", actor
-            ).knowledge_base_id
-        outcomes = rag_service.upload_documents(kb_id, items, actor)
-    except RagRuleError as error:
-        return HTMLResponse(
-            f'<div class="alert alert--danger">{escape(error.message)}</div>', status_code=400
-        )
-    except RagUnavailableError as error:
-        return HTMLResponse(
-            f'<div class="alert alert--danger">{escape(str(error))}</div>', status_code=503
-        )
-    return _upload_result([(o.ok, f"{o.filename}：{o.message}") for o in outcomes])
-
-
 # ---- 問答 ----
 
 
-def _chat_context(request: Request) -> dict[str, Any]:
-    """問答頁右側面板：資訊部可選任一知識庫測試；其他部門只顯示目前選用的知識庫。"""
+def _chat_actor(request: Request) -> RagActor:
+    """知識庫問答僅限已驗證身分的目前部門為資訊部。"""
     actor = _viewer(request)
-    try:
-        overview = rag_service.load_overview()
-    except RagUnavailableError as error:
-        raise _unavailable(error) from None
-    names = {kb.knowledge_base_id: kb.knowledge_name for kb in overview.knowledge_bases}
-    current = next(
+    if not actor.is_it:
+        raise DeniedError
+    return actor
+
+
+def _chat_choices(
+    overview: rag_service.KnowledgeOverview,
+    department_id: str | None = None,
+    selected_ids: Sequence[str] = (),
+) -> dict[str, Any]:
+    """可勾選的知識庫：已指派／未指派跟著所選部門；不選部門時沒有指派可言，列出全部。"""
+    available = sorted(
         (
-            r.knowledge_base_id
-            for r in overview.access_rows
-            if r.department_id == actor.department_id and r.use_for_qa
+            kb
+            for kb in overview.knowledge_bases
+            if kb.approval_status == APPROVAL_APPROVED and kb.is_active and kb.file_count >= 1
         ),
-        None,
+        key=lambda kb: (kb.knowledge_name, kb.knowledge_base_id),
     )
-    return {
-        "is_it_reviewer": actor.is_it,
-        "knowledge_bases": [
+
+    def group(title: str, kbs: Sequence[KnowledgeBase]) -> dict[str, Any]:
+        options = [
             {
                 "id": kb.knowledge_base_id,
                 "title": kb.knowledge_name,
-                "approval_label": APPROVAL_LABELS.get(kb.approval_status, "待審核"),
+                "checked": kb.knowledge_base_id in selected_ids,
             }
-            for kb in overview.knowledge_bases
-        ],
-        "current_title": names.get(current) if current else None,
+            for kb in kbs
+        ]
+        return {"title": title, "options": options}
+
+    if department_id is None:
+        return {"groups": [group("全部知識庫", available)], "error": None}
+    assigned = {
+        row.knowledge_base_id
+        for row in overview.access_rows
+        if row.department_id == department_id and row.use_for_qa
     }
+    return {
+        "groups": [
+            group("已指派", [kb for kb in available if kb.knowledge_base_id in assigned]),
+            group("未指派", [kb for kb in available if kb.knowledge_base_id not in assigned]),
+        ],
+        "error": None,
+    }
+
+
+def _chat_overview() -> rag_service.KnowledgeOverview:
+    try:
+        return rag_service.load_overview()
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
 
 
 @router.get("/chat", response_class=HTMLResponse)
 def chat_page(request: Request) -> HTMLResponse:
-    """問答頁：一般部門用目前選用的知識庫；資訊部可指定知識庫測試（含未核准文件）。"""
-    return templates.TemplateResponse(request, "pages/knowledge/chat.html", _chat_context(request))
+    """資訊部問答頁：切換部門與知識庫，再以清除對話自行比較；沒有一般部門聊天入口。"""
+    _chat_actor(request)
+    return templates.TemplateResponse(
+        request,
+        "pages/knowledge/chat.html",
+        {"departments": _department_views(_departments()), **_chat_choices(_chat_overview())},
+    )
+
+
+@router.get("/chat/choices", response_class=HTMLResponse)
+def chat_choices(
+    request: Request,
+    department_id: Annotated[str, Query()] = "",
+    knowledge_base_id: Annotated[list[str] | None, Query()] = None,
+) -> HTMLResponse:
+    """切換部門後重新分組已指派／未指派，保留勾選，不寫入指派。"""
+    _chat_actor(request)
+    dept_id = _uuid(department_id) if department_id else None
+    selected = [_uuid(value) for value in knowledge_base_id or ()]
+    if dept_id and dept_id not in {d.department_id for d in _departments()}:
+        return templates.TemplateResponse(
+            request,
+            "pages/knowledge/_chat_choices.html",
+            {"groups": [], "error": "部門不存在或已停用"},
+            status_code=400,
+        )
+    return templates.TemplateResponse(
+        request,
+        "pages/knowledge/_chat_choices.html",
+        _chat_choices(_chat_overview(), dept_id, selected),
+    )
 
 
 @router.post("/chat/ask", response_class=HTMLResponse)
 def chat_ask(
     request: Request,
     question: Annotated[str, Form()] = "",
-    knowledge_base_id: Annotated[str, Form()] = "",
+    knowledge_base_id: Annotated[list[str] | None, Form()] = None,
+    department_id: Annotated[str, Form()] = "",
 ) -> HTMLResponse:
-    """回答一個問題（HTMX 回傳提問與回答兩則訊息）；不保存問答內容。"""
-    actor = _viewer(request)
-    kb_id = _uuid(knowledge_base_id) if knowledge_base_id else None
+    """依目前勾選回答一題；不保存，也不傳送前文。"""
+    actor = _chat_actor(request)
+    ids = [_uuid(value) for value in knowledge_base_id or ()]
+    dept_id = _uuid(department_id) if department_id else None
     try:
-        answer = rag_qa_service.ask(question, actor, kb_id)
+        answer = rag_qa_service.ask_test(question, actor, ids, dept_id)
     except RagRuleError as error:
         return HTMLResponse(
             f'<div class="message assistant">{escape(error.message)}</div>', status_code=400
         )
+    # 服務失敗或未通過檢查回 400：訊息照常顯示，畫面保留問題方便重試；找不到相關規定是正常回答，回 200
     return templates.TemplateResponse(
         request,
         "pages/knowledge/_chat_message.html",
-        {"question": question.strip(), "answer": answer, "is_it_reviewer": actor.is_it},
+        {"question": question.strip(), "answer": answer},
+        status_code=400 if answer.failed else 200,
     )
+
+
+@router.post("/{kb_id}/copy", response_model=None)
+def copy_knowledge_base(
+    request: Request, module: Module, kb_id: str, title: Annotated[str, Form()]
+) -> Response:
+    """複製檔案組合成新的待審查知識庫。"""
+    actor = _authorize(request, module, Action.CREATE)
+    try:
+        copied = rag_service.copy_knowledge_base(_uuid(kb_id), title, actor)
+    except RagRuleError as error:
+        return _list_error(request, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse(f"/knowledge/{copied.knowledge_base_id}/documents", status_code=303)
+
+
+@router.post("/{kb_id}/files", response_model=None)
+def add_knowledge_files(
+    request: Request,
+    module: Module,
+    kb_id: str,
+    file_ids: Annotated[list[str] | None, Form()] = None,
+) -> Response:
+    """加入其他部門已核准檔案，全部 id 都先驗 UUID。"""
+    actor = _authorize(request, module, Action.EDIT)
+    kb_id = _uuid(kb_id)
+    selected = [_uuid(value) for value in file_ids or ()]
+    try:
+        if not selected:
+            raise RagRuleError("FILES_REQUIRED", "請勾選要加入的檔案")
+        rag_service.add_files(kb_id, selected, actor)
+    except RagRuleError as error:
+        return _documents_error(request, kb_id, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)
+
+
+@router.post("/{kb_id}/files/{file_id}/remove", response_model=None)
+def remove_knowledge_file(
+    request: Request,
+    module: Module,
+    kb_id: str,
+    file_id: str,
+    expected_count: Annotated[int, Form()],
+) -> Response:
+    """確認後移除關聯，服務重新核對檔案數避免未確認的最後一份移除。"""
+    actor = _authorize(request, module, Action.EDIT)
+    kb_id, file_id = _uuid(kb_id), _uuid(file_id)
+    try:
+        rag_service.remove_file(kb_id, file_id, actor, expected_count)
+    except RagRuleError as error:
+        return _documents_error(request, kb_id, error)
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return RedirectResponse(f"/knowledge/{kb_id}/documents", status_code=303)

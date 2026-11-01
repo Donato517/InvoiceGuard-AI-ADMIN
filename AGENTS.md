@@ -2,6 +2,8 @@
 
 # InvoiceGuard-AI-ADMIN：AI 開發入口
 
+> 2026-11-01 使用者核定：知識庫問答給不熟悉規定的同仁使用，以通用邏輯與兩輪回答解決問題，不針對個別問題客製，操作內容由知識庫文件提供。回答先用 Groq，無法回應時靜默改用 `app/integrations/vertex_chat.py`（僅 ADMIN，不在兩站位元組比對範圍）。ADMIN 函式與 START 閘道上限為 60 秒。改切段或項次標示規則後要重新索引。詳見 [RAG 開發說明](docs/RAG_DEVELOPMENT.md)，其他開發者的更新步驟見 [README](README.md)。
+
 > 2026-10-30 使用者核定：新增 `app/integrations/vertex_embedding.py`（Agent Platform 向量），以現有服務帳號呼叫 `gemini-embedding-2`、1536 維，不使用 GEMINI_API_KEY；ADMIN 與 API 逐位元組相同，由 `tests/unit/test_shared_integrations.py` 比對，取代下文「四個 AI 模組檔」的範圍。只提供模組，尚未接線功能；Vercel 與 START 不需新增設定。開發 RAG 前先讀 [RAG 開發說明](docs/RAG_DEVELOPMENT.md)。
 
 > 2026-10-30 後續核定：使用者已要求將 ADMIN 三模組同步至 API；兩站 document_ai／document_ai_evidence／document_ai_fewshot 從此恢復逐位元組同步，取代下方先前僅 ADMIN 分版的範圍。兩站各自使用自己的環境設定，evidence／Few-Shot 尚未接入業務流程。
@@ -22,7 +24,7 @@
 
 - DB：程序有合法 `DATABASE_URL` 即可使用（本機與雲端皆可，仍驗證 PostgreSQL 格式與 TLS）；本機值由 START 注入，連的是正式 DB。
 - Vercel 模組（檔案存取）：`app/integrations/supabase_storage.py`，與 API 相同；本機值由 START 注入，連的是正式 Storage。
-- AI 模組（2026-10-29 使用者核定）：`app/integrations/document_ai.py`、`gemini.py`、`groq.py`、`chat_models.py` 與 API 逐位元組相同（`tests/unit/test_shared_integrations.py` 比對），Settings 有對應欄位；本機由 START 從 ADMIN 自己的 Vercel 專案注入 Google AI 五項與 GROQ_API_KEY（缺少時只提示），雲端需在 Vercel ADMIN 專案設定。只提供模組，尚未接線任何功能；ADMIN 函式上限 30 秒，接線時要以 `timeout_seconds` 控制時限。
+- AI 模組（2026-10-29 使用者核定）：`app/integrations/document_ai.py`、`gemini.py`、`groq.py`、`chat_models.py` 與 API 逐位元組相同（`tests/unit/test_shared_integrations.py` 比對），Settings 有對應欄位；本機由 START 從 ADMIN 自己的 Vercel 專案注入 Google AI 五項與 GROQ_API_KEY（缺少時只提示），雲端需在 Vercel ADMIN 專案設定。ADMIN 已接知識庫索引與問答，其餘功能尚未接線；ADMIN 函式上限 60 秒，接線時要以 `timeout_seconds` 控制時限。
 - 示範檔案 `/dev/accounts`（DB 模組：帳號查詢／新增／修改）與 `/dev/files`（Vercel 模組：圖片／RAG 檔案）只在 `dev_pages_enabled` 為真（`APP_ENV=local`、非 Vercel、解析後 `module_backend=remote`，含本機 auto）時開放、不需登入，直接讀寫正式 DB／Storage。
 - 舊 `require_admin` 路由仍受本機禁用 `SESSION_SECRET_KEY` 限制。06_E 的 `/login` 已改委派 B 共用 PortableAuth；B／G adapter 尚未接線時回 503，不開本機繞過。E 測試以 `get_e_module` 的 dependency override 提供合成替身，正式程式沒有測試模式開關；見 `docs/E-TEAM-HANDOFF.md`。
 - `remote_admin_client` 目前沒有呼叫端；`MODULE_BACKEND=remote` 實際代表「本機開發」並開放 `/dev` 示範檔案。

@@ -825,3 +825,178 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 前後雜湊：knowledge.py 49af06ea84167f7d9b49b1e3117e3871a40d21cd9fd71c75d8b9475764ebc28f→131ee031afc7521fdcfc2dbd7c6b6c5c366e500151ca57392fc37b96595d69d1；兩站 RAG_DEVELOPMENT.md d6f47e94d9e7f837e68262cd3d2a1bf5a2c5ad9df6f429b3a6fbf5f872042a10→2c2abb454238728cfa730d9db631cc18af391ebbd3e1a7768a4f82d58b2d14ac；其餘檔案詳見專案外 SOURCE_SHA256_BEFORE_AFTER.tsv。
 - 未驗證：正式 DB 的 ALTER 結果僅來自使用者查詢（vector(1536)、dimensions 1536、chunks 0、維度不符 0），部門權限勾選仍未知；不據此宣稱正式權限已開通。本輪沒有讀真實秘密、連外服務、START、安裝／升級、部署、migration、Stage／Commit／Push 或分支操作；未改 integrations、requirements、contracts、AGENTS 共同區塊、前台／STARTUP 或舊 reviews 指令。
 - 輸出放專案外暫存 ik-20261030-203958：REVIEW.md、TEST_RESULTS.md、SQL_STATIC_REVIEW.json、APP_STATIC_REVIEW.json、命令／JUnit、五份突變及前後 SHA256。
+
+
+## 2026-10-31 Codex：RAG v1.7 部門多選與文件層選用停用
+
+- 問題與原因：原程式沿用一部門一知識庫及逐文件選用，與本次核定 v1.7 不符。純規則、交易服務、repository、schema、knowledge 路由與四份樣板同步改為整組多選及四項檢索；移除文件選用讀寫與路由，不修改資料表或共用模組。
+- 回歸修正：完整測試發現 test_department_login.KNOWLEDGE_ROUTES 仍把已刪除的文件選用路由當成現行路由，造成 3 failed；移除此清單項並新增登入前後皆 404 的案例，保留所有現行 GET／POST 授權覆蓋。
+- 處理檔案：app/services/rag_selection_service.py、rag_admin_service.py、rag_retrieval_service.py、rag_qa_service.py，app/db/repositories/rag_repository.py、app/schemas/rag.py、app/routers/knowledge.py、app/templates/pages/knowledge/{list,documents,chat,_chat_message}.html，相關七份測試；文件更新見 TEST_REPORT.md，兩站 RAG_DEVELOPMENT 逐位元組同步。
+- 驗證：RAG 定向 134 passed；加入登入授權後 223 passed；最終全套及品質檢查結果見 [TEST_REPORT.md](TEST_REPORT.md) 的 2026-10-31 紀錄。既有外部服務阻擋未放寬；沒有正式 DB／Storage／模型呼叫或 SQL 執行。真實 DB 與並行交易未驗證。
+
+## 2026-10-31 Claude：RAG 多選檢驗修正
+
+- 問題：部門問答選用的「已選 N／M 個」把已停用的知識庫算進 N，可能出現 N 大於 M。原因：_qa_choices 直接採用全部 use_for_qa 列。處理：app/routers/knowledge.py 只計入目前可選的知識庫，新增 test_selected_count_ignores_knowledge_base_no_longer_selectable（修正前重現失敗）。
+- 問題：API 的 KNOWLEDGE_API_CONTRACT.md「原型原文契約」被改動，不再是原文。處理：還原原文，改在區塊前註明文件層選用已於 v1.7 停用。
+
+## 2026-10-31 Codex：v1.8 獨立檔案庫與知識庫組合
+
+- 原問題：rag_files 依附單一知識庫，刪除知識庫會收集 storage_path 並刪原檔，文件管理權也依附知識庫；不符合共用檔案規則。改用關聯表、獨立檔案授權及刪除／替換引用檢查，知識庫刪除保留 Storage、檔案、索引與工作。
+- 多對多檢索改在 LIMIT 前按檔案彙整，保留所有已授權來源名稱，避免共用檔案重複占段落；知識庫及檔案核准獨立，空庫不可核准／指派／測試，計數只由 DB Trigger 維護。
+- 覆核修正：列表「下一份索引」仍傳舊 KB 參數，原寬鬆路由替身未檢出；修正呼叫並令寫入替身以正式函式簽章 bind，避免相同問題被 mock 掩蓋。
+- 處理範圍：rag schemas、repository、review／selection／admin／retrieval／qa services、knowledge 路由、knowledge 樣板及對應測試；兩站 RAG 文件同步，API 原型契約區塊不改。
+- 驗證結果、實際指令、先前失敗與最終回歸詳見 [TEST_REPORT.md](TEST_REPORT.md) 的 v1.8 第一階段紀錄。只做離線替身與靜態檢查，沒有執行 SQL、部署或提交；實際 Trigger／FK／Storage／並行交易待驗。
+
+## 2026-10-31 Claude：v1.8 第一階段檢驗修正
+
+- 問題：舊檔雜湊補齊時，只要有一份舊檔讀不到（物件遺失或路徑空白），之後所有上傳與替換都被拒絕；全部讀完才一次寫入，舊檔多時逾時就沒有進度。處理：rag_admin_service 改為 `_backfill_legacy_hashes`，每次請求一輪、逐筆提交、讀不到略過、最多 8 秒，不擋本次上傳；尚未補到雜湊的舊檔可能暫時比對不到重複內容。
+- 問題：改名、刪除、替換、核准、索引被規則擋下時，一般表單只收到一行純文字，畫面沒有樣式與導覽；刪除被引用檔案是最常見的情境。處理：knowledge 路由改回完整頁面顯示原因，只有 HTMX 上傳對話框維持片段。
+- 問題：檔案管理頁逐檔查詢引用，檔案越多越慢，有超過函式時限的風險。處理：repository 新增 `list_all_file_references`，一次讀取。
+- 問題：資訊部替換別部門的檔案時，新物件放進資訊部資料夾，與上傳部門不符。處理：路徑跟著檔案的上傳部門，該部門已停用才用目前部門。
+- 問題：替換先鎖檔案再鎖知識庫，加入檔案則相反，同時執行可能死結。處理：替換只鎖檔案；核准撤銷已保護檢索，不需要鎖知識庫。
+- 問題：列表「在使用中」以 can_read 計算，新知識庫建立就算使用中，與畫面文字不符。處理：改以 use_for_qa 計算。
+- 問題：畫面與錯誤訊息仍有「選用」；知識庫的檔案頁少了原有的搜尋、核准篩選與統計，路由參數卻還在。處理：統一為部門指派，恢復上述功能，移除無用欄位、`count_files` 與每次列表多跑的查詢。
+- 測試修正：`test_documents_page_shows_index_failure_and_hides_it_actions` 斷言舊路徑，永遠成立，改為新路徑；`test_delete_knowledge_base_removes_objects_after_commit` 名稱與內容相反，已改名。新增 16 項回歸案例。
+- 處理檔案：app/services/rag_admin_service.py、rag_selection_service.py，app/db/repositories/rag_repository.py，app/routers/knowledge.py，app/templates/pages/knowledge/{files,documents,list,chat,_upload_modal}.html，tests/unit/test_rag_admin_service.py、test_rag_repository.py、test_knowledge_rag_pages.py，兩站 RAG_DEVELOPMENT.md，API KNOWLEDGE_API_CONTRACT.md。
+- 驗證結果見 [TEST_REPORT.md](TEST_REPORT.md) 的 v1.8 檢驗修正紀錄。
+
+## 2026-10-31 Claude：v1.8 Codex 檢驗回報修正
+
+- 問題：替換內容的物件路徑只到秒，同一份檔案同秒替換會共用物件；第二次寫 DB 失敗時，清除動作會刪掉現行原檔。處理：rag_admin_service 的 `storage_key` 加 revision，替換時接 8 碼亂數，每次寫入都是新物件。
+- 問題：舊檔雜湊寫入或列舊檔的 DB 錯誤仍會中止上傳，上一輪的測試還把這個行為寫成預期。處理：`_backfill_legacy_hashes` 遇 DB 失敗就停止補齊，繼續本次上傳，測試改為驗證不阻擋。
+- 問題：開始索引先鎖工作再鎖檔案，寫回結果與刪除檔案相反，可能互相等待。處理：repository 新增 `get_job`（不鎖定），開始索引改為先鎖檔案再鎖工作。此為既有路徑的靜態分析結果，沒有在 PostgreSQL 實測。
+- 問題：上一輪加的「上傳部門停用就改用目前部門」不符合核定規則。處理：新增 `get_department_code`（含停用部門），路徑一律跟著上傳部門；檔案沒有上傳部門時拒絕替換。
+- 測試缺口：`test_replace_locks_only_the_file_to_avoid_deadlock_with_add_files` 把引用都移除，加回鎖定也偵測不到。處理：改為檔案仍被待審查知識庫引用。
+- 使用者回報：檔案管理頁長檔名把「操作」欄擠出畫面，看不到核准按鈕。原因：共用 `.table` 不換行。處理：knowledge.css 新增 `.cell-wrap`，套用在 files.html、documents.html 的長文字欄。
+- 評估後不修：替換與核准知識庫沒有共用鎖，同時發生時知識庫可能先變成已核准；檔案核准已被撤銷，重新核准前不會被檢索，不影響答案。寫入 RAG 開發說明。
+- 處理檔案：app/services/rag_admin_service.py，app/db/repositories/rag_repository.py，app/static/css/pages/knowledge.css，app/templates/pages/knowledge/{files,documents}.html，tests/unit/test_rag_admin_service.py、test_rag_repository.py、test_knowledge_rag_pages.py，兩站 RAG_DEVELOPMENT.md，API KNOWLEDGE_API_CONTRACT.md。
+- 驗證結果見 [TEST_REPORT.md](TEST_REPORT.md) 的 v1.8 Codex 檢驗回報修正紀錄。
+
+## 2026-10-31 Claude：v1.8 Codex 複驗回報修正
+
+- 問題：DB 提交已成功但 client 沒收到確認時，失敗清除仍刪掉資料表已指向的新物件，原檔遺失。處理：rag_admin_service 新增 `_discard_new_object`，上傳與替換失敗後先查資料表，未指向新物件才刪除；查不到狀態就保留，最多留下孤兒物件。
+- 問題：舊檔雜湊的時間上限只在讀取前檢查，讀取中的等待不受限，單次可達 30 秒。處理：`S3StorageClient.get` 新增 `timeout_seconds`，補雜湊時傳入剩餘預算；兩站 supabase_storage.py 同步，其他呼叫端維持預設 30 秒。urllib 的逾時是連線與每次接收各自計算，不是整次下載的總上限。
+- 問題：連續英數長檔名仍把操作欄擠出畫面。原因：`overflow-wrap: break-word` 不會縮小表格欄的最小寬度。處理：`.cell-wrap` 改用 `overflow-wrap: anywhere`。
+- 處理檔案：app/services/rag_admin_service.py，app/integrations/supabase_storage.py（兩站），app/static/css/pages/knowledge.css，tests/unit/test_rag_admin_service.py、test_knowledge_rag_pages.py、test_dev_files.py，API tests/unit/test_supabase_storage.py，兩站 RAG_DEVELOPMENT.md。
+- 驗證結果見 [TEST_REPORT.md](TEST_REPORT.md) 的 v1.8 Codex 複驗回報修正紀錄。
+
+## 2026-10-31 Claude：/knowledge/chat 改回單一問答頁
+
+- 問題：把使用者列的四種情境做成畫面功能（A、B 兩個視窗、共用輸入框、每則回答的本次部門／知識庫、取到的段落），並把「開雙視窗」誤解為畫面左右兩欄。使用者要的是一個對話頁，資訊部切換選擇、清除對話後自行評估。處理：改回一頁一個對話，右側只有部門單選與知識庫多選；刪除 _chat_pane.html、knowledge-chat.js、QaEvidence 與相關欄位，頁面名稱恢復「知識庫問答」。
+- 問題：不選部門時以「任一部門有指派」顯示已指派，畫面看起來像綁在資訊部。處理：選了部門才分已指派／未指派，依該部門 use_for_qa；不選部門時列出全部知識庫，不分組。
+- 回歸防護：department 下拉位於問答表單內，切換時請求會冒泡到表單。下拉設 `data-busy=""` 不顯示問答遮罩，清空輸入框改為只在表單自己的請求成功時執行。
+- 處理檔案：app/services/rag_qa_service.py、app/routers/knowledge.py、app/static/css/pages/knowledge.css、app/templates/pages/knowledge/{chat,_chat_choices,_chat_message,list}.html，tests/unit/test_knowledge_rag_pages.py、test_rag_qa_service.py，兩站 RAG_DEVELOPMENT.md。
+- 驗證結果見 [TEST_REPORT.md](TEST_REPORT.md) 的 /knowledge/chat 改回單一問答頁紀錄。
+
+## 2026-11-01 Claude：問答服務失敗時保留問題
+
+- 問題：向量或對話服務失敗時回應仍是 200，輸入框被清空，使用者要重新輸入才能重試。原因：輸入框只依 HTTP 200 清空，服務失敗也以 200 回傳固定訊息。處理：chat_ask 在服務失敗時回 400，全域設定仍會顯示訊息，輸入框保留問題；找不到相關規定維持 200。
+- 處理檔案：app/routers/knowledge.py、tests/unit/test_knowledge_rag_pages.py，兩站 RAG_DEVELOPMENT.md。驗證結果見 [TEST_REPORT.md](TEST_REPORT.md)。
+
+## 2026-11-01 Claude：問答流程與操作視窗檢驗修正
+
+- 問題：為了讓舊確認頁的 GET 回 404，多寫了自訂路由類別 `_RemovalPostRoute`，起因是指令要求過細。處理：改回一般 `@router.post`，同一網址的 GET 回框架預設的 405。
+- 問題：被引用檔案的刪除視窗標題與內文仍問「確定刪除」，但沒有確認按鈕，文字互相矛盾。處理：標題改為「無法刪除檔案」，內文只列引用的知識庫。
+- 問題：知識庫列表說明仍寫「點知識庫名稱編輯或刪除」。處理：刪除已移到列表按鈕，說明改為修改名稱。
+- 處理檔案：app/routers/knowledge.py、app/templates/pages/knowledge/{files,list}.html、tests/unit/test_knowledge_rag_pages.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：瀏覽器實測修正
+
+- 問題：上傳被擋下時對話框切成「完成」，不能直接重試。原因：全域設定會替換 400，event.detail.successful 仍為真。處理：_upload_modal.html 改看 HTTP 200。
+- 問題：取消視窗後再開，輸入框留著取消前的文字。處理：main.js 關閉對話框時重設表單。
+- 處理檔案：app/templates/pages/knowledge/_upload_modal.html、app/static/js/main.js、tests/unit/test_knowledge_rag_pages.py。
+
+## 2026-11-01 Claude：問答回答不穩定修正
+
+- 問題：問題理解失敗時靜默退回原問題，看不出原因。實測第 4、5 題回固定訊息，代表沒有取得 need。處理：QuestionUnderstanding 新增 failure，ask_test 把固定原因加到測試說明，不含問題或模型回覆；need 空白也算失敗。
+- 問題：相同問題有時回答、有時判定資料不足。第 1 題的段落含「本辦法依第三十二條第四項訂定」，模型卻因問題理解成查第三十二條本身而放棄。處理：回答提示詞改為段落只要和問題有關就回答能回答的部分，只有完全無關才回 NO_ANSWER，能否回答以問題和段落為準。
+- 處理檔案：app/services/rag_qa_service.py、tests/unit/test_rag_qa_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：問答真實模型測試修正
+
+- 問題：真實模型 5 題有 2 題問題理解失敗，測試說明顯示 groq_invalid_input/json_validate_failed。原因：Groq 的 JSON 模式拒絕 gpt-oss-20b 的回覆。處理：不再使用 JSON 模式，新增 `_json_object` 由程式解析，容許回覆前後有說明或程式碼區塊。
+- 問題：同一題的第 2、4 次回答，對第三十二條第四項的內容說法不同，至少一次項次錯誤。原因：段落未標項次，模型自行推算；引用檢查只驗編號存在，不驗內容。處理：提示詞禁止推算段落沒寫出的條、項、款編號。
+- 處理檔案：app/services/rag_qa_service.py、tests/unit/test_rag_qa_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：項次規則加強
+
+- 問題：提示詞只寫「不可推算編號」後，第 4 題仍有一次寫成「第32條第4項：定價應內含營業稅」，和其他回答不一致。原因：問題本身寫了第四項，段落沒有標示項次，模型把問題的編號套到自己選的內容上。處理：提示詞改為段落未標示項次時，即使問題提到第幾項，也不可斷定內容屬於該項，只寫到條並說明未標示。
+- 處理檔案：app/services/rag_qa_service.py、tests/unit/test_rag_qa_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：本機改程式後被登出
+
+- 問題：本機 ADMIN 每次存檔 app/ 內的 Python 都要重新登入。原因：簽章金鑰每個程序隨機產生、只在記憶體，Uvicorn 重載 worker 後金鑰改變，瀏覽器原有的 Cookie 驗不過就導回 /login。處理：金鑰改為第一次使用時隨機產生，存在不進版控的 tmp/local-session-key，只限 local 且非 Vercel；雲端仍只用 SESSION_SECRET_KEY。檔案內容不合格會換新，tmp/ 無法寫入時退回只放記憶體。測試改寫測試暫存目錄，不碰實際 tmp/。
+- 處理檔案：app/services/admin_login_service.py、tests/conftest.py、tests/unit/test_department_login.py、docs/E-LOGIN-ACCESS.md、docs/ARCHITECTURE.md。
+
+## 2026-11-01 Claude：金鑰檔權限與問題理解上限
+
+- 問題：開發者同時使用 Windows 與 Mac，本機簽章金鑰檔在 Mac 預設其他帳號可讀。處理：建立時指定 0600，並新增只在 POSIX 執行的測試；Windows 不適用此模式。
+- 問題：實測問題理解有一半因 groq_failed/length 失敗。原因：gpt-oss 的推理內容也計入 800 tokens 上限。處理：上限改為 1600，時限維持 4 秒。
+- 處理檔案：app/services/admin_login_service.py、app/services/rag_qa_service.py、tests/unit/test_department_login.py、tests/unit/test_rag_qa_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：索引時標示項次
+
+- 問題：提示詞禁止自行斷定項次後，5 次回答仍有 4 次寫出第四項，且曾把收銀機核定併入第四項。原因：法規 PDF 左側印的項次在 OCR 文字裡變成一串孤立數字，段落看不出哪一行屬於哪一項。處理：`restore_item_numbers` 依座標把數字對回同一列內文，在每項第一行標示「第N項」；同一條不是從 1 連號到至少 2 就整條不標，標錯比不標更糟。提示詞補上標示的範圍，並重新索引 6 份法規。
+- 處理檔案：app/services/rag_indexing_service.py、app/services/rag_qa_service.py、tests/unit/test_rag_indexing_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：回答階段錯誤補上細節
+
+- 問題：回答階段 Groq 錯誤的測試說明只有 groq_invalid_input，看不出原因。處理：和問題理解階段一樣附上 Groq 回傳的安全代碼，共用 `_groq_failure`。
+- 處理檔案：app/services/rag_qa_service.py、tests/unit/test_rag_qa_service.py。
+
+## 2026-11-01 Claude：問答改為新手操作導向並接上 Vertex 備援
+
+- 問題：問答給不懂規定的同仁使用，但回答像法規分析，遺失題還自行推出作廢重開。處理：提示詞改為先說適用情況、再列步驟、最後列依據，只放通用規則，不針對個別問題客製；禁止跨情況套用；部門改為工作背景；問題理解區分已知事實與未確定條件。
+- 問題：固定文字寫死不存在的會計部。處理：`contact_name` 依啟用部門動態判斷窗口。查無資料時程式無法判斷問題屬於哪個部門，電腦維修題曾被引導去問財務部，所以這個訊息改為不指定部門。
+- 問題：檢查沒過也回「找不到」，和文件沒有資料混在一起。處理：新增 UNVERIFIED_ANSWER，編號步驟沒有來源時也走這個訊息，測試說明分開寫原因。
+- 問題：v1.8 已決定 Vertex 靜默備援但一直沒接，Groq 額度用完問答就失敗。處理：新增 `app/integrations/vertex_chat.py`，共用向量模組的權杖流程與 Gemini 模組的回應解析；Groq 失敗、空白或截斷時改用，回答階段 17 秒由兩者共用。
+- 處理檔案：app/services/rag_qa_service.py、app/integrations/vertex_chat.py、tests/unit/test_rag_qa_service.py、tests/unit/test_vertex_chat.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：回答改為兩輪並延長到 60 秒
+
+- 問題：逐案補提示詞解決不了來源標錯、情況混用等各種問題，一輪回答也沒有機會修正程式檢查抓到的錯誤。處理：第一輪寫初稿，第二輪把段落、問題、初稿與程式檢查發現的問題交給模型，逐句對照後輸出最終回答；規則全部通用。第二輪無法完成時，只顯示通過程式檢查的初稿。提示詞另補來源編號必須是實際寫有該內容的段落。
+- 問題：兩輪需要更長時間，但 ADMIN 函式與本機閘道都在 30 秒切斷。處理：vercel.json 的 maxDuration 改為 60，STARTUP 閘道改為 60 秒，整題時限 56 秒，每輪 25 秒，其中 Groq 10 秒。頁面等待文字改為約 20～50 秒。
+- 處理檔案：app/services/rag_qa_service.py、app/templates/pages/knowledge/chat.html、vercel.json、tests/unit/test_rag_qa_service.py，時限註解與文件。STARTUP 的修改記在其 REVIEW_FIX_LOG.md。
+
+## 2026-11-01 Claude：Codex 檢驗後修正
+
+- 問題：56 秒不是硬性時限，理解與向量固定取得完整預算，逾時才回的模型回覆仍被採用。處理：理解、向量與回答共用截止時間，回覆超過期限不採用。DB 查詢與驗權仍不在預算內。
+- 問題：第二輪沒完成或沒通過檢查時會顯示初稿，通過檢查只代表引用與格式合格。處理：一律不顯示沒完成兩輪的內容。
+- 問題：步驟來源檢查漏抓括號編號、把依據算進最後一步、放過步驟外的操作段落，[100] 也被忽略。處理：改為檢查操作區塊的每一段，引用擴到三位數。
+- 問題：回答寫段落沒有的條號仍通過。處理：新增 unsupported_articles，只比對條號結構，不合格時交第二輪修正。
+- 問題：長條文續段只有項次，沒有條號。處理：項次標示帶上條號，續段開頭標「（接續第N條第M項）」，要重新索引才生效。
+- 問題：Groq 用戶端建立失敗時跳過備援；Vertex 回 SAFETY 且帶文字時仍能通過；錯誤細節可能帶出任意文字。處理：改走備援、回 gemini_blocked、測試說明只留短代碼。
+- 問題：need 直接顯示但可能夾帶建議。處理：理解提示詞禁止寫處理方法。同一題額度不足時第二輪不再重試 Groq。
+- 未採納：問題理解備援、重新分析按鈕（Codex 也認為不需要）；Vertex 模組改用公開介面（要動兩站位元組相同的共用模組，改動大於風險）；共用 Vertex 用戶端（每題只省一次權杖請求）；財會頁面資格集中判斷（屬權限設計，等實際新增會計部時再決定）。
+- 處理檔案：app/services/rag_qa_service.py、app/services/rag_indexing_service.py、app/integrations/vertex_chat.py、tests/unit/test_rag_qa_service.py、tests/unit/test_rag_indexing_service.py、tests/unit/test_vertex_chat.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：Codex 第三次檢驗後修正
+
+- 問題：原文的「第99條第1項」會被當成所屬條項。原因：程式標示與原文格式相同。處理：程式標示改用六角括號，條項只取條標題與此標示；重疊切段無法確認時不標。項次不再成為切段界線，長首項也不會留下只有條號的段落。
+- 問題：章節切換後沿用舊條號；換頁重印同一條號時後面的項次被移除。處理：章、節清除條號，重印同一條號時項次接續。
+- 問題：步驟檢查在沒有標題時放過未引用操作，又把縮排子清單當成獨立步驟。處理：只有行首編號算步驟；沒有標題時第一段視為說明，除非它本身是步驟或清單。
+- 問題：條號檢查用整行來源的聯集，看不出來源對調，也漏掉跨行引用；逐字中文數字轉錯；缺資料說明被當成引用。處理：條號對應同一行後面最近的來源，改以段落為單位，修正數字轉換，略過「目前還需要確認」區塊。
+- 問題：引用只認到三位數；未通過檢查時回 200 會清空問題；額度判斷靠搜尋文字；理解結果沒有事後期限檢查；ask 的向量固定 5 秒；Vertex 模組接受晚到回覆。處理：引用不限位數；QaAnswer.failed 涵蓋未通過檢查並回 400；額度改看錯誤碼；理解與檢索後都檢查期限；search 接受時限；Vertex 回覆超時回 gemini_timeout。
+- 處理檔案：app/services/rag_qa_service.py、app/services/rag_indexing_service.py、app/services/rag_retrieval_service.py、app/integrations/vertex_chat.py、app/routers/knowledge.py，對應測試，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：Codex 第四次檢驗後修正
+
+- 問題：正常的跨行步驟與來源在前的依據清單被擋下。原因：條號在同一行找不到來源時，改抓全段最近的來源，會抓到相鄰步驟。處理：條號只在同一步或同一條列內對應來源，來源對調仍會被抓到。
+- 問題：第32條尾文被標成接續第32-1條。原因：切段界線不認得第32-1條，重疊切段又沿用上一段結尾的條項。處理：界線補上此格式；續段條項改為依段落真正開始的位置計算，不再取消標示。
+- 處理檔案：app/services/rag_qa_service.py、app/services/rag_indexing_service.py，對應測試，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：Codex 第五次檢驗後修正
+
+- 問題：重疊切段的起點或終點落在程式標示中間，標示被切斷後認不出來，後續段落沿用錯誤項次。處理：`_split_long` 不切開程式標示，切點落在標示內時退回標示開頭。新增隨機文件壓力測試，比對每段開頭的真實條項，避免再一案一案找切點。
+- 處理檔案：app/services/rag_indexing_service.py、tests/unit/test_rag_indexing_service.py，兩站 RAG_DEVELOPMENT.md。
+
+## 2026-11-01 Claude：交付前文件對齊
+
+- 問題：Codex 交付檢驗指出 README、模組契約、開發狀態、設定註解與環境範本仍寫模型密鑰不在本機、尚未接線；更新步驟也沒寫執行目錄、rag_manager 查看權限，版本判斷只靠一句回答文字。處理：對齊現況敘述，舊列標明為歷史紀錄，補齊更新步驟。
+- 處理檔案：README.md、AGENTS.md、.env.example、app/core/config.py、docs/MODULE_CONTRACT.md、docs/DEVELOPMENT_STATUS.md。
+
+## 2026-11-01 Claude：測試不再全部依賴暫存目錄
+
+- 問題：Codex 依核定步驟跑 pytest 時連續出現錯誤。原因：本機金鑰的共用測試裝置改用 tmp_path_factory 後，所有測試都依賴暫存目錄，暫存目錄不可用時連無關測試也報錯。處理：測試的金鑰改為只留在記憶體，只有真的需要暫存檔的測試才受影響。
+- 另外：這台電腦的 tmp/pytest 資料夾權限異常，已被 Git 忽略，屬本機狀態，不影響其他開發者；未變更權限設定。
+- 處理檔案：tests/conftest.py。

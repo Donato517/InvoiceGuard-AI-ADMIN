@@ -2,21 +2,21 @@
 模組名稱：app.schemas.rag
 功能說明：RAG 知識庫的資料契約——知識庫審核、部門選用、文件、索引工作、切段與檢索結果。
 注意事項：
-    - 欄位對應 Schema v1.5 的 rag_knowledge_bases、rag_department_access、rag_files、
-      rag_file_department_usage、rag_chunks、rag_jobs。
+    - 欄位對應 Schema v1.8 的 rag_knowledge_bases、rag_department_access、rag_files、
+      rag_chunks、rag_jobs。
     - 一律為不可變物件；service 回傳新物件，由 repository 在 service 控制的交易中寫入。
     - 畫面只顯示中文標籤，不顯示狀態代碼。
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 # ---- 知識庫審核（rag_knowledge_bases.approval_status）----
 APPROVAL_PENDING = "pending"
 APPROVAL_APPROVED = "approved"
 APPROVAL_REJECTED = "rejected"
 APPROVAL_LABELS = {
-    APPROVAL_PENDING: "待審核",
+    APPROVAL_PENDING: "待審查",
     APPROVAL_APPROVED: "已核准",
     APPROVAL_REJECTED: "已退回",
 }
@@ -81,6 +81,16 @@ UPLOAD_MIME_TYPES = {
     "md": "text/markdown",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+SOURCE_TYPE_LABELS = {
+    "government_regulation": "政府法規",
+    "company_policy": "公司規定",
+    "operations_manual": "作業手冊",
+    "mixed": "混合",
+    "other": "其他",
+    "unclassified": "未分類",
+}
+UPLOAD_SOURCE_TYPES = frozenset(SOURCE_TYPE_LABELS) - {"unclassified"}
+EFFECTIVE_DATE_LABELS = {"known": "已知日期", "unknown": "未知", "not_applicable": "不適用"}
 # 可直接在畫面編輯文字的格式
 TEXT_EDITABLE_EXTENSIONS = frozenset({"txt", "md"})
 
@@ -147,6 +157,7 @@ class KnowledgeBase:
     reviewed_at: datetime | None = None
     review_comment: str | None = None
     knowledge_code: str | None = None
+    file_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -156,7 +167,7 @@ class DepartmentAccess:
     Attributes:
         can_read: 該部門可讀；use_for_qa 需 can_read。
         can_manage: 該部門可編輯。
-        use_for_qa: 該部門選用此知識庫問答；一個部門同時只選一個。
+        use_for_qa: 該部門選用此知識庫問答；一個部門可同時選用多個。
     """
 
     knowledge_base_id: str
@@ -179,7 +190,6 @@ class RagFile:
     """
 
     rag_file_id: str
-    knowledge_base_id: str
     title: str
     file_version: int = 1
     parse_status: str = PARSE_UPLOADED
@@ -193,16 +203,11 @@ class RagFile:
     original_filename: str | None = None
     size_bytes: int | None = None
     created_at: datetime | None = None
-
-
-@dataclass(frozen=True)
-class FileDepartmentUsage:
-    """文件 × 部門選用（rag_file_department_usage）。"""
-
-    rag_file_id: str
-    department_id: str
-    use_document: bool = True
-    updated_by: str | None = None
+    source_type: str = "unclassified"
+    effective_date: date | None = None
+    effective_date_status: str = "unknown"
+    source_note: str | None = None
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -300,7 +305,7 @@ class PendingReviews:
 
 @dataclass(frozen=True)
 class RetrievalCandidate:
-    """repository 依相似度排序後回傳的一段（含檢索五項條件的欄位，供 service 再次確認）。
+    """repository 依相似度排序後回傳的一段（含檢索四項條件的欄位，供 service 再次確認）。
 
     Attributes:
         distance: pgvector <=> 距離，越小越相似；由 DB 計算。
@@ -314,14 +319,20 @@ class RetrievalCandidate:
     embedding_model: str
     file_title: str
     file_version: int
-    knowledge_base_id: str
-    knowledge_name: str
+    knowledge_base_ids: tuple[str, ...]
+    knowledge_names: tuple[str, ...]
     approval_status: str
     is_active: bool
     use_for_qa: bool
-    use_document: bool
     is_approved: bool
     parse_status: str
+    can_read: bool = True
+    file_count: int = 0
+
+    @property
+    def knowledge_name(self) -> str:
+        """已授權來源知識庫的名稱，供既有提示與來源畫面使用。"""
+        return "、".join(self.knowledge_names)
 
 
 @dataclass(frozen=True)
@@ -335,6 +346,7 @@ class SearchHit:
     chunk_index: int
     knowledge_name: str
     rag_file_id: str
+    knowledge_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -345,6 +357,7 @@ class SourceDocument:
     file_title: str
     file_version: int
     knowledge_name: str
+    knowledge_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

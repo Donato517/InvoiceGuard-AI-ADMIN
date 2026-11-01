@@ -7,6 +7,7 @@ import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -50,6 +51,7 @@ COMPANY_CATALOG_CODES = {
 }
 INVOICE_CATALOG_ALIASES = frozenset({"Triplicate Uniform Invoice", "invoices", "inv.upload"})
 ACTION_FLAGS = {Action.VIEW: 1, Action.CREATE: 2, Action.EDIT: 4, Action.DELETE: 8}
+LOCAL_SESSION_KEY_MIN_LENGTH = 32
 
 
 def _is_finance_department(
@@ -69,10 +71,30 @@ def _normalize_catalog_code(code: str, name: str = "") -> str:
     return code
 
 
+def _local_session_key_path() -> Path:
+    return settings.temp_dir / "local-session-key"
+
+
 @lru_cache(maxsize=1)
 def _local_session_key() -> str:
-    # 開發用暫存簽章金鑰只在本站程序記憶體，重啟後重登；不借用 DB／API 密鑰。
-    return secrets.token_urlsafe(48)
+    # 開發用隨機簽章金鑰放在不進版控的 tmp/，重載不必重登；不借用 DB／API 密鑰，雲端不使用。
+    path = _local_session_key_path()
+    try:
+        key = path.read_text(encoding="ascii").strip()
+        if len(key) >= LOCAL_SESSION_KEY_MIN_LENGTH:
+            return key
+    except (OSError, UnicodeError):
+        pass
+    key = secrets.token_urlsafe(48)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Mac 依此模式只讓本人讀取；Windows 沿用使用者資料夾權限。
+        path.touch(mode=0o600)
+        path.write_text(key, encoding="ascii")
+    except OSError:
+        # 寫不進去時只留在本程序記憶體，重載後重登，不擋住登入。
+        pass
+    return key
 
 
 def _serializer() -> URLSafeTimedSerializer:

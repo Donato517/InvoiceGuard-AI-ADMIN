@@ -6,11 +6,13 @@
     - 向量以確定性的假用戶端（同 docs/RAG_DEVELOPMENT.md 的 FakeEmbedding）替代，不呼叫 Google。
 """
 
+import random
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import pytest
 
+from app.integrations.document_ai import OcrLine, OcrPage, OcrResult, TextSegment
 from app.integrations.vertex_embedding import EmbeddingBatch, EmbeddingError, EmbeddingTask
 from app.schemas.rag import (
     ERROR_EMPTY_TEXT,
@@ -34,12 +36,14 @@ from app.schemas.rag import (
 )
 from app.services import rag_indexing_service as indexing
 from app.services.rag_indexing_service import (
+    DocumentTextExtractor,
     PlainTextExtractor,
     TextExtractionError,
     index_file,
     is_retryable,
     prepare_chunks,
     record_failure,
+    restore_item_numbers,
     split_into_chunks,
     start_job,
 )
@@ -78,7 +82,7 @@ class FakeEmbedder:
 
 
 def _running(version: int = 1) -> tuple[RagJob, RagFile]:
-    rag_file = RagFile("f-1", "kb-1", "作業要點", file_version=version)
+    rag_file = RagFile("f-1", "作業要點", file_version=version)
     return start_job(RagJob("job-1", "f-1"), rag_file, NOW)
 
 
@@ -168,6 +172,299 @@ def test_non_utf8_text_fails() -> None:
     with pytest.raises(TextExtractionError) as error:
         PlainTextExtractor().extract("第一點".encode("big5"), filename="a.txt", mime_type=None)
     assert error.value.code == ERROR_TEXT_DECODE
+
+
+# ---- 項次還原 ----
+
+
+MARGIN = 0.09
+BODY = 0.13
+
+
+def _ocr(rows: Sequence[tuple[float, float, float, str]]) -> OcrResult:
+    """依閱讀順序組成辨識結果；每列為（左緣, 右緣, 上緣, 文字），行高固定 0.01。"""
+    text = ""
+    lines = []
+    for left, right, top, content in rows:
+        start = len(text)
+        text += f"{content}\n"
+        box = ((left, top), (right, top), (right, top + 0.01), (left, top + 0.01))
+        lines.append(OcrLine(content, None, box, (TextSegment(start, len(text)),)))
+    return OcrResult(text, (OcrPage(1, 1000.0, 1400.0, None, tuple(lines)),), {})
+
+
+# 左側數字被 OCR 擠到同一段：閱讀順序與實際位置不同，只有座標能對回正確的行
+ARTICLE_ROWS = (
+    (BODY, 0.20, 0.10, "第32條"),
+    (MARGIN, 0.90, 0.12, "1 營業人銷售貨物或勞務應開立統一發票交付買"),
+    (MARGIN, 0.10, 0.16, "2"),
+    (MARGIN, 0.10, 0.18, "3"),
+    (BODY, 0.80, 0.14, "受人，但小規模營業人得掣發普通收據免用發票。"),
+    (BODY, 0.50, 0.16, "營業人對於應稅貨物或勞務之定價應內含營業稅。"),
+    (BODY, 0.60, 0.18, "統一發票之格式與使用辦法由財政部定之。"),
+)
+
+
+def test_item_numbers_follow_coordinates_not_reading_order() -> None:
+    assert restore_item_numbers(_ocr(ARTICLE_ROWS)).split("\n") == [
+        "第32條",
+        "〔第32條第1項〕 營業人銷售貨物或勞務應開立統一發票交付買",
+        "受人，但小規模營業人得掣發普通收據免用發票。",
+        "〔第32條第2項〕 營業人對於應稅貨物或勞務之定價應內含營業稅。",
+        "〔第32條第3項〕 統一發票之格式與使用辦法由財政部定之。",
+        "",
+    ]
+
+
+def test_item_numbers_reset_for_each_article() -> None:
+    rows = (
+        *ARTICLE_ROWS,
+        (BODY, 0.22, 0.20, "第32-1條"),
+        (BODY, 0.90, 0.22, "營業人以網際網路開立電子發票者應依規定傳輸。"),
+        (MARGIN, 0.10, 0.22, "1"),
+        (MARGIN, 0.60, 0.24, "2 前項所稱載具指下列號碼。"),
+    )
+    lines = restore_item_numbers(_ocr(rows)).split("\n")
+    assert lines[5:8] == [
+        "第32-1條",
+        "〔第32-1條第1項〕 營業人以網際網路開立電子發票者應依規定傳輸。",
+        "〔第32-1條第2項〕 前項所稱載具指下列號碼。",
+    ]
+
+
+def test_wrapped_line_starting_with_digit_is_not_an_item() -> None:
+    rows = (
+        *ARTICLE_ROWS,
+        (BODY, 0.60, 0.20, "5 年內不得再申請核定之營業人應依規定辦理。"),
+    )
+    assert "5 年內不得再申請核定之營業人應依規定辦理。" in restore_item_numbers(_ocr(rows))
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            (
+                (BODY, 0.20, 0.10, "第5條"),
+                (MARGIN, 0.60, 0.12, "1 營業人應依規定開立統一發票。"),
+                (MARGIN, 0.10, 0.14, "3"),
+                (BODY, 0.60, 0.14, "前項統一發票應保存五年以上。"),
+            ),
+            id="not-consecutive",
+        ),
+        pytest.param(
+            (
+                (BODY, 0.20, 0.10, "第5條"),
+                (MARGIN, 0.60, 0.12, "1 營業人應依規定開立統一發票。"),
+                (BODY, 0.60, 0.14, "前項統一發票應保存五年以上。"),
+            ),
+            id="only-one-number",
+        ),
+        pytest.param(
+            (
+                (BODY, 0.60, 0.10, "第一類貨物應依規定開立統一發票。"),
+                (MARGIN, 0.10, 0.12, "1"),
+                (BODY, 0.60, 0.12, "買賣業銷售貨物之營業應開立發票。"),
+                (MARGIN, 0.10, 0.14, "2"),
+                (BODY, 0.60, 0.14, "製造業使用原料生產應開立發票。"),
+            ),
+            id="outside-article",
+        ),
+    ],
+)
+def test_unreliable_item_numbers_are_not_labelled(
+    rows: Sequence[tuple[float, float, float, str]],
+) -> None:
+    restored = restore_item_numbers(_ocr(rows))
+    assert "〔" not in restored
+    assert not any(line.strip().isdigit() for line in restored.split("\n"))
+
+
+def test_number_without_body_on_same_row_stays_in_text() -> None:
+    rows = (*ARTICLE_ROWS, (MARGIN, 0.10, 0.95, "7"))
+    assert restore_item_numbers(_ocr(rows)).endswith("\n7\n")
+
+
+def test_text_without_coordinates_is_unchanged() -> None:
+    text = "第1條\n1\n營業人應依規定開立統一發票。\n"
+    assert restore_item_numbers(OcrResult(text, (), {})) == text
+
+
+def test_pdf_extraction_labels_items() -> None:
+    class Pdf:
+        def process(
+            self, content: bytes, mime_type: str, *, timeout_seconds: float | None = None
+        ) -> OcrResult:
+            return _ocr(ARTICLE_ROWS)
+
+    extractor = DocumentTextExtractor(Pdf)
+    extracted = extractor.extract(b"%PDF-1.7", filename="法規.pdf", mime_type=None)
+    assert "〔第32條第2項〕 營業人對於應稅貨物" in extracted.text
+
+
+LONG_ITEM = "營業人應依規定開立統一發票並妥善保存相關憑證。" * 60
+
+
+def test_continued_chunk_keeps_article_and_item_identity() -> None:
+    text = f"第32條\n〔第32條第1項〕 甲\n〔第32條第2項〕 {LONG_ITEM}\n第33條\n乙"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    continued = [content for content in contents if "（接續" in content]
+    assert continued
+    assert all(content.startswith("《測試法》（接續第32條第2項）\n") for content in continued)
+    assert not any(
+        "（接續" in content for content in contents if "第33條" in content.split("\n")[1]
+    )
+
+
+def test_continued_chunk_without_items_keeps_article_only() -> None:
+    contents = [draft.content for draft in prepare_chunks(f"第7條\n{LONG_ITEM}", title="測試法")]
+    assert any(content.startswith("《測試法》（接續第7條）\n") for content in contents[1:])
+
+
+def test_article_cited_in_body_is_not_taken_as_identity() -> None:
+    text = f"依第九十九條規定辦理。\n{LONG_ITEM}"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    assert not any("接續" in content for content in contents)
+
+
+def test_chunk_starting_at_item_label_needs_no_continuation() -> None:
+    text = f"第32條\n〔第32條第1項〕 {LONG_ITEM}\n〔第32條第2項〕 甲"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    assert not any(
+        "（接續" in content and content.split("\n")[1].startswith("〔第32條第2項〕")
+        for content in contents
+    )
+
+
+def test_quoted_article_in_body_is_not_taken_as_identity() -> None:
+    body = "本條引用其他規定如下：\n第99條第1項 規定之資料。"
+    text = f"第32條\n{body}\n{LONG_ITEM}"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    assert not any("第99條" in content.split("\n")[0] for content in contents)
+    assert any("（接續第32條）" in content.split("\n")[0] for content in contents)
+
+
+def test_overlapped_chunk_before_its_item_label_stays_unknown() -> None:
+    chunk = "前一項結尾。\n〔第32條第2項〕 後一項開頭"
+    labelled = indexing.add_heading_context(
+        ["第32條\n〔第32條第1項〕 甲", "乙\n〔第32條第2項〕 丙", chunk]
+    )
+    assert labelled[1].startswith("（接續第32條第1項）")
+    assert "（接續" not in labelled[2]
+
+
+def test_dash_article_starts_a_new_chunk_unit() -> None:
+    raw = "第32條\n" + "甲" * 730 + "\n第32-1條\n" + "乙" * 30 + "。\n" + "乙" * 1000
+    contents = [draft.content for draft in prepare_chunks(raw, title="合成文件")]
+    assert contents[0].split("\n")[1] == "第32條" and "第32-1條" not in contents[0]
+    assert contents[1].split("\n")[1] == "第32-1條"
+    assert all("接續第32條）" not in content for content in contents)
+    assert all(content.startswith("《合成文件》（接續第32-1條）") for content in contents[2:])
+
+
+def test_overlap_keeps_identity_of_where_the_chunk_starts() -> None:
+    head = "第32條\n〔第32條第1項〕 " + "甲" * 40 + "。"
+    tail = "甲" * 10 + "。\n〔第32條第2項〕 " + "乙" * 40 + "。"
+    labelled = indexing.add_heading_context([f"{head}{tail}", f"{tail}\n乙乙乙。"])
+    assert labelled[1].startswith("（接續第32條第1項）")
+
+
+def test_chunk_after_overlap_uses_identity_from_its_own_start() -> None:
+    first = "第32條\n〔第32條第1項〕 甲甲甲。\n〔第32條第2項〕 乙乙乙。"
+    second = "乙乙乙。\n丙丙丙。"
+    third = "丁丁丁。"
+    labelled = indexing.add_heading_context([first, second, third])
+    assert labelled[1].startswith("（接續第32條第2項）")
+    assert labelled[2].startswith("（接續第32條第2項）")
+
+
+def test_overlap_never_cuts_through_an_item_label() -> None:
+    head = "第32條\n〔第32條第1項〕 "
+    text = head + "甲" * (599 - len(head)) + "\n"
+    text += "〔第32條第2項〕 " + "乙" * 95 + "。" + "乙" * 1000
+    contents = [draft.content for draft in prepare_chunks(text, title="合成文件")]
+    assert contents[1].split("\n")[1].startswith("〔第32條第2項〕 ")
+    assert all(content.startswith("《合成文件》（接續第32條第2項）") for content in contents[2:])
+
+
+def _random_document(rng: random.Random) -> tuple[str, dict[str, str]]:
+    """每一項用不同的字，就能從段落開頭的字反查真實條項。"""
+    owner: dict[str, str] = {}
+    code = 0x6000
+    lines: list[str] = []
+    for number in range(1, rng.randint(2, 6)):
+        article = f"第{number}條" if rng.random() < 0.7 else f"第{number}-1條"
+        lines.append(article)
+        item_count = rng.choice([0, 2, 3, 4])
+        for item in range(1, max(item_count, 1) + 1):
+            code += 1
+            char = chr(code)
+            owner[char] = f"{article}第{item}項" if item_count else article
+            body = "".join(
+                char * rng.randint(1, 420) + rng.choice(["。", "；", ""])
+                for _ in range(rng.randint(1, 5))
+            )
+            lines.append(f"〔{article}第{item}項〕 {body}" if item_count else body)
+    return "\n".join(lines), owner
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_random_documents_keep_true_identity_at_every_cut(seed: int) -> None:
+    text, owner = _random_document(random.Random(seed))
+    for draft in prepare_chunks(text, title="測試"):
+        prefix, first, *_ = draft.content.split("\n")
+        if first.startswith("〔") or first.startswith("第"):
+            assert "（接續" not in prefix
+        else:
+            assert "項〕" not in first[:12]
+            # 段落可能從上一句的標點開始，取第一個屬於某項的字
+            start = next((char for char in first if char in owner), None)
+            if start is not None:
+                assert prefix == f"《測試》（接續{owner[start]}）"
+
+
+def test_long_first_item_does_not_leave_heading_only_chunk() -> None:
+    text = f"第32條\n〔第32條第1項〕 {LONG_ITEM}"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    assert len(contents[0].split("\n")) > 2
+
+
+def test_chapter_change_clears_article_for_item_numbers() -> None:
+    rows = (
+        *ARTICLE_ROWS,
+        (BODY, 0.40, 0.20, "第二章 總則"),
+        (MARGIN, 0.60, 0.22, "1 營業人應依規定開立統一發票。"),
+        (MARGIN, 0.60, 0.24, "2 營業人應妥善保存相關憑證。"),
+    )
+    restored = restore_item_numbers(_ocr(rows))
+    assert "〔第32條第3項〕" in restored
+    assert "營業人應依規定開立統一發票。" in restored
+    assert restored.count("〔") == 3
+
+
+def test_reprinted_article_heading_keeps_item_sequence() -> None:
+    rows = (
+        *ARTICLE_ROWS,
+        (BODY, 0.20, 0.20, "第32條"),
+        (MARGIN, 0.60, 0.22, "4 營業人應依規定開立統一發票。"),
+        (MARGIN, 0.60, 0.24, "5 營業人應妥善保存相關憑證。"),
+    )
+    restored = restore_item_numbers(_ocr(rows))
+    assert "〔第32條第4項〕" in restored and "〔第32條第5項〕" in restored
+
+
+def test_original_text_starting_with_item_words_is_kept() -> None:
+    rows = (
+        (BODY, 0.20, 0.10, "第5條"),
+        (BODY, 0.60, 0.12, "第1項 所稱營業人應依規定開立統一發票。"),
+    )
+    assert "第1項 所稱營業人" in restore_item_numbers(_ocr(rows))
+
+
+def test_new_chapter_clears_article_identity() -> None:
+    text = f"第7條\n甲\n第二章 總則\n{LONG_ITEM}"
+    contents = [draft.content for draft in prepare_chunks(text, title="測試法")]
+    assert not any("第7條" in content.split("\n")[0] for content in contents)
 
 
 # ---- 工作與索引 ----
@@ -272,7 +569,7 @@ def test_index_file_requires_started_job() -> None:
     with pytest.raises(RagRuleError):
         index_file(
             RagJob("job-1", "f-1"),
-            RagFile("f-1", "kb-1", "x"),
+            RagFile("f-1", "x"),
             LAW_TEXT,
             FakeEmbedder(),
             lambda: 1,

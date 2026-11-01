@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
 
     # ---- AI 模組（Document AI 三模組、Gemini／Groq 皆與 API 同版；2026-10-29 核定 ADMIN 可使用，2026-10-30 三模組兩站同步）----
-    # 只提供模組與設定，尚未接線任何功能；本機由 START 經 Vercel CLI 注入，雲端由 Vercel ADMIN 專案提供。
+    # ADMIN 的知識庫索引與問答已接線，其餘功能尚未接線；本機由 START 經 Vercel CLI 注入，雲端由 Vercel ADMIN 專案提供。
     GEMINI_API_KEY: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
     # Gemini 對話模型名稱；不是機密，未設定時用預設值（與 API 相同）
     GEMINI_MODEL: str = "gemini-3.8-flash"

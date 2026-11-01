@@ -158,6 +158,7 @@
 
 .ask-form textarea {
   flex: 1;
+  min-width: 0;
 }
 
 /* 長知識庫名稱不撐出右側面板 */
@@ -170,6 +171,31 @@
   width: 100%;
   max-width: 100%;
   text-overflow: ellipsis;
+}
+
+.chat-choice-group {
+  min-width: 0;
+  padding: var(--space-2);
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.chat-choice {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: var(--space-2) 0;
+}
+
+.chat-choice input {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 0.25rem;
+}
+
+.chat-choice span {
+  min-width: 0;
 }
 
 @media (max-width: 900px) {
@@ -186,4 +212,15 @@
 
 .upload-form.is-done .upload-form__done {
   display: inline-flex;
+}
+
+/* 檔名與知識庫名稱可能很長；.table 不換行時會把「操作」欄擠出畫面 */
+.cell-wrap {
+  min-width: 9rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.knowledge-confirm .modal__body {
+  overflow-wrap: anywhere;
 }

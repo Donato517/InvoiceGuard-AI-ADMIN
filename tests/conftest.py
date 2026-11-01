@@ -9,6 +9,7 @@ import os
 import socket
 from collections.abc import Iterator
 from contextvars import ContextVar
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -65,6 +66,19 @@ _CONFIGURATION_NAMES = {
 for _name in tuple(os.environ):
     if _name.upper() in _CONFIGURATION_NAMES:
         del os.environ[_name]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def isolate_local_session_key() -> Iterator[None]:
+    """本機簽章金鑰只留在記憶體：路徑無法讀寫，不碰開發者實際的 tmp/，也不依賴暫存目錄。"""
+    from app.services import admin_login_service
+
+    path = Path(os.devnull) / "local-session-key"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(admin_login_service, "_local_session_key_path", lambda: path)
+        admin_login_service._local_session_key.cache_clear()
+        yield
+    admin_login_service._local_session_key.cache_clear()
 
 
 @pytest.fixture(autouse=True)

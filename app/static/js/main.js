@@ -140,6 +140,8 @@ document.addEventListener('click', (event) => {
   if (closeTrigger) {
     const dialog = closeTrigger.closest('dialog')
     if (dialog && typeof dialog.close === 'function') {
+      // 取消後不留下輸入中的內容，下次開啟回到原值
+      dialog.querySelector('form')?.reset()
       dialog.close()
     }
     return

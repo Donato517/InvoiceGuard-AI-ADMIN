@@ -8,9 +8,13 @@
 {% if procurement_return %}
   {% include "pages/invoices/_procurement_return.html" %}
 {% endif %}
-<p class="alert alert--info">
-  左側為原始發票，右側共有 14 項核對欄位。數量與單價會自動重算金額與銷售額合計；應稅稅額沿用 5% 規則，請依實際發票修正。完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔）。
-</p>
+{% if is_first_four_readonly %}
+  <p class="alert alert--warning">進度已進入步驟 5（財務審核）以上，核對欄位為唯讀模式，不可修改。</p>
+{% else %}
+  <p class="alert alert--info">
+    左側為原始發票，右側共有 14 項核對欄位。數量與單價會自動重算金額與銷售額合計；應稅稅額沿用 5% 規則，請依實際發票修正。完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔）。
+  </p>
+{% endif %}
 <div class="invoice-correction-split">
   {% include "pages/invoices/_invoice_original_pane.html" %}
   <section class="correction-field-column" aria-label="14 項核對欄位">
@@ -28,7 +32,7 @@
                  name="format_identification"
                  data-invoice14="format_identification"
                  value="{{ invoice.format_identification or '三聯式手開發票' }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="invoice_number">
@@ -40,7 +44,7 @@
                  value="{{ invoice.invoice_number }}"
                  maxlength="10"
                  required
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="invoice_date">
@@ -51,7 +55,7 @@
                  data-invoice14="invoice_date"
                  value="{{ invoice.invoice_date }}"
                  required
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="buyer_name">
@@ -61,7 +65,7 @@
                  name="buyer_name"
                  data-invoice14="buyer_name"
                  value="{{ invoice.buyer_name or '' }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="buyer_tax_id">
@@ -73,7 +77,7 @@
                  value="{{ invoice.buyer_tax_id or '' }}"
                  maxlength="8"
                  inputmode="numeric"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="item_description">
@@ -83,7 +87,7 @@
                  name="item_description"
                  data-invoice14="item_description"
                  value="{{ invoice.item_description or '' }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="quantity">
@@ -96,7 +100,7 @@
                  step="1"
                  data-invoice14="quantity"
                  value="{{ invoice.quantity or 1 }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="unit_price">
@@ -109,7 +113,7 @@
                  step="1"
                  data-invoice14="unit_price"
                  value="{{ invoice.unit_price if invoice.unit_price is not none else invoice.net_amount }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="amount">
@@ -122,7 +126,7 @@
                  step="1"
                  data-invoice14="amount"
                  value="{{ invoice.amount if invoice.amount is not none else invoice.net_amount }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="net_amount">
@@ -135,7 +139,7 @@
                  step="1"
                  data-invoice14="net_amount"
                  value="{{ invoice.net_amount }}"
-                 {% if invoice.is_completed %}readonly{% endif %}>
+                 {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
           <label for="tax_category">
@@ -146,7 +150,7 @@
                     name="tax_category"
                     data-invoice14="tax_category"
                     aria-label="課稅別"
-                    {% if invoice.is_completed %}disabled{% endif %}>
+                    {% if invoice.is_completed or is_first_four_readonly %}disabled{% endif %}>
               {% for cat in ["應稅", "零稅率", "免稅"] %}
                 <option value="{{ cat }}"
                         {% if (invoice.tax_category or '應稅') == cat %}selected{% endif %}>{{ cat }}</option>
@@ -160,7 +164,7 @@
                    data-invoice14="tax_amount"
                    aria-label="稅額"
                    value="{{ invoice.tax_amount }}"
-                   {% if invoice.is_completed %}readonly{% endif %}>
+                   {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
           </div>
         </div>
         <div class="invoice14-field">
@@ -176,13 +180,13 @@
                    data-invoice14="total_amount"
                    aria-label="總計"
                    value="{{ invoice.total_amount }}"
-                   {% if invoice.is_completed %}readonly{% endif %}>
+                   {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
             <input id="total_chinese"
                    name="total_chinese"
                    data-invoice14="total_chinese"
                    aria-label="國字大寫"
                    value="{{ invoice.total_chinese or '' }}"
-                   {% if invoice.is_completed %}readonly{% endif %}>
+                   {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
           </div>
         </div>
         <div class="invoice14-field">
@@ -194,7 +198,7 @@
                     rows="2"
                     data-invoice14="remarks"
                     aria-label="備註"
-                    {% if invoice.is_completed %}readonly{% endif %}>{{ invoice.remarks or '' }}</textarea>
+                    {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>{{ invoice.remarks or '' }}</textarea>
         </div>
         <div class="invoice14-field">
           <label for="seller_name">
@@ -207,7 +211,7 @@
                    aria-label="銷貨人名稱"
                    placeholder="銷貨人名稱"
                    value="{{ invoice.seller_name or '' }}"
-                   {% if invoice.is_completed %}readonly{% endif %}>
+                   {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
             <input id="seller_tax_id"
                    name="seller_tax_id"
                    data-invoice14="seller_tax_id"
@@ -216,7 +220,7 @@
                    maxlength="8"
                    inputmode="numeric"
                    value="{{ invoice.seller_tax_id or '' }}"
-                   {% if invoice.is_completed %}readonly{% endif %}>
+                   {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
           </div>
         </div>
       </div>

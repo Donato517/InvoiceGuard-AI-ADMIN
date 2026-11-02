@@ -69,6 +69,11 @@
   border-color: var(--color-primary);
 }
 
+.dropzone--disabled {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
 .dropzone input[type="file"] {
   display: none;
 }
@@ -246,6 +251,28 @@
   min-width: 0;
 }
 
+.invoice14-field input.is-invalid,
+.invoice14-field select.is-invalid,
+.invoice14-field textarea.is-invalid {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+}
+
+.invoice14-field input.is-invalid:focus,
+.invoice14-field select.is-invalid:focus,
+.invoice14-field textarea.is-invalid:focus {
+  outline: 2px solid var(--color-danger);
+  outline-offset: 1px;
+}
+
+.field-error-msg {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
 .invoice14-subfields {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -278,6 +305,18 @@
 .correction-original-column {
   position: sticky;
   top: 0;
+}
+
+.correction-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: 0.9375rem;
+}
+
+.correction-panel-header .correction-panel-title {
+  margin-bottom: 0;
 }
 
 .correction-panel-title {

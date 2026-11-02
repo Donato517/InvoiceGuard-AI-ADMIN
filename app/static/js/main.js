@@ -126,6 +126,44 @@ window.addEventListener('pageshow', () => setBusy(null))
  * 對話框開關與拖曳上傳點擊觸發。
  */
 document.addEventListener('click', (event) => {
+  const btnReOcr = event.target.closest('#btn-re-ocr')
+  if (btnReOcr) {
+    const buyerInput = document.getElementById('buyer_tax_id')
+    if (!buyerInput) {
+      return
+    }
+    const val = buyerInput.value.trim()
+    const existingErr = document.getElementById('buyer_tax_id_error')
+    if (!val) {
+      buyerInput.classList.add('is-invalid')
+      buyerInput.setAttribute('aria-invalid', 'true')
+      if (!existingErr) {
+        const err = document.createElement('small')
+        err.id = 'buyer_tax_id_error'
+        err.className = 'field-error-msg'
+        err.textContent = '請填寫買受人統一編號'
+        buyerInput.after(err)
+      } else {
+        existingErr.textContent = '請填寫買受人統一編號'
+        existingErr.hidden = false
+      }
+      window.alert('請先填寫買受人統一編號！')
+      buyerInput.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      buyerInput.focus()
+      return
+    }
+    buyerInput.classList.remove('is-invalid')
+    buyerInput.removeAttribute('aria-invalid')
+    if (existingErr) {
+      existingErr.remove()
+    }
+    const confirmed = window.confirm(`請確認買受人統一編號：${val} 是否正確？`)
+    if (confirmed) {
+      // 後續辨識邏輯預留此處寫入
+    }
+    return
+  }
+
   const openTrigger = event.target.closest('[data-open-dialog]')
   if (openTrigger) {
     const dialogId = openTrigger.dataset.openDialog
@@ -199,6 +237,19 @@ document.addEventListener('change', (event) => {
 
   if (event.target && event.target.dataset && event.target.dataset.invoice14) {
     recalculateInvoice14Fields(event.target.dataset.invoice14)
+  }
+})
+
+document.addEventListener('input', (event) => {
+  if (event.target && event.target.id === 'buyer_tax_id') {
+    if (event.target.value.trim()) {
+      event.target.classList.remove('is-invalid')
+      event.target.removeAttribute('aria-invalid')
+      const existingErr = document.getElementById('buyer_tax_id_error')
+      if (existingErr) {
+        existingErr.remove()
+      }
+    }
   }
 })
 

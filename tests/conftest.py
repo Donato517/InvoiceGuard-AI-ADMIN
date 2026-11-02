@@ -145,3 +145,14 @@ def admin_client() -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = lambda: None
     yield TestClient(app, follow_redirects=False)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def seed_test_invoices_fixture() -> None:
+    """單元測試自動注入測試發票資料，避免測試依賴空資料庫。"""
+    import copy
+
+    from app.routers import invoices as inv
+
+    inv._INVOICE_STORE.clear()
+    inv._INVOICE_STORE.extend(copy.deepcopy(inv.DEMO_TEST_INVOICES))

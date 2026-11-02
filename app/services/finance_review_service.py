@@ -1,6 +1,6 @@
 """
 模組名稱：app.services.finance_review_service
-功能說明：財務審核（2-4）的業務規則——確認檢核提醒、會計欄位、核准與退回補正。
+功能說明：財務審核（2-4）的業務規則——會計欄位、核准與退回補正。
 相依模組：app.schemas.finance_review、app.schemas.account_codes
 注意事項：
     - 只留財務一層審核：待財務審核 → 已核准／退回補正；退回後由申請人重送回待財務審核，
@@ -10,8 +10,8 @@
     - 本模組不存取資料庫；資料表欄位對應集中在 build_review_case()。
       回傳的 StatusChange 須由 repository 以「狀態仍等於 expected_status」為條件更新，
       並與 invoice_status_history 在同一交易寫入，避免兩位財務同時處理同一張單。
-    - C 送出時的檢核提醒全部視為 warning（不擋送出），核准前須逐項確認；
-      確認紀錄的儲存位置待 Schema 決定。
+    - C 送出時的檢核提醒全部視為 warning，只在審核畫面提示，不需確認也不擋核准
+      （2026-11-02 使用者決定取消「確認提醒」）。
 """
 
 from dataclasses import replace
@@ -235,42 +235,6 @@ def _require_reviewable(case: ReviewCase) -> None:
         )
 
 
-def acknowledge_warning(
-    case: ReviewCase, code: str, field: str, reviewer: str, now: datetime, note: str
-) -> ReviewCase:
-    """財務確認一項檢核提醒，備註必填。
-
-    Args:
-        case: 審核資料。
-        code: 提醒代碼。
-        field: 提醒所屬欄位（同一代碼可能出現在多個欄位）。
-        reviewer: 財務人員 user_id。
-        now: 確認時間。
-        note: 為什麼可以接受，例如「已向供應商確認」。
-
-    Returns:
-        更新後的審核資料。
-
-    Raises:
-        FinanceReviewError: 不在審核狀態、備註空白或找不到該提醒。
-    """
-    _require_reviewable(case)
-    if not note.strip():
-        raise FinanceReviewError([ReviewBlocker("NOTE_REQUIRED", "確認提醒時須填寫備註")])
-    found = False
-    warnings = []
-    for warning in case.warnings:
-        if warning.code == code and warning.field == field:
-            found = True
-            warning = replace(
-                warning, acknowledged_by=reviewer, acknowledged_at=now, note=note.strip()
-            )
-        warnings.append(warning)
-    if not found:
-        raise FinanceReviewError([ReviewBlocker("WARNING_NOT_FOUND", f"找不到提醒 {code}")])
-    return replace(case, warnings=tuple(warnings))
-
-
 def update_accounting_fields(
     case: ReviewCase, tax_type: str | None, deduction_code: str | None
 ) -> ReviewCase:
@@ -320,11 +284,6 @@ def approval_blockers(case: ReviewCase, reviewer: str) -> list[ReviewBlocker]:
     blockers = []
     if case.submitted_by is not None and case.submitted_by == reviewer:
         blockers.append(ReviewBlocker("SELF_APPROVAL", "不能核准自己送出的請款單"))
-    open_warnings = [w.code for w in case.warnings if w.acknowledged_by is None]
-    if open_warnings:
-        blockers.append(
-            ReviewBlocker("WARNING_NOT_ACKNOWLEDGED", f"尚有 {len(open_warnings)} 項檢核提醒未確認")
-        )
     if case.tax_type not in TAX_TYPES:
         blockers.append(ReviewBlocker("TAX_TYPE_MISSING", "請選擇課稅別"))
     if case.deduction_code not in DEDUCTION_CODES:

@@ -54,18 +54,10 @@ def _step5(client: TestClient, invoice_id: int = 3) -> str:
     return response.text
 
 
-def _prepare_for_approval(client: TestClient) -> None:
-    acknowledged = client.post(
-        "/invoices/3/finance-review/warnings",
-        data={"code": "tax_id_invalid", "field": "seller_tax_id", "note": "已向供應商確認"},
-    )
-    assert acknowledged.status_code == 303
-
-
 def test_step5_shows_warnings_and_history_link(finance_client: TestClient) -> None:
     html = _step5(finance_client)
 
-    assert "tax_id_invalid" in html
+    assert "賣方統編檢查碼不符，請確認" in html
     assert 'data-open-dialog="change-history-modal"' in html
     assert ">修改歷程</a>" in html
     assert "請選擇扣抵代號" not in html  # 示範發票 3 已有扣抵代號
@@ -91,31 +83,27 @@ def test_step5_removed_sections(finance_client: TestClient) -> None:
         "採購用途",
         "finance-review/fields",
         "finance-review/reject",
+        "finance-review/warnings",
+        "確認提醒",
+        "為什麼可以接受",
     ):
         assert removed not in html
 
 
 def test_removed_routes_are_gone(finance_client: TestClient) -> None:
-    for path in ("/invoices/3/finance-review/fields", "/invoices/3/finance-review/reject"):
+    for path in (
+        "/invoices/3/finance-review/fields",
+        "/invoices/3/finance-review/reject",
+        "/invoices/3/finance-review/warnings",
+    ):
         assert finance_client.post(path, data={"field_name": "x", "reason": "y"}).status_code in (
             404,
             405,
         )
 
 
-def test_approve_blocked_until_warning_acknowledged(finance_client: TestClient) -> None:
-    blocked = finance_client.post("/invoices/3/finance-review/approve")
-
-    assert blocked.status_code == 400
-    assert "項檢核提醒未確認" in blocked.text
-    assert "修改欄位未確認" not in blocked.text
-    assert invoices_router._find_invoice(3)["review_status"] == "pending"
-
-
-def test_approve_without_field_checks_updates_invoice(finance_client: TestClient) -> None:
-    """修改欄位不需逐欄確認，確認檢核提醒後即可核准。"""
-    _prepare_for_approval(finance_client)
-
+def test_approve_with_open_warning_updates_invoice(finance_client: TestClient) -> None:
+    """檢核提醒只提示、修改欄位不需逐欄確認：會計欄位齊全即可核准。"""
     response = finance_client.post("/invoices/3/finance-review/approve")
 
     assert response.status_code == 303
@@ -124,24 +112,23 @@ def test_approve_without_field_checks_updates_invoice(finance_client: TestClient
     assert "此發票已完成審核（已核准）。" in _step5(finance_client)
 
 
+def test_approve_still_requires_deduction_code(finance_client: TestClient) -> None:
+    """扣抵代號未選時仍擋核准，並在頁首列出原因。"""
+    invoices_router._find_invoice(4)["deduction_code"] = ""
+    blocked = finance_client.post("/invoices/4/finance-review/approve")
+
+    assert blocked.status_code == 400
+    assert "請選擇扣抵代號" in blocked.text
+    assert "檢核提醒未確認" not in blocked.text
+    assert invoices_router._find_invoice(4)["review_status"] == "pending"
+
+
 def test_self_approval_blocked(admin_client: TestClient) -> None:
     """測試替身的使用者 ID 預設為 1，與示範發票的送出者相同。"""
-    _prepare_for_approval(admin_client)
-
     response = admin_client.post("/invoices/3/finance-review/approve")
 
     assert response.status_code == 400
     assert "不能核准自己送出的請款單" in response.text
-
-
-def test_warning_requires_note(finance_client: TestClient) -> None:
-    response = finance_client.post(
-        "/invoices/3/finance-review/warnings",
-        data={"code": "tax_id_invalid", "field": "seller_tax_id", "note": " "},
-    )
-
-    assert response.status_code == 400
-    assert "確認提醒時須填寫備註" in response.text
 
 
 def test_accounting_fields_update_invoice(finance_client: TestClient) -> None:
@@ -263,8 +250,7 @@ def test_return_without_items_rejected(finance_client: TestClient) -> None:
 
 def test_approved_invoice_cannot_be_reviewed_again(finance_client: TestClient) -> None:
     response = finance_client.post(
-        "/invoices/1/finance-review/warnings",
-        data={"code": "tax_id_invalid", "field": "seller_tax_id", "note": "再次確認"},
+        "/invoices/1/finance-review/accounting", data={"deduction_code": "1"}
     )
 
     assert response.status_code == 400

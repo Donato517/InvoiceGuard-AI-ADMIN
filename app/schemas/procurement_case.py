@@ -21,6 +21,8 @@ STATUS_PENDING_REVIEW = "pending_accounting_review"
 STATUS_APPROVED = "approved"
 STATUS_RETURNED = "returned_to_applicant"
 STATUS_REJECTED = "rejected"
+# 2026-11-02 起取代財務駁回：申請人在待補正時自行終止，終止後不能再重送
+STATUS_VOIDED = "voided"
 
 # 採購只能修改草稿與退回補正的案件，其他狀態唯讀
 EDITABLE_STATUSES = frozenset({STATUS_DRAFT, STATUS_RETURNED})
@@ -35,6 +37,7 @@ STATUS_LABELS = {
     STATUS_APPROVED: "已核准",
     STATUS_RETURNED: "待補正",
     STATUS_REJECTED: "已駁回",
+    STATUS_VOIDED: "已終止",
 }
 
 # 逐項回覆的處理方式
@@ -157,7 +160,7 @@ class CorrectionResponse:
 
 @dataclass(frozen=True)
 class ResubmitBlocker:
-    """不能重送的原因；code 給程式判斷，message 給使用者閱讀。"""
+    """不能重送或終止的原因；code 給程式判斷，message 給使用者閱讀。"""
 
     code: str
     message: str
@@ -179,4 +182,20 @@ class ResubmitPlan:
     next_round: int
     target_status: str
     responses: tuple[CorrectionResponse, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class TerminatePlan:
+    """通過檢查的終止內容，交給 C 的 service 寫入。
+
+    Attributes:
+        expected_status: 寫入時狀態必須仍是此值（防止與重送同時發生）。
+        target_status: 終止後的狀態（voided）。
+        reason: 寫入 invoice_status_history.reason 的終止原因。
+    """
+
+    invoice_id: str
+    expected_status: str
+    target_status: str
     reason: str

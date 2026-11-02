@@ -537,6 +537,12 @@
   margin-bottom: 12px;
 }
 
+/* 審核狀態列最右邊的「修改歷程」連結，點開彈窗 */
+.fr-header__link {
+  margin-left: auto;
+  font-weight: 600;
+}
+
 .fr-section {
   margin: 20px 0;
 }

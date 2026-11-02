@@ -1,8 +1,8 @@
 {#
   @template pages/invoices/_procurement_return.html
-  @description 步驟 3 上方的「退回補正」區（2-5）：列出財務退回的項目，申請人逐項選「已補正」或「申覆（不修改）」後重新送出；
-               規則由 procurement_case_service 判斷，失敗原因逐項顯示。
-  @route POST /invoices/{invoice_id}/procurement/resubmit、POST /invoices/{invoice_id}/flow/upload（重新上傳附件）
+  @description 步驟 3 上方的「退回補正」區（2-5）：列出財務退回的項目，申請人逐項選「已補正」或「申覆（不修改）」後重新送出，
+               或填原因後終止（不能再重送）；規則由 procurement_case_service 判斷，失敗原因逐項顯示。
+  @route POST /invoices/{invoice_id}/procurement/resubmit、POST /invoices/{invoice_id}/procurement/terminate、POST /invoices/{invoice_id}/flow/upload（重新上傳附件）
   @context invoice: dict              發票資料
   @context procurement_return: dict   {items: [{key, label, reason, is_changed}], actions, errors, submission_round, returned_at}
 #}
@@ -58,6 +58,22 @@
       </ul>
       <button type="submit" class="btn btn--primary">重新送出財務審核</button>
     </form>
+    <details class="fr-details">
+      <summary>終止（不再重送）</summary>
+      <form method="post"
+            action="/invoices/{{ invoice.id }}/procurement/terminate"
+            class="form"
+            data-confirm="終止後不能再重送，確定要終止這張請款單嗎？">
+        <div class="form-field">
+          <label for="terminate-reason">終止原因</label>
+          <input id="terminate-reason"
+                 name="reason"
+                 required
+                 placeholder="例如：供應商將重開發票，改另立新單">
+        </div>
+        <button type="submit" class="btn btn--danger">終止</button>
+      </form>
+    </details>
     <details class="fr-details">
       <summary>重新上傳附件</summary>
       <form method="post"

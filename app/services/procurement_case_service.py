@@ -1,12 +1,13 @@
 """
 模組名稱：app.services.procurement_case_service
-功能說明：採購案件（2-5）的業務規則——部門範圍列表、可否修改、讀取退回項目與重送前逐項檢查。
+功能說明：採購案件（2-5）的業務規則——部門範圍列表、可否修改、讀取退回項目、重送前逐項檢查與終止。
 相依模組：app.schemas.procurement_case、app.services.finance_review_service（欄位中文名稱）
 注意事項：
     - 本模組不存取資料庫；資料表欄位對應集中在 summarize_case() 與 latest_return()。
     - 只有草稿與待補正可修改，其他狀態唯讀。
-    - 重送的實際寫入（新版本、submission_round +1、invoice_changes）由 C 的 service 執行；
-      本模組產生 ResubmitPlan，寫入時須以「狀態仍等於 expected_status」為條件，避免重複送出。
+    - 待補正的案件可由申請人終止（voided，原因必填），終止後不能再重送；2026-11-02 起取代財務駁回。
+    - 重送與終止的實際寫入（新版本、submission_round +1、invoice_changes）由 C 的 service 執行；
+      本模組產生 ResubmitPlan／TerminatePlan，寫入時須以「狀態仍等於 expected_status」為條件，避免重複送出。
     - 退回項目沿用 Schema v1.5 機制：修改過的欄位讀 v_invoice_return_fields 的 review_comment；
       未修改過的欄位、附件等讀該次 invoice_status_history.reason 的「欄位：原因」逐行文字
       （格式見 finance_review_service.return_to_applicant）。
@@ -24,6 +25,7 @@ from app.schemas.procurement_case import (
     RESUBMIT_STATUS,
     STATUS_LABELS,
     STATUS_RETURNED,
+    STATUS_VOIDED,
     CaseFilter,
     CaseScope,
     CaseSummary,
@@ -32,6 +34,7 @@ from app.schemas.procurement_case import (
     ResubmitPlan,
     ReturnedItem,
     ReturnRequest,
+    TerminatePlan,
 )
 from app.services.finance_review_service import field_label
 
@@ -304,4 +307,36 @@ def prepare_resubmit(
         target_status=RESUBMIT_STATUS,
         responses=ordered,
         reason=reason,
+    )
+
+
+def prepare_terminate(invoice: dict[str, Any], scope: CaseScope, reason: str) -> TerminatePlan:
+    """申請人終止被退回的請款單前的檢查，通過後產生交給 C 寫入的終止計畫。
+
+    Args:
+        invoice: Schema v1.5 invoices 欄位。
+        scope: 目前使用者與選取部門。
+        reason: 終止原因，必填。
+
+    Returns:
+        終止計畫。
+
+    Raises:
+        ProcurementCaseError: 不在待補正、不在部門範圍或原因空白。
+    """
+    status = str(invoice["status"])
+    blockers = []
+    if status != STATUS_RETURNED:
+        blockers.append(ResubmitBlocker("NOT_RETURNED", "只有待補正的案件可以終止"))
+    if str(invoice.get("department_id")) != scope.department_id:
+        blockers.append(ResubmitBlocker("OUT_OF_SCOPE", "這張請款單不屬於目前部門"))
+    if not reason.strip():
+        blockers.append(ResubmitBlocker("REASON_REQUIRED", "終止時須填寫原因"))
+    if blockers:
+        raise ProcurementCaseError(blockers)
+    return TerminatePlan(
+        invoice_id=str(invoice["invoice_id"]),
+        expected_status=status,
+        target_status=STATUS_VOIDED,
+        reason=reason.strip(),
     )

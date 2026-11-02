@@ -20,7 +20,10 @@ STATUS_SUBMITTED = "pending_department_approval"
 STATUS_PENDING_REVIEW = "pending_accounting_review"
 STATUS_APPROVED = "approved"
 STATUS_RETURNED = "returned_to_applicant"
+# 2026-11-02 使用者決定取消財務「駁回」，改由申請人在退回補正時自行終止（voided）；
+# rejected 只保留給舊資料顯示，不再產生。
 STATUS_REJECTED = "rejected"
+STATUS_VOIDED = "voided"
 
 REVIEWABLE_STATUSES = frozenset({STATUS_SUBMITTED, STATUS_PENDING_REVIEW})
 
@@ -30,6 +33,7 @@ STATUS_LABELS = {
     STATUS_APPROVED: "已核准",
     STATUS_RETURNED: "退回補正",
     STATUS_REJECTED: "已駁回",
+    STATUS_VOIDED: "已終止",
 }
 
 # 畫面顯示用的欄位名稱；刪除的 AI 明細（deleted_item_N）另由 service 組字
@@ -55,18 +59,7 @@ FIELD_LABELS = {
 
 # 財務審核時填寫的會計欄位
 TAX_TYPES = {"taxable": "1 應稅", "zero_rated": "2 零稅率", "tax_exempt": "3 免稅"}
-# 會計科目 → (名稱, 預設扣抵代號)；選科目時帶出扣抵代號，財務仍可調整。
-# TODO(StacieChen): 示範清單；會計科目主檔進 Schema 後改讀資料表（見 F_Schema補充建議_v1.5.md §7）
-ACCOUNT_CODES = {
-    "5601": ("辦公用品費", "1"),
-    "5602": ("什支", "1"),
-    "5605": ("修繕費", "1"),
-    "5611": ("交際費", "3"),
-    "5612": ("職工福利", "3"),
-    "1401": ("辦公設備", "2"),
-    "1421": ("電腦設備", "2"),
-}
-
+# 費用大項與會計科目清單見 app.schemas.account_codes；扣抵代號為獨立選項，不與會計科目連動。
 DEDUCTION_CODES = {
     "1": "1 進貨及費用",
     "2": "2 固定資產",
@@ -77,7 +70,7 @@ DEDUCTION_CODES = {
 
 @dataclass(frozen=True)
 class FieldReview:
-    """一個「AI 原值 → 送出值」不同的欄位，財務須逐欄確認。
+    """一個「AI 原值 → 送出值」不同的欄位；退回補正時用來對應退回項目（2026-11-02 起核准前不再逐欄確認）。
 
     Attributes:
         field_scope: header 或 item。

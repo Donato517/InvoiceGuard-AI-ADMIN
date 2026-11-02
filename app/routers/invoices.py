@@ -56,7 +56,6 @@ from app.services.e_admin_service import INVOICES, EModule, get_e_module
 from app.services.finance_review_service import (
     FinanceReviewError,
     account_category,
-    acknowledge_warning,
     approve,
     build_change_history,
     build_review_case,
@@ -1397,26 +1396,6 @@ def _review_error(
     response = _render_flow_page(request, invoice, 5, error=str(error))
     response.status_code = 400
     return response
-
-
-@router.post("/{invoice_id}/finance-review/warnings", response_model=None)
-def finance_acknowledge_warning(
-    request: Request,
-    invoice_id: int,
-    code: Annotated[str, Form()],
-    field: Annotated[str, Form()],
-    note: Annotated[str, Form()] = "",
-) -> Response:
-    """步驟 5：財務確認一項檢核提醒（備註必填）。"""
-    invoice = _finance_review_target(request, invoice_id)
-    try:
-        case = acknowledge_warning(
-            _finance_case(invoice), code, field, _reviewer_id(request), datetime.now(UTC), note
-        )
-    except FinanceReviewError as error:
-        return _review_error(request, invoice, error)
-    _sync_invoice(invoice, case)
-    return _review_redirect(invoice_id)
 
 
 @router.post("/{invoice_id}/finance-review/accounting", response_model=None)

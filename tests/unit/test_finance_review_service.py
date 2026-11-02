@@ -25,7 +25,6 @@ from app.services.finance_review_service import (
     ALLOWED_TRANSITIONS,
     FinanceReviewError,
     account_category,
-    acknowledge_warning,
     approval_blockers,
     approve,
     build_change_history,
@@ -49,16 +48,8 @@ def _case() -> ReviewCase:
 
 
 def _ready_case() -> ReviewCase:
-    """提醒都已確認、會計欄位已填的審核資料；修改欄位不需逐欄確認。"""
-    case = acknowledge_warning(
-        _case(),
-        "seller_name_unverified",
-        "seller_name",
-        REVIEWER,
-        NOW,
-        "已核對",
-    )
-    return update_accounting_fields(case, tax_type=None, deduction_code="1")
+    """會計欄位已填的審核資料；修改欄位與檢核提醒都不需確認。"""
+    return update_accounting_fields(_case(), tax_type=None, deduction_code="1")
 
 
 def _blocker_codes(error: pytest.ExceptionInfo[FinanceReviewError]) -> set[str]:
@@ -136,13 +127,6 @@ def test_build_change_history_separates_rounds():
     assert totals[1].values == ("6300", "6250")
 
 
-def test_acknowledge_warning_requires_note():
-    with pytest.raises(FinanceReviewError) as error:
-        acknowledge_warning(_case(), "seller_name_unverified", "seller_name", REVIEWER, NOW, "  ")
-
-    assert _blocker_codes(error) == {"NOTE_REQUIRED"}
-
-
 def test_update_accounting_fields_rejects_unknown_codes():
     with pytest.raises(FinanceReviewError) as error:
         update_accounting_fields(_case(), tax_type="exempt", deduction_code="5")
@@ -156,7 +140,15 @@ def test_update_accounting_fields_rejects_unknown_codes():
 def test_approval_blockers_lists_all_open_items():
     codes = {b.code for b in approval_blockers(_case(), REVIEWER)}
 
-    assert codes == {"WARNING_NOT_ACKNOWLEDGED", "DEDUCTION_CODE_MISSING"}
+    assert codes == {"DEDUCTION_CODE_MISSING"}
+
+
+def test_warnings_do_not_block_approval():
+    """2026-11-02 起檢核提醒只提示，不需確認也不擋核准。"""
+    case = _ready_case()
+    assert case.warnings
+
+    assert approval_blockers(case, REVIEWER) == []
 
 
 def test_approve_ready_case_returns_status_change():

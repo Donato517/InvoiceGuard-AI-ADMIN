@@ -118,22 +118,17 @@ class ChangeTrail:
 
 @dataclass(frozen=True)
 class ReviewWarning:
-    """C 送出時的檢核提醒（不擋送出），財務審核時須逐項確認。
+    """C 送出時的檢核提醒（不擋送出），財務審核畫面只提示，不需確認。
 
     Attributes:
         field: 欄位名稱。
         code: C 的固定代碼，例如 tax_amount_mismatch。
         message: 給使用者看的中文說明。
-        acknowledged_by: 確認的財務人員；None 代表尚未處理。
-        note: 確認備註，確認時必填。
     """
 
     field: str
     code: str
     message: str
-    acknowledged_by: str | None = None
-    acknowledged_at: datetime | None = None
-    note: str | None = None
 
 
 @dataclass(frozen=True)

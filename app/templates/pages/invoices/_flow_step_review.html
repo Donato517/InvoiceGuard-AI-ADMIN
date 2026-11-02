@@ -1,8 +1,8 @@
 {#
   @template pages/invoices/_flow_step_review.html
-  @description 步驟 5：財務審核（2-4）。確認檢核提醒、填課稅別、扣抵代號、費用大項與會計科目，
+  @description 步驟 5：財務審核（2-4）。提示檢核提醒（不需確認），填課稅別、扣抵代號、費用大項與會計科目，
                再核准或逐項退回補正；申請人修改軌跡在「修改歷程」彈窗查看。規則由 finance_review_service 判斷。
-  @route POST /invoices/{invoice_id}/finance-review/{warnings|accounting|approve|return}
+  @route POST /invoices/{invoice_id}/finance-review/{accounting|approve|return}
   @context invoice: dict              發票資料
   @context fields_14: list[dict]      14 項核對欄位
   @context finance_review: dict|None  審核資料 {case, status_label, reviewable, warnings, trails, history,
@@ -69,21 +69,9 @@
     {% if fr.warnings %}
       <ul class="fr-issue-list">
         {% for w in fr.warnings %}
-          <li class="fr-issue {% if w.acknowledged_by %}fr-issue--done{% else %}fr-issue--warning{% endif %}">
-            <span class="fr-issue__level">{% if w.acknowledged_by %}已確認{% else %}警告{% endif %}</span>
+          <li class="fr-issue fr-issue--warning">
+            <span class="fr-issue__level">警告</span>
             <span>{{ w.message }}</span>
-            {% if w.acknowledged_by %}
-              <span class="muted small-text">備註：{{ w.note }}</span>
-            {% elif editable %}
-              <form method="post"
-                    action="/invoices/{{ invoice.id }}/finance-review/warnings"
-                    class="fr-inline-form">
-                <input type="hidden" name="code" value="{{ w.code }}">
-                <input type="hidden" name="field" value="{{ w.field }}">
-                <input name="note" required placeholder="為什麼可以接受（必填）" aria-label="{{ w.message }} 確認備註">
-                <button type="submit" class="btn btn--secondary btn--small">確認提醒</button>
-              </form>
-            {% endif %}
           </li>
         {% endfor %}
       </ul>

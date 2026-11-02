@@ -189,3 +189,42 @@ def test_step3_without_return_has_no_return_panel(admin_client: TestClient) -> N
     html = admin_client.get("/invoices/3/flow?step=3").text
     assert "重新送出財務審核" not in html
     assert "儲存並進入系統檢核" in html
+
+
+def test_step3_shows_terminate_option(client: TestClient) -> None:
+    html = client.get("/invoices/3/flow?step=3").text
+    assert "終止（不再重送）" in html
+    assert 'action="/invoices/3/procurement/terminate"' in html
+
+
+def test_terminate_requires_reason(client: TestClient) -> None:
+    response = client.post("/invoices/3/procurement/terminate", data={"reason": " "})
+    assert response.status_code == 400
+    assert "終止時須填寫原因" in response.text
+    assert invoices_router._find_invoice(3)["review_status"] == "returned"
+
+
+def test_terminate_closes_case_and_blocks_resubmit(client: TestClient) -> None:
+    response = client.post("/invoices/3/procurement/terminate", data={"reason": "供應商將重開發票"})
+    assert response.status_code == 303
+    assert invoices_router._find_invoice(3)["review_status"] == "voided"
+    assert invoices_router._FINANCE_CASES[3].status == "voided"
+    assert invoices_router._RETURN_SNAPSHOTS == {}
+
+    html = client.get("/invoices/3/flow?step=5").text
+    assert "已終止" in html
+    assert "此請款單已由申請人終止，不能再重送。" in html
+    assert "確認核准" not in html
+
+    again = client.post(
+        "/invoices/3/procurement/resubmit",
+        data={"response_key": ["total_amount|"], "response_action": ["corrected"]},
+    )
+    assert again.status_code == 400
+
+
+def test_terminate_rejected_when_not_returned(admin_client: TestClient) -> None:
+    response = admin_client.post("/invoices/4/procurement/terminate", data={"reason": "不需要了"})
+    assert response.status_code == 400
+    assert "只有待補正的案件可以終止" in response.text
+    assert invoices_router._find_invoice(4)["review_status"] == "pending"

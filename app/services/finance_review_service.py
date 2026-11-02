@@ -1,9 +1,11 @@
 """
 模組名稱：app.services.finance_review_service
-功能說明：財務審核（2-4）的業務規則——逐欄確認、確認檢核提醒、核准、退回補正與駁回。
-相依模組：app.schemas.finance_review
+功能說明：財務審核（2-4）的業務規則——確認檢核提醒、會計欄位、核准與退回補正。
+相依模組：app.schemas.finance_review、app.schemas.account_codes
 注意事項：
-    - 只留財務一層審核：待財務審核 → 已核准／退回補正／已駁回；退回後由申請人重送回待財務審核。
+    - 只留財務一層審核：待財務審核 → 已核准／退回補正；退回後由申請人重送回待財務審核，
+      或由申請人終止（procurement_case_service，2026-11-02 起取代財務駁回）。
+    - 2026-11-02 使用者決定：核准前不再逐欄確認「AI 原值 → 送出值」，修改軌跡改在「修改歷程」彈窗查看。
       「待財務審核」包含 C 送出時寫入的 pending_department_approval 與 pending_accounting_review。
     - 本模組不存取資料庫；資料表欄位對應集中在 build_review_case()。
       回傳的 StatusChange 須由 repository 以「狀態仍等於 expected_status」為條件更新，
@@ -17,14 +19,14 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.schemas.account_codes import ACCOUNT_CODES, EXPENSE_CATEGORIES
 from app.schemas.finance_review import (
-    ACCOUNT_CODES,
     DEDUCTION_CODES,
     FIELD_LABELS,
     REVIEWABLE_STATUSES,
     STATUS_APPROVED,
-    STATUS_REJECTED,
     STATUS_RETURNED,
+    STATUS_VOIDED,
     TAX_TYPES,
     ChangeTrail,
     FieldReview,
@@ -35,13 +37,10 @@ from app.schemas.finance_review import (
     StatusChange,
 )
 
-# 允許的狀態轉換；表上沒有的一律拒絕。退回後重送由申請端（C）執行。
+# 允許的狀態轉換；表上沒有的一律拒絕。退回後重送或終止由申請端執行。
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    **{
-        status: frozenset({STATUS_APPROVED, STATUS_RETURNED, STATUS_REJECTED})
-        for status in REVIEWABLE_STATUSES
-    },
-    STATUS_RETURNED: REVIEWABLE_STATUSES,
+    **{status: frozenset({STATUS_APPROVED, STATUS_RETURNED}) for status in REVIEWABLE_STATUSES},
+    STATUS_RETURNED: REVIEWABLE_STATUSES | {STATUS_VOIDED},
 }
 
 
@@ -137,41 +136,46 @@ def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
-def account_deduction_code(account_code: str) -> str | None:
-    """會計科目的預設扣抵代號；選科目時用來帶出扣抵代號。
+def account_category(account_code: str) -> str | None:
+    """會計科目所屬的費用大項；畫面依此預選費用大項。
 
     Args:
-        account_code: 會計科目代碼，例如 5601；可帶名稱（5601 辦公用品費），只取第一段。
+        account_code: 會計科目代碼，例如 6211004；可帶名稱（6211004 管理-文具用品），只取第一段。
 
     Returns:
-        預設扣抵代號；不在科目清單時為 None。
+        費用大項；不在科目清單時為 None。
     """
     code = account_code.strip().split(" ", 1)[0]
     return ACCOUNT_CODES[code][1] if code in ACCOUNT_CODES else None
 
 
-def check_account_deduction(account_code: str, deduction_code: str | None) -> None:
-    """檢查會計科目與扣抵代號屬於同一類（例如選 1 進貨及費用時只能用費用類科目）。
+def check_account_code(category: str, account_code: str) -> None:
+    """檢查費用大項與會計科目：要先選費用大項，會計科目須屬於該大項。
 
     Args:
+        category: 費用大項；空白代表未選。
         account_code: 會計科目代碼；空白代表未選，不檢查。
-        deduction_code: 扣抵代號；None 代表未選，不檢查。
 
     Raises:
-        FinanceReviewError: 科目不在清單，或科目的扣抵代號與所選不同。
+        FinanceReviewError: 大項不在清單、選了科目卻沒選大項、科目不在清單或不屬於該大項。
     """
+    if category and category not in EXPENSE_CATEGORIES:
+        raise FinanceReviewError([ReviewBlocker("BAD_EXPENSE_CATEGORY", "費用大項不在清單中")])
     if not account_code:
         return
-    expected = account_deduction_code(account_code)
-    if expected is None:
+    if not category:
+        raise FinanceReviewError(
+            [ReviewBlocker("EXPENSE_CATEGORY_MISSING", "請先選擇費用大項，再選會計科目")]
+        )
+    actual = account_category(account_code)
+    if actual is None:
         raise FinanceReviewError([ReviewBlocker("BAD_ACCOUNT_CODE", "會計科目不在科目清單中")])
-    if deduction_code and deduction_code != expected:
-        name = ACCOUNT_CODES[account_code.strip().split(" ", 1)[0]][0]
+    if actual != category:
         raise FinanceReviewError(
             [
                 ReviewBlocker(
-                    "ACCOUNT_DEDUCTION_MISMATCH",
-                    f"會計科目「{name}」屬於扣抵代號 {expected}，與所選扣抵代號 {deduction_code} 不同",
+                    "ACCOUNT_CATEGORY_MISMATCH",
+                    f"會計科目屬於「{actual}」，與所選費用大項「{category}」不同",
                 )
             ]
         )
@@ -229,47 +233,6 @@ def _require_reviewable(case: ReviewCase) -> None:
         raise FinanceReviewError(
             [ReviewBlocker("NOT_REVIEWABLE", "這張請款單目前不在待財務審核狀態")]
         )
-
-
-def check_field(
-    case: ReviewCase,
-    field_name: str,
-    item_id: str | None,
-    reviewer: str,
-    now: datetime,
-    comment: str | None = None,
-) -> ReviewCase:
-    """財務確認一個 AI 原值與送出值不同的欄位。
-
-    Args:
-        case: 審核資料。
-        field_name: 欄位名稱。
-        item_id: 明細欄位所屬明細；表頭為 None。
-        reviewer: 財務人員 user_id。
-        now: 確認時間。
-        comment: 審核備註。
-
-    Returns:
-        更新後的審核資料。
-
-    Raises:
-        FinanceReviewError: 不在審核狀態，或找不到該欄位。
-    """
-    _require_reviewable(case)
-    found = False
-    reviews = []
-    for review in case.field_reviews:
-        if review.field_name == field_name and review.item_id == item_id:
-            found = True
-            review = replace(
-                review, is_checked=True, checked_by=reviewer, checked_at=now, review_comment=comment
-            )
-        reviews.append(review)
-    if not found:
-        raise FinanceReviewError(
-            [ReviewBlocker("FIELD_NOT_FOUND", f"找不到需確認的欄位 {field_name}")]
-        )
-    return replace(case, field_reviews=tuple(reviews))
 
 
 def acknowledge_warning(
@@ -357,14 +320,6 @@ def approval_blockers(case: ReviewCase, reviewer: str) -> list[ReviewBlocker]:
     blockers = []
     if case.submitted_by is not None and case.submitted_by == reviewer:
         blockers.append(ReviewBlocker("SELF_APPROVAL", "不能核准自己送出的請款單"))
-    unchecked = [field_label(r.field_name) for r in case.field_reviews if not r.is_checked]
-    if unchecked:
-        blockers.append(
-            ReviewBlocker(
-                "FIELD_NOT_CHECKED",
-                f"尚有 {len(unchecked)} 個修改欄位未確認：{'、'.join(unchecked)}",
-            )
-        )
     open_warnings = [w.code for w in case.warnings if w.acknowledged_by is None]
     if open_warnings:
         blockers.append(
@@ -467,24 +422,3 @@ def return_to_applicant(
         return_items=cleaned,
         field_review_updates=tuple(updates),
     )
-
-
-def reject(case: ReviewCase, reviewer: str, reason: str, now: datetime) -> StatusChange:
-    """駁回請款單（終止，不能再重送）。
-
-    Args:
-        case: 審核資料。
-        reviewer: 財務人員 user_id。
-        reason: 駁回原因，必填。
-        now: 駁回時間。
-
-    Returns:
-        狀態異動。
-
-    Raises:
-        FinanceReviewError: 不在審核狀態或原因空白。
-    """
-    _require_reviewable(case)
-    if not reason.strip():
-        raise FinanceReviewError([ReviewBlocker("REASON_REQUIRED", "駁回時須填寫原因")])
-    return _change(case, STATUS_REJECTED, reviewer, now, reason=reason.strip())

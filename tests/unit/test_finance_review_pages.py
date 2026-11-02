@@ -1,6 +1,6 @@
 """
 模組名稱：tests.unit.test_finance_review_pages
-功能說明：步驟 5 財務審核（2-4）畫面與按鈕路由測試——逐欄確認、提醒確認、會計欄位、核准、退回與駁回。
+功能說明：步驟 5 財務審核（2-4）畫面與按鈕路由測試——提醒確認、費用大項與會計科目、修改歷程、核准與退回。
 相依模組：app.routers.invoices、app.services.finance_review_service
 注意事項：
     - 使用 admin_client 測試替身登入，不連資料庫；示範發票 3、4 為待審核案件。
@@ -55,9 +55,6 @@ def _step5(client: TestClient, invoice_id: int = 3) -> str:
 
 
 def _prepare_for_approval(client: TestClient) -> None:
-    for field_name in ("total_amount", "seller_name"):
-        response = client.post("/invoices/3/finance-review/fields", data={"field_name": field_name})
-        assert response.status_code == 303, response.text[-300:]
     acknowledged = client.post(
         "/invoices/3/finance-review/warnings",
         data={"code": "tax_id_invalid", "field": "seller_tax_id", "note": "已向供應商確認"},
@@ -65,29 +62,60 @@ def _prepare_for_approval(client: TestClient) -> None:
     assert acknowledged.status_code == 303
 
 
-def test_step5_shows_field_reviews_warnings_and_trails(finance_client: TestClient) -> None:
+def test_step5_shows_warnings_and_history_link(finance_client: TestClient) -> None:
     html = _step5(finance_client)
 
-    assert "修改欄位確認（AI 原值 → 送出值）" in html
-    assert "總計" in html and "1557" in html and "1575" in html
     assert "tax_id_invalid" in html
-    assert "1557 → 1755 → 1575" in html
-    assert "核准前待處理（2）" in html
+    assert 'data-open-dialog="change-history-modal"' in html
+    assert ">修改歷程</a>" in html
     assert "請選擇扣抵代號" not in html  # 示範發票 3 已有扣抵代號
 
 
-def test_approve_blocked_until_items_handled(finance_client: TestClient) -> None:
+def test_step5_history_modal_lists_applicant_changes(finance_client: TestClient) -> None:
+    html = _step5(finance_client)
+    modal = html[html.index('id="change-history-modal"') : html.index("</dialog>")]
+
+    assert "1557 → 1755 → 1575" in modal
+    assert "總計" in modal
+
+
+def test_step5_removed_sections(finance_client: TestClient) -> None:
+    """2026-11-02 起移除核准前待處理、修改欄位確認、申請人修改軌跡、駁回與採購用途。"""
+    html = _step5(finance_client)
+
+    for removed in (
+        "核准前待處理",
+        "修改欄位確認",
+        "申請人修改軌跡",
+        "駁回",
+        "採購用途",
+        "finance-review/fields",
+        "finance-review/reject",
+    ):
+        assert removed not in html
+
+
+def test_removed_routes_are_gone(finance_client: TestClient) -> None:
+    for path in ("/invoices/3/finance-review/fields", "/invoices/3/finance-review/reject"):
+        assert finance_client.post(path, data={"field_name": "x", "reason": "y"}).status_code in (
+            404,
+            405,
+        )
+
+
+def test_approve_blocked_until_warning_acknowledged(finance_client: TestClient) -> None:
     blocked = finance_client.post("/invoices/3/finance-review/approve")
 
     assert blocked.status_code == 400
-    assert "個修改欄位未確認" in blocked.text
+    assert "項檢核提醒未確認" in blocked.text
+    assert "修改欄位未確認" not in blocked.text
     assert invoices_router._find_invoice(3)["review_status"] == "pending"
 
 
-def test_full_review_then_approve_updates_invoice(finance_client: TestClient) -> None:
+def test_approve_without_field_checks_updates_invoice(finance_client: TestClient) -> None:
+    """修改欄位不需逐欄確認，確認檢核提醒後即可核准。"""
     _prepare_for_approval(finance_client)
 
-    assert "核准前待處理" not in _step5(finance_client)
     response = finance_client.post("/invoices/3/finance-review/approve")
 
     assert response.status_code == 303
@@ -119,55 +147,73 @@ def test_warning_requires_note(finance_client: TestClient) -> None:
 def test_accounting_fields_update_invoice(finance_client: TestClient) -> None:
     response = finance_client.post(
         "/invoices/4/finance-review/accounting",
-        data={"tax_type": "zero_rated", "deduction_code": "1", "account_code": "5601"},
+        data={
+            "tax_type": "zero_rated",
+            "deduction_code": "1",
+            "expense_category": "行政總務費用",
+            "account_code": "6211004",
+        },
     )
 
     assert response.status_code == 303
     invoice = invoices_router._find_invoice(4)
     assert invoice["tax_category"] == "零稅率"
     assert invoice["deduction_code"] == "1 - 進貨及費用"
-    assert invoice["account_code"] == "5601 辦公用品費"
+    assert invoice["expense_category"] == "行政總務費用"
+    assert invoice["account_code"] == "6211004 管理-文具用品"
 
 
-def test_account_code_fills_default_deduction_code(finance_client: TestClient) -> None:
-    """示範發票 3 原本扣抵代號 1，改選固定資產科目且不指定扣抵代號時帶出 2。"""
+def test_deduction_code_independent_of_account(finance_client: TestClient) -> None:
+    """扣抵代號不再由會計科目帶出，也不檢查是否同類。"""
     response = finance_client.post(
-        "/invoices/3/finance-review/accounting", data={"account_code": "1401"}
+        "/invoices/3/finance-review/accounting",
+        data={"expense_category": "固定資產", "account_code": "1401090", "deduction_code": "1"},
     )
 
     assert response.status_code == 303
     invoice = invoices_router._find_invoice(3)
-    assert invoice["account_code"] == "1401 辦公設備"
-    assert invoice["deduction_code"] == "2 - 固定資產"
-    assert 'value="1401"' in _step5(finance_client)
+    assert invoice["account_code"] == "1401090 辦公設備-其他"
+    assert invoice["deduction_code"] == "1 - 進貨及費用"
 
 
-def test_account_and_deduction_code_must_match(finance_client: TestClient) -> None:
-    """選 1 進貨及費用時不能用固定資產科目。"""
+def test_account_requires_category_first(finance_client: TestClient) -> None:
     response = finance_client.post(
-        "/invoices/3/finance-review/accounting",
-        data={"account_code": "1401", "deduction_code": "1"},
+        "/invoices/3/finance-review/accounting", data={"account_code": "6211004"}
     )
 
     assert response.status_code == 400
-    assert "與所選扣抵代號 1 不同" in response.text
-    assert invoices_router._find_invoice(3)["account_code"].startswith("5602")
+    assert "請先選擇費用大項" in response.text
+    assert invoices_router._find_invoice(3)["account_code"].startswith("6235090")
 
 
-def test_step5_lists_only_accounts_of_current_deduction_code(finance_client: TestClient) -> None:
-    """示範發票 3 扣抵代號為 1：固定資產與不得扣抵科目預設隱藏。"""
+def test_account_must_belong_to_category(finance_client: TestClient) -> None:
+    response = finance_client.post(
+        "/invoices/3/finance-review/accounting",
+        data={"expense_category": "用人費用", "account_code": "6211004"},
+    )
+
+    assert response.status_code == 400
+    assert "與所選費用大項「用人費用」不同" in response.text
+
+
+def test_step5_lists_only_accounts_of_current_category(finance_client: TestClient) -> None:
+    """示範發票 3 的科目 6235090 屬於行政總務費用：預選該大項，只列出該大項的科目。"""
     html = _step5(finance_client)
-    options = re.findall(r'<option value="(\d{4})"([^>]*)>', html)
-    hidden = {code for code, attrs in options if "hidden" in attrs}
-    visible = {code for code, attrs in options if "hidden" not in attrs}
+    category_select = html[html.index('id="expense_category"') : html.index('id="account_code"')]
+    selected = re.search(r'<option value="([^"]+)"\s+selected>', category_select)
+    options = re.findall(r'<option value="(\d{7})"\s+data-category="([^"]+)"([^>]*)>', html)
+    visible = {category for _, category, attrs in options if "hidden" not in attrs}
 
-    assert visible == {"5601", "5602", "5605"}
-    assert hidden == {"5611", "5612", "1401", "1421"}
+    assert selected is not None and selected.group(1) == "行政總務費用"
+    assert visible == {"行政總務費用"}
+    assert len(options) == 296
+    assert 'value="6235090"' in html
 
 
 def test_unknown_account_code_rejected(finance_client: TestClient) -> None:
     response = finance_client.post(
-        "/invoices/3/finance-review/accounting", data={"account_code": "9999"}
+        "/invoices/3/finance-review/accounting",
+        data={"expense_category": "用人費用", "account_code": "9999"},
     )
 
     assert response.status_code == 400
@@ -215,21 +261,10 @@ def test_return_without_items_rejected(finance_client: TestClient) -> None:
     assert "退回時須逐項填寫欄位與補正原因" in response.text
 
 
-def test_reject_requires_reason_then_closes_case(finance_client: TestClient) -> None:
-    assert finance_client.post("/invoices/4/finance-review/reject").status_code == 400
-
-    response = finance_client.post(
-        "/invoices/4/finance-review/reject", data={"reason": "非公司費用"}
-    )
-
-    assert response.status_code == 303
-    assert invoices_router._find_invoice(4)["review_status"] == "rejected"
-    assert "此請款單已駁回，不能再重送。" in _step5(finance_client, 4)
-
-
 def test_approved_invoice_cannot_be_reviewed_again(finance_client: TestClient) -> None:
     response = finance_client.post(
-        "/invoices/1/finance-review/fields", data={"field_name": "total_amount"}
+        "/invoices/1/finance-review/warnings",
+        data={"code": "tax_id_invalid", "field": "seller_tax_id", "note": "再次確認"},
     )
 
     assert response.status_code == 400

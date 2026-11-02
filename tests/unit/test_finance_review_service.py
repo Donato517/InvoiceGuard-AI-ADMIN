@@ -15,25 +15,22 @@ import pytest
 
 from app.schemas.finance_review import (
     STATUS_APPROVED,
-    STATUS_PENDING_REVIEW,
-    STATUS_REJECTED,
     STATUS_RETURNED,
     STATUS_SUBMITTED,
+    STATUS_VOIDED,
     ReturnItem,
     ReviewCase,
 )
 from app.services.finance_review_service import (
     ALLOWED_TRANSITIONS,
     FinanceReviewError,
-    account_deduction_code,
+    account_category,
     acknowledge_warning,
     approval_blockers,
     approve,
     build_change_history,
     build_review_case,
-    check_account_deduction,
-    check_field,
-    reject,
+    check_account_code,
     return_to_applicant,
     update_accounting_fields,
     warnings_from_validation_results,
@@ -52,12 +49,14 @@ def _case() -> ReviewCase:
 
 
 def _ready_case() -> ReviewCase:
-    """所有欄位與提醒都已確認、會計欄位已填的審核資料。"""
-    case = _case()
-    for review in case.field_reviews:
-        case = check_field(case, review.field_name, review.item_id, REVIEWER, NOW)
+    """提醒都已確認、會計欄位已填的審核資料；修改欄位不需逐欄確認。"""
     case = acknowledge_warning(
-        case, "seller_name_unverified", "seller_name", REVIEWER, NOW, "已核對"
+        _case(),
+        "seller_name_unverified",
+        "seller_name",
+        REVIEWER,
+        NOW,
+        "已核對",
     )
     return update_accounting_fields(case, tax_type=None, deduction_code="1")
 
@@ -88,7 +87,7 @@ def test_warnings_from_validation_results_accepts_empty():
     assert warnings_from_validation_results(None) == []
 
 
-# ---- 逐欄確認與提醒 ----
+# ---- 輪次與提醒 ----
 
 
 def test_build_review_case_ignores_previous_rounds():
@@ -99,25 +98,12 @@ def test_build_review_case_ignores_previous_rounds():
     assert "seller_name" not in {r.field_name for r in case.field_reviews}
 
 
-def test_deleted_item_must_be_checked_before_approval():
+def test_unchecked_field_reviews_do_not_block_approval():
+    """2026-11-02 起核准前不再逐欄確認 AI 原值與送出值。"""
     case = _ready_case()
-    reviews = tuple(
-        replace(r, is_checked=False) if r.field_name == "deleted_item_3" else r
-        for r in case.field_reviews
-    )
+    assert any(not r.is_checked for r in case.field_reviews)
 
-    blockers = approval_blockers(replace(case, field_reviews=reviews), REVIEWER)
-
-    assert [b.code for b in blockers] == ["FIELD_NOT_CHECKED"]
-    assert "刪除的 AI 明細第 3 筆" in blockers[0].message
-
-
-def test_check_field_marks_deleted_item():
-    case = check_field(_case(), "deleted_item_3", None, REVIEWER, NOW)
-
-    review = next(r for r in case.field_reviews if r.field_name == "deleted_item_3")
-    assert review.is_checked
-    assert review.ai_original_value["item_name"] == "運費"
+    assert approval_blockers(case, REVIEWER) == []
 
 
 # ---- 修改軌跡 ----
@@ -150,22 +136,6 @@ def test_build_change_history_separates_rounds():
     assert totals[1].values == ("6300", "6250")
 
 
-def test_check_field_marks_item_field_by_item_id():
-    case = check_field(_case(), "unit_price", ITEM_ID, REVIEWER, NOW, comment="與原圖一致")
-
-    review = next(r for r in case.field_reviews if r.field_name == "unit_price")
-    assert review.is_checked
-    assert review.checked_by == REVIEWER
-    assert review.review_comment == "與原圖一致"
-
-
-def test_check_field_unknown_field_rejected():
-    with pytest.raises(FinanceReviewError) as error:
-        check_field(_case(), "seller_name", None, REVIEWER, NOW)
-
-    assert _blocker_codes(error) == {"FIELD_NOT_FOUND"}
-
-
 def test_acknowledge_warning_requires_note():
     with pytest.raises(FinanceReviewError) as error:
         acknowledge_warning(_case(), "seller_name_unverified", "seller_name", REVIEWER, NOW, "  ")
@@ -186,7 +156,7 @@ def test_update_accounting_fields_rejects_unknown_codes():
 def test_approval_blockers_lists_all_open_items():
     codes = {b.code for b in approval_blockers(_case(), REVIEWER)}
 
-    assert codes == {"FIELD_NOT_CHECKED", "WARNING_NOT_ACKNOWLEDGED", "DEDUCTION_CODE_MISSING"}
+    assert codes == {"WARNING_NOT_ACKNOWLEDGED", "DEDUCTION_CODE_MISSING"}
 
 
 def test_approve_ready_case_returns_status_change():
@@ -217,16 +187,17 @@ def test_approve_already_approved_rejected():
 
 
 def test_resubmit_after_return_goes_back_to_submitted_status():
-    """C 重送時沿用 pending_department_approval，狀態規則必須允許。"""
+    """C 重送時沿用 pending_department_approval，狀態規則必須允許；退回後也可由申請人終止。"""
     assert STATUS_SUBMITTED in ALLOWED_TRANSITIONS[STATUS_RETURNED]
+    assert STATUS_VOIDED in ALLOWED_TRANSITIONS[STATUS_RETURNED]
 
 
-def test_check_field_after_approval_rejected():
-    with pytest.raises(FinanceReviewError):
-        check_field(replace(_case(), status=STATUS_APPROVED), "buyer_name", None, REVIEWER, NOW)
+def test_finance_can_no_longer_reject():
+    """2026-11-02 起取消財務駁回，財務只能核准或退回。"""
+    assert ALLOWED_TRANSITIONS[STATUS_SUBMITTED] == {STATUS_APPROVED, STATUS_RETURNED}
 
 
-# ---- 退回與駁回 ----
+# ---- 退回 ----
 
 
 def test_return_to_applicant_requires_items():
@@ -250,7 +221,7 @@ def test_return_writes_field_review_comment_and_other_items_to_reason():
 
 
 def test_return_item_field_matches_by_item_id_and_unchecks():
-    case = check_field(_case(), "unit_price", ITEM_ID, REVIEWER, NOW)
+    case = _case()
 
     change = return_to_applicant(
         case, REVIEWER, [ReturnItem("unit_price", "單價與原圖不符", ITEM_ID)], NOW
@@ -277,22 +248,6 @@ def test_return_allowed_without_finishing_checks():
     assert change.new_status == STATUS_RETURNED
 
 
-def test_reject_requires_reason():
-    with pytest.raises(FinanceReviewError) as error:
-        reject(_case(), REVIEWER, "", NOW)
-
-    assert _blocker_codes(error) == {"REASON_REQUIRED"}
-
-
-def test_reject_from_pending_review_status():
-    case = replace(_case(), status=STATUS_PENDING_REVIEW)
-
-    change = reject(case, REVIEWER, "非公司費用", NOW)
-
-    assert change.new_status == STATUS_REJECTED
-    assert change.reason == "非公司費用"
-
-
 def test_returned_case_cannot_be_approved():
     case = replace(_ready_case(), status=STATUS_RETURNED)
 
@@ -302,23 +257,45 @@ def test_returned_case_cannot_be_approved():
     assert _blocker_codes(error) == {"NOT_REVIEWABLE"}
 
 
-def test_account_deduction_code_maps_account_to_default():
-    assert account_deduction_code("1401") == "2"
-    assert account_deduction_code("5611 交際費") == "3"
-    assert account_deduction_code("9999") is None
+# ---- 費用大項與會計科目 ----
 
 
-def test_check_account_deduction_allows_same_category_and_blank():
-    check_account_deduction("5601", "1")
-    check_account_deduction("1401", None)
-    check_account_deduction("", "4")
+def test_account_category_maps_account_to_category():
+    assert account_category("6211004") == "行政總務費用"
+    assert account_category("6235090 管理-什費-其他") == "行政總務費用"
+    assert account_category("1401090") == "固定資產"
+    assert account_category("9999") is None
 
 
-def test_check_account_deduction_rejects_mismatch_and_unknown():
+def test_check_account_code_allows_matching_category_and_blank():
+    check_account_code("行政總務費用", "6211004")
+    check_account_code("用人費用", "")
+    check_account_code("", "")
+
+
+def test_check_account_code_requires_category_first():
+    with pytest.raises(FinanceReviewError) as error:
+        check_account_code("", "6211004")
+
+    assert _blocker_codes(error) == {"EXPENSE_CATEGORY_MISSING"}
+
+
+def test_check_account_code_rejects_mismatch_and_unknown():
     with pytest.raises(FinanceReviewError) as mismatch:
-        check_account_deduction("1401", "1")
+        check_account_code("用人費用", "6211004")
     with pytest.raises(FinanceReviewError) as unknown:
-        check_account_deduction("9999", "1")
+        check_account_code("用人費用", "9999")
+    with pytest.raises(FinanceReviewError) as bad_category:
+        check_account_code("交際費用", "")
 
-    assert _blocker_codes(mismatch) == {"ACCOUNT_DEDUCTION_MISMATCH"}
+    assert _blocker_codes(mismatch) == {"ACCOUNT_CATEGORY_MISMATCH"}
     assert _blocker_codes(unknown) == {"BAD_ACCOUNT_CODE"}
+    assert _blocker_codes(bad_category) == {"BAD_EXPENSE_CATEGORY"}
+
+
+def test_deduction_code_is_independent_of_account():
+    """扣抵代號不再與會計科目連動：費用科目也可以選固定資產或不得扣抵。"""
+    check_account_code("行政總務費用", "6211004")
+    case = update_accounting_fields(_case(), tax_type=None, deduction_code="4")
+
+    assert case.deduction_code == "4"

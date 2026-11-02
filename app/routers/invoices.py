@@ -5,7 +5,8 @@
 注意事項：
     - 本路由需管理者權限（require_admin）。
     - 步驟 1～9：上傳發票、AI OCR 辨識、資料核對、系統自動檢核、財務審核、產生申報檔、匯入確認、自動產生傳票、匯出結果。
-    - 步驟 3 在財務退回時顯示「退回補正」區，逐項回覆後由 procurement_case_service（2-5）檢查再重送。
+    - 步驟 3 在財務退回時顯示「退回補正」區，逐項回覆後由 procurement_case_service（2-5）檢查再重送，
+      或由申請人終止（取代財務駁回）。
     - 步驟 6 與申報資料頁的檢核、81 字元申報資料與批次產檔由 format21_service（F09）負責；
       發票資料目前仍為示範資料，經 _to_filing_snapshot() 轉為 Schema v1.5 欄位後交給 F09。
 """
@@ -25,9 +26,9 @@ from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
 from app.core.templating import templates
 from app.routers.e_admin import session_evidence
+from app.schemas.account_codes import ACCOUNT_CODES, EXPENSE_CATEGORIES
 from app.schemas.e_admin import Action, DeniedError, Target, UnauthenticatedError
 from app.schemas.finance_review import (
-    ACCOUNT_CODES,
     DEDUCTION_CODES,
     REVIEWABLE_STATUSES,
     STATUS_APPROVED,
@@ -35,6 +36,7 @@ from app.schemas.finance_review import (
     STATUS_REJECTED,
     STATUS_RETURNED,
     STATUS_SUBMITTED,
+    STATUS_VOIDED,
     TAX_TYPES,
     ReturnItem,
     ReviewCase,
@@ -47,21 +49,19 @@ from app.schemas.procurement_case import (
     CorrectionResponse,
     ResubmitPlan,
     ReturnRequest,
+    TerminatePlan,
 )
 from app.services.company_profile_service import HardcodedCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
 from app.services.finance_review_service import (
     FinanceReviewError,
-    account_deduction_code,
+    account_category,
     acknowledge_warning,
-    approval_blockers,
     approve,
     build_change_history,
     build_review_case,
-    check_account_deduction,
-    check_field,
+    check_account_code,
     field_label,
-    reject,
     return_to_applicant,
     update_accounting_fields,
 )
@@ -77,6 +77,7 @@ from app.services.procurement_case_service import (
     ProcurementCaseError,
     latest_return,
     prepare_resubmit,
+    prepare_terminate,
 )
 
 Module = Annotated[EModule, Depends(get_e_module)]
@@ -289,7 +290,7 @@ _INVOICE_STORE: list[dict[str, Any]] = [
         "is_completed": True,
         "file_name": "invoice_001.jpg",
         "purpose": "供行政與財務部門日常辦公使用",
-        "account_code": "5601 辦公用品費",
+        "account_code": "6211004 管理-文具用品",
         "deduction_code": "1 - 進貨及費用",
         "tax_type": "1 - 應稅",
         "import_confirmed_at": datetime(2026, 8, 16, 14, 0, tzinfo=UTC),
@@ -321,7 +322,7 @@ _INVOICE_STORE: list[dict[str, Any]] = [
         "is_completed": True,
         "file_name": "invoice_002.jpg",
         "purpose": "資訊設備耗材補充",
-        "account_code": "5601 辦公用品費",
+        "account_code": "6211004 管理-文具用品",
         "deduction_code": "1 - 進貨及費用",
         "tax_type": "1 - 應稅",
         "import_confirmed_at": datetime(2026, 8, 16, 15, 30, tzinfo=UTC),
@@ -353,7 +354,7 @@ _INVOICE_STORE: list[dict[str, Any]] = [
         "is_completed": False,
         "file_name": "invoice_003.jpg",
         "purpose": "供辦公室茶水間使用",
-        "account_code": "5602 什支",
+        "account_code": "6235090 管理-什費-其他",
         "deduction_code": "1 - 進貨及費用",
         "tax_type": "1 - 應稅",
         "import_confirmed_at": None,
@@ -385,7 +386,7 @@ _INVOICE_STORE: list[dict[str, Any]] = [
         "is_completed": False,
         "file_name": "invoice_004.jpg",
         "purpose": "研發人員辦公設備添購",
-        "account_code": "1401 辦公設備",
+        "account_code": "1401090 辦公設備-其他",
         "deduction_code": "2 - 固定資產",
         "tax_type": "1 - 應稅",
         "import_confirmed_at": None,
@@ -417,7 +418,7 @@ _INVOICE_STORE: list[dict[str, Any]] = [
         "is_completed": False,
         "file_name": "invoice_005.jpg",
         "purpose": "機房線路整修備品",
-        "account_code": "5605 修繕費",
+        "account_code": "6221005 管理-資訊設備修繕",
         "deduction_code": "1 - 進貨及費用",
         "tax_type": "1 - 應稅",
         "import_confirmed_at": None,
@@ -501,7 +502,7 @@ def _build_voucher(invoice: dict[str, Any]) -> dict[str, Any]:
     net = invoice.get("net_amount", 0)
     tax = invoice.get("tax_amount", 0)
     total = net + tax
-    account = invoice.get("account_code") or "5601 辦公用品費"
+    account = invoice.get("account_code") or "6211004 管理-文具用品"
 
     lines = [
         {"account": account, "debit": net, "credit": 0},
@@ -859,7 +860,7 @@ def create_new_invoice(request: Request) -> RedirectResponse:
             "is_completed": False,
             "file_name": None,
             "purpose": "供辦公室日常使用",
-            "account_code": "5601 辦公用品費",
+            "account_code": "6211004 管理-文具用品",
             "deduction_code": "1 - 進貨及費用",
             "tax_type": "1 - 應稅",
             "import_confirmed_at": None,
@@ -1253,6 +1254,7 @@ _REVIEW_STATUS_TO_V15 = {
     "approved": STATUS_APPROVED,
     "returned": STATUS_RETURNED,
     "rejected": STATUS_REJECTED,
+    "voided": STATUS_VOIDED,
 }
 _TAX_TYPE_TO_CATEGORY = {"taxable": "應稅", "zero_rated": "零稅率", "tax_exempt": "免稅"}
 _RETURN_EXTRA_FIELDS = ["attachment", "invoice_date", "seller_tax_id", "buyer_tax_id", "其他"]
@@ -1308,6 +1310,8 @@ def _sync_invoice(invoice: dict[str, Any], case: ReviewCase) -> None:
         invoice["stage"] = min(int(invoice.get("stage", 3)), 3)
     elif case.status == STATUS_REJECTED:
         invoice["review_status"], invoice["status"] = "rejected", "rejected"
+    elif case.status == STATUS_VOIDED:
+        invoice["review_status"], invoice["status"] = "voided", "rejected"
 
 
 def _apply_change(invoice: dict[str, Any], case: ReviewCase, change: StatusChange) -> None:
@@ -1331,14 +1335,11 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
         (r.field_name, r.item_id or "", field_label(r.field_name)) for r in case.field_reviews
     ]
     field_options += [(name, "", field_label(name)) for name in _RETURN_EXTRA_FIELDS]
+    account_code = str(invoice.get("account_code") or "").split(" ", 1)[0]
     return {
         "case": case,
         "status_label": STATUS_LABELS.get(case.status, case.status),
         "reviewable": reviewable,
-        "blockers": approval_blockers(case, _reviewer_id(request)) if reviewable else [],
-        "field_reviews": [
-            {"review": r, "label": field_label(r.field_name)} for r in case.field_reviews
-        ],
         "warnings": case.warnings,
         "trails": [
             {"trail": t, "label": field_label(t.field_name)}
@@ -1347,8 +1348,10 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
         "history": [_history_entry(c) for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])],
         "tax_types": TAX_TYPES,
         "deduction_codes": DEDUCTION_CODES,
+        "expense_categories": EXPENSE_CATEGORIES,
         "account_codes": ACCOUNT_CODES,
-        "account_code": str(invoice.get("account_code") or "").split(" ", 1)[0],
+        "account_code": account_code,
+        "expense_category": invoice.get("expense_category") or account_category(account_code),
         "return_field_options": field_options,
     }
 
@@ -1370,6 +1373,8 @@ def _history_entry(change: StatusChange) -> dict[str, Any]:
             _labelled_line(line) for line in (change.reason or "").splitlines() if line.strip()
         ]
         return {"change": change, "label": f"申請人重新送出，{label}", "lines": lines, "note": None}
+    if change.new_status == STATUS_VOIDED:
+        return {"change": change, "label": "申請人終止", "lines": [], "note": change.reason}
     return {"change": change, "label": label, "lines": [], "note": change.reason}
 
 
@@ -1392,31 +1397,6 @@ def _review_error(
     response = _render_flow_page(request, invoice, 5, error=str(error))
     response.status_code = 400
     return response
-
-
-@router.post("/{invoice_id}/finance-review/fields", response_model=None)
-def finance_check_field(
-    request: Request,
-    invoice_id: int,
-    field_name: Annotated[str, Form()],
-    item_id: Annotated[str, Form()] = "",
-    comment: Annotated[str, Form()] = "",
-) -> Response:
-    """步驟 5：財務確認一個「AI 原值 → 送出值」不同的欄位。"""
-    invoice = _finance_review_target(request, invoice_id)
-    try:
-        case = check_field(
-            _finance_case(invoice),
-            field_name,
-            item_id or None,
-            _reviewer_id(request),
-            datetime.now(UTC),
-            comment.strip() or None,
-        )
-    except FinanceReviewError as error:
-        return _review_error(request, invoice, error)
-    _sync_invoice(invoice, case)
-    return _review_redirect(invoice_id)
 
 
 @router.post("/{invoice_id}/finance-review/warnings", response_model=None)
@@ -1445,28 +1425,25 @@ def finance_update_accounting(
     invoice_id: int,
     tax_type: Annotated[str, Form()] = "",
     deduction_code: Annotated[str, Form()] = "",
-    purpose: Annotated[str | None, Form()] = None,
-    account_code: Annotated[str | None, Form()] = None,
+    expense_category: Annotated[str, Form()] = "",
+    account_code: Annotated[str, Form()] = "",
 ) -> Response:
-    """步驟 5：更新課稅別、會計科目、扣抵代號與採購用途。
+    """步驟 5：更新課稅別、扣抵代號、費用大項與會計科目。
 
-    選了會計科目但沒選扣抵代號時，帶出該科目的扣抵代號；兩者不同類時擋下。
+    先選費用大項再選會計科目，科目須屬於該大項；扣抵代號為獨立選項，不與會計科目連動。
     """
     invoice = _finance_review_target(request, invoice_id)
-    account = (account_code or "").strip()
-    if account and not deduction_code:
-        deduction_code = account_deduction_code(account) or ""
+    category = expense_category.strip()
+    account = account_code.strip()
     try:
-        check_account_deduction(account, deduction_code or None)
+        check_account_code(category, account)
         case = update_accounting_fields(
             _finance_case(invoice), tax_type or None, deduction_code or None
         )
     except FinanceReviewError as error:
         return _review_error(request, invoice, error)
-    if purpose is not None:
-        invoice["purpose"] = purpose
-    if account:
-        invoice["account_code"] = f"{account} {ACCOUNT_CODES[account][0]}"
+    invoice["expense_category"] = category or None
+    invoice["account_code"] = f"{account} {ACCOUNT_CODES[account][0]}" if account else None
     _sync_invoice(invoice, case)
     return _review_redirect(invoice_id)
 
@@ -1509,21 +1486,6 @@ def finance_return(
         return _review_error(request, invoice, error)
     _apply_change(invoice, case, change)
     _take_return_snapshot(invoice)
-    return _review_redirect(invoice_id)
-
-
-@router.post("/{invoice_id}/finance-review/reject", response_model=None)
-def finance_reject(
-    request: Request, invoice_id: int, reason: Annotated[str, Form()] = ""
-) -> Response:
-    """步驟 5：駁回（終止，不能再重送），原因必填。"""
-    invoice = _finance_review_target(request, invoice_id)
-    case = _finance_case(invoice)
-    try:
-        change = reject(case, _reviewer_id(request), reason, datetime.now(UTC))
-    except FinanceReviewError as error:
-        return _review_error(request, invoice, error)
-    _apply_change(invoice, case, change)
     return _review_redirect(invoice_id)
 
 
@@ -1768,6 +1730,59 @@ def procurement_resubmit(
         return response
     _apply_resubmit(request, invoice, case, plan)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
+
+
+def _apply_terminate(
+    request: Request, invoice: dict[str, Any], case: ReviewCase, plan: TerminatePlan
+) -> None:
+    """套用終止計畫（示範資料；正式版由 C 的 service 以 expected_status 為條件寫入）。"""
+    _FINANCE_HISTORY.setdefault(int(invoice["id"]), []).append(
+        StatusChange(
+            invoice_id=case.invoice_id,
+            old_status=plan.expected_status,
+            new_status=plan.target_status,
+            reason=plan.reason,
+            changed_by=_reviewer_id(request),
+            changed_at=datetime.now(UTC),
+        )
+    )
+    _RETURN_SNAPSHOTS.pop(int(invoice["id"]), None)
+    _sync_invoice(invoice, replace(case, status=plan.target_status))
+
+
+@router.post("/{invoice_id}/procurement/terminate", response_model=None)
+def procurement_terminate(
+    request: Request, invoice_id: int, reason: Annotated[str, Form()] = ""
+) -> Response:
+    """步驟 3：申請人終止被退回的請款單（原因必填），終止後不能再重送。"""
+    invoice = _find_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    case = _finance_case(invoice)
+    scope = _case_scope(request)
+    # 示範發票沒有部門欄位，轉 v1.5 欄位時部門與目前範圍相同
+    row = {
+        "invoice_id": str(invoice_id),
+        "status": case.status,
+        "department_id": scope.department_id,
+    }
+    try:
+        plan = prepare_terminate(row, scope, reason)
+    except ProcurementCaseError as error:
+        messages = [blocker.message for blocker in error.blockers]
+        # 不在待補正時頁面沒有退回補正區，改用頁首錯誤訊息
+        response = _render_flow_page(
+            request,
+            invoice,
+            3,
+            error=None if case.status == STATUS_RETURNED else str(error),
+            procurement_errors=messages,
+        )
+        response.status_code = 400
+        return response
+    _apply_terminate(request, invoice, case, plan)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=5", status_code=303)
 
 
 @router.post("/{invoice_id}/review")

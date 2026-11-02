@@ -19,6 +19,7 @@ from app.schemas.procurement_case import (
     RESUBMIT_STATUS,
     STATUS_APPROVED,
     STATUS_RETURNED,
+    STATUS_VOIDED,
     CaseFilter,
     CaseScope,
     CorrectionResponse,
@@ -31,6 +32,7 @@ from app.services.procurement_case_service import (
     latest_return,
     list_cases,
     prepare_resubmit,
+    prepare_terminate,
 )
 
 FIXTURE = json.loads(
@@ -112,6 +114,7 @@ def test_list_cases_filters_by_status_date_and_keyword():
         ("pending_accounting_review", False),
         (STATUS_APPROVED, False),
         ("rejected", False),
+        (STATUS_VOIDED, False),
     ],
 )
 def test_can_edit_only_draft_and_returned(status, expected):
@@ -247,3 +250,24 @@ def test_prepare_resubmit_other_department_rejected():
         prepare_resubmit(RETURNED, other, _return_request(), _complete_responses(), CHANGED)
 
     assert _blocker_codes(error) == {"OUT_OF_SCOPE"}
+
+
+# ---- 終止 ----
+
+
+def test_prepare_terminate_returns_plan():
+    plan = prepare_terminate(RETURNED, SCOPE, "  供應商將重開發票  ")
+
+    assert plan.invoice_id == RETURNED["invoice_id"]
+    assert plan.expected_status == STATUS_RETURNED
+    assert plan.target_status == STATUS_VOIDED
+    assert plan.reason == "供應商將重開發票"
+
+
+def test_prepare_terminate_lists_all_blockers():
+    other = CaseScope(user_id=SCOPE.user_id, department_id="dept-administration")
+
+    with pytest.raises(ProcurementCaseError) as error:
+        prepare_terminate(INVOICES[1], other, " ")
+
+    assert _blocker_codes(error) == {"NOT_RETURNED", "OUT_OF_SCOPE", "REASON_REQUIRED"}

@@ -472,19 +472,20 @@ document.addEventListener('click', (event) => {
   }
 })
 
-// 財務審核（2-4）：會計科目與扣抵代號連動
-// 選科目 → 帶出該科目的扣抵代號；選扣抵代號 → 科目只列出同一類，不同類的已選科目會清空
-function filterAccountsByDeduction(deductionSelect) {
-  const accountSelect = document.querySelector(deductionSelect.dataset.accountFilter)
+// 財務審核（2-4）：先選費用大項，會計科目只列出該大項的科目；換大項時不屬於新大項的已選科目會清空
+// 扣抵代號為獨立選項，不與會計科目連動
+function filterAccountsByCategory(categorySelect) {
+  const accountSelect = document.querySelector(categorySelect.dataset.accountFilter)
   if (!accountSelect) {
     return
   }
-  const code = deductionSelect.value
+  const category = categorySelect.value
+  accountSelect.disabled = !category
   for (const option of accountSelect.options) {
     if (!option.value) {
       continue
     }
-    const mismatch = Boolean(code) && option.dataset.deductionCode !== code
+    const mismatch = option.dataset.category !== category
     option.hidden = mismatch
     option.disabled = mismatch
     if (mismatch && option.selected) {
@@ -494,19 +495,8 @@ function filterAccountsByDeduction(deductionSelect) {
 }
 
 document.addEventListener('change', (event) => {
-  const accountSelect = event.target.closest('select[data-account-deduction]')
-  if (accountSelect) {
-    const option = accountSelect.options[accountSelect.selectedIndex]
-    const deduction = option ? option.dataset.deductionCode : ''
-    const target = document.querySelector(accountSelect.dataset.accountDeduction)
-    if (target && deduction) {
-      target.value = deduction
-      filterAccountsByDeduction(target)
-    }
-    return
-  }
-  const deductionSelect = event.target.closest('select[data-account-filter]')
-  if (deductionSelect) {
-    filterAccountsByDeduction(deductionSelect)
+  const categorySelect = event.target.closest('select[data-account-filter]')
+  if (categorySelect) {
+    filterAccountsByCategory(categorySelect)
   }
 })

@@ -9,15 +9,14 @@
     - 任一筆檢核失敗即整批不產生申報檔，避免匯入金額與 401 對不上。
     - 欄位位置依「營業稅電子資料申報繳稅作業要點」第 20 點整理，正式使用前
       須與附件五逐欄核對，並以財政部申報軟體實測匯入。
-    - 字軌對照表為同目錄的 invoice_tracks.csv，每年新增 12 列，於模組載入時讀入。
+    - 字軌只檢查格式（2 碼英文字母）。2026-11-02 使用者決定：三聯式字軌的取得與配發有異議，
+      先取消「必須符合字軌對照表」的檢核，並移除對照表 invoice_tracks.csv；恢復時見 git 歷史。
 """
 
-import csv
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from pathlib import Path
 
 from app.services.company_profile_service import CompanyProfile, CompanyProfileProvider
 
@@ -41,31 +40,6 @@ TAX_TYPE_CODES = {
 
 # 只有已核准的請款單可匯出
 EXPORTABLE_STATUS = "approved"
-
-TRACKS_CSV = Path(__file__).with_name("invoice_tracks.csv")
-
-
-def load_tracks(path: Path) -> dict[tuple[int, int], set[str]]:
-    """讀取甲種（三聯式）字軌對照表。
-
-    CSV 欄位為 year、period（例如 01-02）、invoice_class、track_group、track_code。
-
-    Args:
-        path: 字軌 CSV 路徑。
-
-    Returns:
-        (民國年, 期別起始月) → 該期字軌集合。
-    """
-    # TODO(StacieChen): 確認字軌組 1／2 各對應哪一種三聯式發票
-    tracks: dict[tuple[int, int], set[str]] = {}
-    with path.open(encoding="utf-8-sig", newline="") as file:
-        for row in csv.DictReader(file):
-            key = (int(row["year"]), int(row["period"].split("-")[0]))
-            tracks.setdefault(key, set()).add(row["track_code"].strip().upper())
-    return tracks
-
-
-TRACKS = load_tracks(TRACKS_CSV)
 
 # 81 字元欄位配置：(欄位名稱, 長度)，依序串接
 LAYOUT = [
@@ -154,14 +128,6 @@ def is_valid_ban(ban: str) -> bool:
     return ban[6] == "7" and (total + 1) % 5 == 0
 
 
-def _get_period_start_month(month: int) -> int:
-    return month if month % 2 == 1 else month - 1  # 統一發票兩個月一期
-
-
-def _get_next_period(year: int, start_month: int) -> tuple[int, int]:
-    return (year + 1, 1) if start_month == 11 else (year, start_month + 2)
-
-
 def calculate_tax(sales_amount: Decimal) -> Decimal:
     """計算應稅營業稅額，四捨五入至整數。
 
@@ -194,18 +160,9 @@ def _check_issue_year_month(record: Format21Record) -> list[Format21Issue]:
 
 
 def _check_track(record: Format21Record) -> list[Format21Issue]:
+    # 只檢查格式；不再比對字軌對照表（見檔頭說明）
     if not re.fullmatch(r"[A-Z]{2}", record.track):
         return [Format21Issue("track", "BAD_TRACK", "字軌須為 2 碼英文字母")]
-    match = re.fullmatch(r"(\d{3})(\d{2})", record.issue_year_month)
-    if not match:
-        return []  # 開立年月格式錯誤已由其他規則回報
-    year, start = int(match.group(1)), _get_period_start_month(int(match.group(2)))
-    # 字軌可為開立年月所屬期或次期
-    known_periods = [p for p in [(year, start), _get_next_period(year, start)] if p in TRACKS]
-    if not known_periods:
-        return [Format21Issue("track", "TRACK_TABLE_MISSING", "字軌對照表缺少該期資料，請人工確認")]
-    if not any(record.track in TRACKS[p] for p in known_periods):
-        return [Format21Issue("track", "TRACK_PERIOD_MISMATCH", "字軌不屬於開立年月所屬期或次期")]
     return []
 
 

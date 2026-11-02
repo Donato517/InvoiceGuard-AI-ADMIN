@@ -14,7 +14,6 @@ from pathlib import Path
 
 from app.services.company_profile_service import CompanyProfile, HardcodedCompanyProfileProvider
 from app.services.format21_service import (
-    TRACKS,
     Format21Record,
     build_format21_file,
     build_record_from_snapshot,
@@ -96,24 +95,18 @@ def test_validate_record_rejects_issue_after_report_period():
     assert "AFTER_REPORT_PERIOD" in _issue_codes(replace(VALID_RECORD, issue_year_month="11511"))
 
 
-def test_validate_record_accepts_next_period_track():
-    assert "TRACK_PERIOD_MISMATCH" not in _issue_codes(replace(VALID_RECORD, track="GE"))
+def test_validate_record_does_not_check_track_against_table():
+    """字軌對照表檢核已取消：任何期別、任何 2 碼英文字軌都不因字軌被擋。"""
+    for record in (
+        replace(VALID_RECORD, track="VT"),
+        replace(VALID_RECORD, track="ZZ"),
+        replace(VALID_RECORD, issue_year_month="10307", report_period="10308", track="AB"),
+    ):
+        assert not [code for code in _issue_codes(record) if code.startswith("TRACK")]
 
 
-def test_validate_record_rejects_wrong_period_track():
-    assert "TRACK_PERIOD_MISMATCH" in _issue_codes(replace(VALID_RECORD, track="VT"))
-
-
-def test_tracks_loaded_from_csv_cover_114_and_115():
-    assert TRACKS[(114, 11)] == {"TT", "TV"}
-    assert TRACKS[(115, 9)] == {"EC", "ED"}
-    assert len(TRACKS) == 12
-
-
-def test_validate_record_accepts_114_track_with_next_period_in_115():
-    record = replace(VALID_RECORD, issue_year_month="11411", track="VT")
-
-    assert "TRACK_PERIOD_MISMATCH" not in _issue_codes(record)
+def test_validate_record_still_rejects_bad_track_format():
+    assert "BAD_TRACK" in _issue_codes(replace(VALID_RECORD, track="A1"))
 
 
 def test_validate_record_rejects_unknown_deduction_code():

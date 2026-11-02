@@ -192,3 +192,12 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 實測：相關 249 passed、1 warning，6.84s；主管邊界補測 E／新頁／registry 159 passed、1 warning，9.81s。最終完整回歸：936 passed、9 skipped、1 warning，126.10s，exit 0。跨三站 checker PASS（0 issues）、Ruff lint／118 檔格式、djLint 30 樣板（0 errors）、environment configuration_valid=true、connectivity_checked=false。
 - 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
 - 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
+
+C 組 `/intake` 與 `/cases` 交付候選（2026-11-03，分支 `feature/c-intake-delivery`，基準 `origin/main` `3de8f5a`；**本機候選、尚未 Push／PR；正式環境無法使用**）：
+- 內容：`/intake`（上傳 → 呼叫既有 API 辨識 → 14 項核對與多筆明細＋原圖並排 → API 必填／業務警示／查重 → 提交）與 `/cases`（真實案件唯讀檢視）。ADMIN 不複製 AI 辨識或檢核規則，不寫入資料庫。交接資訊見 [INTAKE_HANDOVER.md](INTAKE_HANDOVER.md)；規劃與缺口見 [ADMIN_INVOICE_INTAKE_PLAN.md](ADMIN_INVOICE_INTAKE_PLAN.md)。
+- **雙重關閉（正式環境不可用）**：`inv.intake` 未註冊於功能目錄，路由依賴一律 403（`app/routers/intake.py` `require_intake_access`、`e_registry.capability`）；ADMIN→API 授權方案未核定，`build_intake_client()` 無條件拒絕（503，`invoice_intake_service.py`）。不要加入導覽選單。
+- **首次提交狀態**：API PR #14 已合併，`SUBMITTED_STATUS = "pending_accounting_review"`；E2E 以固定值斷言（不從 API 原始碼讀取）。F 組的 `STATUS_SUBMITTED = "pending_department_approval"` 註解屬 F 組範圍，建議見交接文件，本批未修改。
+- **驗證層級**：單元／假傳輸／API 模型契約；Mock E2E（隔離雙服務，Document AI／Groq／Storage 為替身、測試專用 Bearer）；JS 原圖還原測試（node，假 DOM）。**未驗證**：真實 Document AI／Storage、正式授權、正式環境、與 PR #21 合併後的整合。
+- **未帶入本批**：隔離資料庫整合測試（`tests/integration/*`，與 PR #21 的 `conftest.py` 為 add/add 衝突，待 PR #21 先後確定）、R1 原型與研究文件、正式庫唯讀查核提案、統編檢查碼獨立測試（`a9ea759`）。
+- 環境限制：缺 Pillow 時 `tests/unit/test_document_ai_bundle.py` 無法載入、`test_shared_integrations.py::test_document_ai_bundle_retains_legacy_contract` 失敗，與本功能無關。
+

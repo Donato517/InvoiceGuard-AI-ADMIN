@@ -12,6 +12,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 from collections.abc import Iterator
 from decimal import Decimal
@@ -55,7 +56,9 @@ def m1(
     done = subprocess.run(  # noqa: S603
         [str(API_ROOT / ".venv/bin/python"), "-B", str(SEED), tag, str(out)],
         cwd=API_ROOT,
-        env=m1_isolation.seed_environment(API_ROOT, isolated_engine.url),
+        env=m1_isolation.seed_environment(
+            API_ROOT, isolated_engine.url, os.environ[m1_isolation.MARKER_ENV]
+        ),
         capture_output=True,
         text=True,
         timeout=120,

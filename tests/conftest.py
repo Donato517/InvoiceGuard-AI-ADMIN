@@ -13,8 +13,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
-
-from tests.network_guard import install_network_block
+from network_guard import install_network_block
 
 # 測試程序不繼承公司機密；在測試模組匯入 app 前清除已知設定。
 # 只檢查名稱並移除，不讀取、列印或保存原值；不影響父 PowerShell 程序。

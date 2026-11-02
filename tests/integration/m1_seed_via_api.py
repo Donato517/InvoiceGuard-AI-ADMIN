@@ -2,7 +2,7 @@
 
 用法（以 API 專案的 .venv，工作目錄為 API 根目錄）：
     M1_SEED_DB_URL=<db_url> .venv/bin/python -B m1_seed_via_api.py <tag> <out.json>
-資料庫 URL 只經環境變數傳入（不放命令列參數），且子程序環境是白名單（見 m1_isolation.seed_environment）。
+資料庫 URL 與標記只經環境變數傳入（不放命令列參數），子程序環境是白名單（見 m1_isolation.seed_environment）。
 寫入：採購部使用者的完整發票（C1）與缺買受人／賣方名稱的稀疏發票（C3）、業務部使用者的發票（C2）。
 """
 
@@ -10,17 +10,32 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+# 先於任何 API 模組匯入：驗證資料庫標記並安裝 Python 層連線封鎖（只放行這個資料庫身分）。
+# 這是 monkeypatch，不是 OS／容器層的網路隔離；它不防原生函式庫或額外啟動的外部程序。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tests/（network_guard）
+import m1_isolation  # noqa: E402
 
-from app.db.repositories import recognition_repository as rr
-from app.schemas.auth import DepartmentRead, SessionRead
-from app.schemas.invoice_upload import InvoiceSubmitRequest
-from app.services import invoice_upload_service as svc
+_URL = m1_isolation.load_target(  # 標記不符或 URL 不安全：在任何匯入與寫入之前直接失敗
+    {
+        m1_isolation.URL_ENV: os.environ[m1_isolation.SEED_URL_ENV],
+        m1_isolation.MARKER_ENV: os.environ.get(m1_isolation.MARKER_ENV, ""),
+    }
+)
+assert _URL is not None
+m1_isolation.install_process_guard(_URL)
 
-DB_URL = os.environ["M1_SEED_DB_URL"]
+from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+from app.db.repositories import recognition_repository as rr  # noqa: E402
+from app.schemas.auth import DepartmentRead, SessionRead  # noqa: E402
+from app.schemas.invoice_upload import InvoiceSubmitRequest  # noqa: E402
+from app.services import invoice_upload_service as svc  # noqa: E402
+
+DB_URL = os.environ[m1_isolation.SEED_URL_ENV]
 TAG, OUT = sys.argv[1], sys.argv[2]
 HASH = "$argon2id$v=19$m=65536,t=3,p=4$" + "A" * 22 + "$" + "B" * 22
 engine = create_engine(DB_URL)

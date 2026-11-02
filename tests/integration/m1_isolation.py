@@ -1,14 +1,16 @@
 """M1 整合測試的隔離資料庫驗證與子程序環境（測試專用，不屬於應用程式）。
 
 ISOLATED_CASE_DB_URL 必須同時滿足，否則 fail-closed（不執行任何測試寫入）：
-  1. 驅動為 postgresql+psycopg、主機為回送位址、明確連接埠、資料庫名稱以 ig_test 開頭、無任何查詢參數
-     （不允許 host／hostaddr／service／options 等參數改變實際目標）。
+  1. 驅動為 postgresql+psycopg、主機為字面 127.0.0.1／::1（不接受 localhost）、明確連接埠、使用者必填、
+     資料庫名稱以 ig_test 開頭、無任何查詢參數（不允許 host／hostaddr／service／options 改變實際目標）。
   2. 連線後，伺服器上的資料庫層設定 invoiceguard.m1_test_marker 必須等於環境變數
      ISOLATED_CASE_DB_MARKER（至少 16 字元）。標記只在建立受控測試庫時以
      ALTER DATABASE … SET invoiceguard.m1_test_marker = '<token>' 寫入。
+驗證通過的身分是 (host, port, dbname, user) 四項；之後的連線封鎖（network_guard）只放行這四項完全相同的連線。
 
-限制：這證明「該資料庫是有人刻意標記的測試庫」，不能證明沒有 SSH Tunnel／Port Forwarding 把標記庫
-以外的目標轉到本機；名稱前綴只是輔助。
+限制：標記只在「連線驗證當下」證明該資料庫是有人刻意標記的測試庫（測試程序與播種子程序各驗證一次），
+不能證明沒有 SSH Tunnel／Port Forwarding 把別的目標轉到本機並複製標記；名稱前綴只是輔助。
+這是測試用的 Python 層防護，不是正式環境的安全機制，也不是 OS／容器層的網路隔離。
 """
 
 import hmac
@@ -17,10 +19,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import network_guard
 import psycopg
 from sqlalchemy.engine import URL, make_url
-
-from tests.network_guard import LOOPBACK, canonical_target
 
 URL_ENV = "ISOLATED_CASE_DB_URL"
 MARKER_ENV = "ISOLATED_CASE_DB_MARKER"
@@ -32,8 +33,8 @@ SEED_URL_ENV = "M1_SEED_DB_URL"
 # 在任何 monkeypatch 之前保存真實連線函式，只用於驗證標記。
 _REAL_CONNECT = psycopg.connect
 
-# 通過驗證的唯一資料庫目標（主機＋連接埠）；整合測試的連線封鎖只放行它。
-ACTIVE_TARGET: tuple[str, int] | None = None
+# 通過驗證的唯一資料庫身分（host, port, dbname, user）；連線封鎖只放行與它完全相同的連線。
+ACTIVE_TARGET: network_guard.DbIdentity | None = None
 
 
 class UnsafeTargetError(Exception):
@@ -48,13 +49,29 @@ def validate_url(raw: str) -> URL:
         raise UnsafeTargetError(f"{URL_ENV} 不是有效的資料庫 URL") from None
     if url.drivername != "postgresql+psycopg":
         raise UnsafeTargetError(f"{URL_ENV} 驅動必須是 postgresql+psycopg")
-    if url.host not in LOOPBACK or canonical_target(url.host, url.port) is None:
-        raise UnsafeTargetError(f"{URL_ENV} 必須指向回送位址並明確指定連接埠")
+    if url.host not in network_guard.LOOPBACK_IPS or url.port is None:
+        raise UnsafeTargetError(
+            f"{URL_ENV} 必須是字面 127.0.0.1／::1（不接受 localhost）並明確指定連接埠"
+        )
     if not url.username or not (url.database or "").startswith(DB_NAME_PREFIX):
         raise UnsafeTargetError(f"{URL_ENV} 的使用者必填，且資料庫名稱須以 {DB_NAME_PREFIX} 開頭")
     if url.query:
         raise UnsafeTargetError(f"{URL_ENV} 不允許查詢參數（可改變實際連線目標）")
     return url
+
+
+def identity_of(url: URL) -> network_guard.DbIdentity:
+    """已通過 validate_url 的 URL 的四項連線身分。"""
+    identity = network_guard.db_identity(url.host, url.port, url.database, url.username)
+    if identity is None:
+        raise UnsafeTargetError("資料庫身分不完整")
+    return identity
+
+
+def install_process_guard(url: URL) -> None:
+    """播種子程序用：永久封鎖 Python 層連線，只放行與 url 完全相同的資料庫身分。"""
+    identity = identity_of(url)
+    network_guard.install_network_block(network_guard.ProcessPatcher(), lambda: identity)
 
 
 def verify_marker(url: URL, marker: str, connect: Callable[..., Any] = _REAL_CONNECT) -> None:
@@ -94,14 +111,16 @@ def load_target(
     return url
 
 
-def seed_environment(api_root: Path, url: URL) -> dict[str, str]:
+def seed_environment(api_root: Path, url: URL, marker: str) -> dict[str, str]:
     """播種子程序的環境：完全白名單，不繼承 DATABASE_URL、Storage、Token、API Key。
 
-    資料庫 URL 走環境變數而非命令列參數，避免出現在程序列表。
+    資料庫 URL 走環境變數而非命令列參數，避免出現在程序列表；標記（非機密的隨機字串）讓子程序
+    在第一次寫入前自行再驗證一次。
     """
     return {
         "PYTHONPATH": str(api_root),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": os.environ.get("PATH", ""),
         SEED_URL_ENV: url.render_as_string(hide_password=False),
+        MARKER_ENV: marker,
     }

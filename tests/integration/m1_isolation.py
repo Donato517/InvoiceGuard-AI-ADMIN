@@ -29,6 +29,7 @@ MARKER_SETTING = "invoiceguard.m1_test_marker"
 DB_NAME_PREFIX = "ig_test"
 MIN_MARKER_LENGTH = 16
 SEED_URL_ENV = "M1_SEED_DB_URL"
+IS_WINDOWS = os.name == "nt"
 
 # 在任何 monkeypatch 之前保存真實連線函式，只用於驗證標記。
 _REAL_CONNECT = psycopg.connect
@@ -117,10 +118,18 @@ def seed_environment(api_root: Path, url: URL, marker: str) -> dict[str, str]:
     資料庫 URL 走環境變數而非命令列參數，避免出現在程序列表；標記（非機密的隨機字串）讓子程序
     在第一次寫入前自行再驗證一次。
     """
-    return {
+    env = {
         "PYTHONPATH": str(api_root),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": os.environ.get("PATH", ""),
         SEED_URL_ENV: url.render_as_string(hide_password=False),
         MARKER_ENV: marker,
     }
+    if IS_WINDOWS:
+        # Windows 的自訂 env 若沒有 SYSTEMROOT，子程序的 Winsock 無法初始化（WinError 10106），
+        # psycopg 會匯入失敗。它是系統路徑、不是機密；缺少時明確失敗，不靜默放寬白名單。
+        system_root = os.environ.get("SYSTEMROOT", "")
+        if not system_root:
+            raise UnsafeTargetError("Windows 缺少 SYSTEMROOT，無法建立播種子程序環境")
+        env["SYSTEMROOT"] = system_root
+    return env

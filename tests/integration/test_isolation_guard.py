@@ -281,17 +281,63 @@ def test_seed_subprocess_environment_is_a_strict_whitelist(
 
     env = m1_isolation.seed_environment(tmp_path, url, MARKER)
 
-    assert set(env) == {
+    expected = {
         "PYTHONPATH",
         "PYTHONDONTWRITEBYTECODE",
         "PATH",
         m1_isolation.SEED_URL_ENV,
         m1_isolation.MARKER_ENV,
     }
+    if m1_isolation.IS_WINDOWS:
+        expected.add("SYSTEMROOT")  # 實際在 Windows 上執行時的預期
+    assert set(env) == expected
     assert env[m1_isolation.SEED_URL_ENV] == GOOD_URL
     assert env[m1_isolation.MARKER_ENV] == MARKER
     assert PROD_LIKE_URL not in env.values()
     assert "must-not-leak" not in env.values()
+
+
+def test_windows_environment_adds_only_systemroot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    url = m1_isolation.validate_url(GOOD_URL)
+    monkeypatch.setattr(m1_isolation, "IS_WINDOWS", True)
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("DATABASE_URL", PROD_LIKE_URL)
+
+    env = m1_isolation.seed_environment(tmp_path, url, MARKER)
+
+    assert env["SYSTEMROOT"] == r"C:\Windows"
+    assert set(env) == {
+        "PYTHONPATH",
+        "PYTHONDONTWRITEBYTECODE",
+        "PATH",
+        m1_isolation.SEED_URL_ENV,
+        m1_isolation.MARKER_ENV,
+        "SYSTEMROOT",
+    }
+    assert PROD_LIKE_URL not in env.values()
+
+
+def test_windows_without_systemroot_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(m1_isolation, "IS_WINDOWS", True)
+    monkeypatch.delenv("SYSTEMROOT", raising=False)
+
+    with pytest.raises(m1_isolation.UnsafeTargetError, match="SYSTEMROOT"):
+        m1_isolation.seed_environment(tmp_path, m1_isolation.validate_url(GOOD_URL), MARKER)
+
+
+def test_non_windows_environment_has_no_systemroot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(m1_isolation, "IS_WINDOWS", False)
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+
+    env = m1_isolation.seed_environment(tmp_path, m1_isolation.validate_url(GOOD_URL), MARKER)
+
+    assert "SYSTEMROOT" not in env
 
 
 def run_seed_side(code: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:

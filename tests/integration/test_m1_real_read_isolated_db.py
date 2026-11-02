@@ -7,12 +7,11 @@
   * 不涵蓋：正式 DB／Storage、正式 E 組授權、真實瀏覽器。
 標記 xfail(strict=True) 的測試＝尚未修復、另案處理的已知缺陷（期望行為目前會失敗）；修復後必須移除標記。
 已於 M1 安全修補中修復的缺陷（狀態映射、範例值填補、UPSERT 覆寫）已改為正常斷言。
-執行：ISOLATED_CASE_DB_URL=postgresql+psycopg://…@127.0.0.1:55432/ig_test pytest tests/integration/test_m1_real_read_isolated_db.py
+執行：ISOLATED_CASE_DB_URL=postgresql+psycopg://…@127.0.0.1:55432/ig_test ISOLATED_CASE_DB_MARKER=<受控標記> pytest tests/integration/test_m1_real_read_isolated_db.py
 """
 
 import hashlib
 import json
-import os
 import subprocess
 from collections.abc import Iterator
 from decimal import Decimal
@@ -21,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
+import m1_isolation
 import pytest
 from fastapi import Request
 from sqlalchemy import Engine, text
@@ -52,11 +52,10 @@ def m1(
         pytest.skip("找不到同層 API 專案的 .venv（需要它來執行真實 submit()）")
     tag = uuid4().hex[:8]
     out = tmp_path_factory.mktemp("m1_seed") / f"{tag}.json"
-    url = isolated_engine.url.render_as_string(hide_password=False)
     done = subprocess.run(  # noqa: S603
-        [str(API_ROOT / ".venv/bin/python"), "-B", str(SEED), url, tag, str(out)],
+        [str(API_ROOT / ".venv/bin/python"), "-B", str(SEED), tag, str(out)],
         cwd=API_ROOT,
-        env={"PYTHONPATH": str(API_ROOT), "PATH": os.environ.get("PATH", "")},
+        env=m1_isolation.seed_environment(API_ROOT, isolated_engine.url),
         capture_output=True,
         text=True,
         timeout=120,

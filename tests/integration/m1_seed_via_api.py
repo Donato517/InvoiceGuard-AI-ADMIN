@@ -1,11 +1,13 @@
 """由「API 的真實 submit() 服務」把測試發票寫入隔離資料庫（不連正式環境）。
 
 用法（以 API 專案的 .venv，工作目錄為 API 根目錄）：
-    .venv/bin/python -B m1_seed_via_api.py <db_url> <tag> <out.json>
+    M1_SEED_DB_URL=<db_url> .venv/bin/python -B m1_seed_via_api.py <tag> <out.json>
+資料庫 URL 只經環境變數傳入（不放命令列參數），且子程序環境是白名單（見 m1_isolation.seed_environment）。
 寫入：採購部使用者的完整發票（C1）與缺買受人／賣方名稱的稀疏發票（C3）、業務部使用者的發票（C2）。
 """
 
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -18,7 +20,8 @@ from app.schemas.auth import DepartmentRead, SessionRead
 from app.schemas.invoice_upload import InvoiceSubmitRequest
 from app.services import invoice_upload_service as svc
 
-DB_URL, TAG, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
+DB_URL = os.environ["M1_SEED_DB_URL"]
+TAG, OUT = sys.argv[1], sys.argv[2]
 HASH = "$argon2id$v=19$m=65536,t=3,p=4$" + "A" * 22 + "$" + "B" * 22
 engine = create_engine(DB_URL)
 

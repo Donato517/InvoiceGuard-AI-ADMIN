@@ -6,16 +6,15 @@ pytest 共用 fixture。
 """
 
 import os
-import socket
 from collections.abc import Iterator
-from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
+
+from tests.network_guard import install_network_block
 
 # 測試程序不繼承公司機密；在測試模組匯入 app 前清除已知設定。
 # 只檢查名稱並移除，不讀取、列印或保存原值；不影響父 PowerShell 程序。
@@ -83,41 +82,8 @@ def isolate_local_session_key() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def block_external_services(monkeypatch: pytest.MonkeyPatch) -> None:
-    """單元測試禁止網路、SQLAlchemy 連線與直接 psycopg 連線。"""
-    import psycopg
-    from sqlalchemy.engine import Engine
-
-    original_connect = socket.socket.connect
-    original_socketpair = socket.socketpair
-    inside_socketpair: ContextVar[bool] = ContextVar("inside_socketpair", default=False)
-
-    def deny_connection(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("單元測試禁止外部網路或真實資料庫連線")
-
-    def guarded_connect(connection: socket.socket, address: Any) -> Any:
-        # Windows asyncio 以 socketpair 的 loopback 連線建立程序內喚醒通道。
-        if inside_socketpair.get() and address[0] in {"127.0.0.1", "::1"}:
-            return original_connect(connection, address)
-        return deny_connection()
-
-    def guarded_socketpair(*args: Any, **kwargs: Any) -> tuple[socket.socket, socket.socket]:
-        token = inside_socketpair.set(True)
-        try:
-            return original_socketpair(*args, **kwargs)
-        finally:
-            inside_socketpair.reset(token)
-
-    monkeypatch.setattr(socket, "create_connection", deny_connection)
-    monkeypatch.setattr(socket, "getaddrinfo", deny_connection)
-    monkeypatch.setattr(socket, "socketpair", guarded_socketpair)
-    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
-    monkeypatch.setattr(socket.socket, "connect_ex", deny_connection)
-    monkeypatch.setattr(socket.socket, "sendto", deny_connection)
-    monkeypatch.setattr(Engine, "connect", deny_connection)
-    monkeypatch.setattr(Engine, "raw_connection", deny_connection)
-    monkeypatch.setattr(psycopg, "connect", deny_connection)
-    monkeypatch.setattr(psycopg.Connection, "connect", deny_connection)
-    monkeypatch.setattr(psycopg.AsyncConnection, "connect", deny_connection)
+    """單元測試禁止網路、SQLAlchemy 連線與直接 psycopg 連線（實作見 tests/network_guard.py）。"""
+    install_network_block(monkeypatch)
 
 
 @pytest.fixture

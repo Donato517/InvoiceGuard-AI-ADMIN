@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Any
 from urllib.parse import quote
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -51,6 +52,7 @@ from app.schemas.procurement_case import (
     ReturnRequest,
     TerminatePlan,
 )
+from app.services import invoice_review_service
 from app.services.company_profile_service import HardcodedCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
 from app.services.finance_review_service import (
@@ -261,8 +263,8 @@ def _check_invoice_access(
         raise DeniedError
 
 
-# 示範發票資料庫（對應原型 seedInvoices）
-_INVOICE_STORE: list[dict[str, Any]] = [
+# 示範發票資料庫（僅供離線單元測試測試環境注入使用）
+DEMO_TEST_INVOICES: list[dict[str, Any]] = [
     {
         "id": 1,
         "uploaded_by": "1",
@@ -425,22 +427,112 @@ _INVOICE_STORE: list[dict[str, Any]] = [
     },
 ]
 
+# 執行時期發票資料清單（正式環境預設為空清單，所有發票自資料庫 public.invoices 讀取）
+_INVOICE_STORE: list[dict[str, Any]] = []
+
 
 # 暫存尚未完成「步驟 3：採購核對修正」的新增發票草稿（不會寫入發票清單與資料庫）
-_DRAFT_INVOICE_STORE: dict[int, dict[str, Any]] = {}
+class _IdKeyedDict[V](dict[Any, V]):
+    """支援 int 與 str 互相容錯的字典（例如 d[3] 與 d["3"] 存取同一項目）。"""
+
+    def __getitem__(self, key: Any) -> V:
+        if dict.__contains__(self, key):
+            return super().__getitem__(key)
+        str_k = str(key)
+        if dict.__contains__(self, str_k):
+            return super().__getitem__(str_k)
+        if str_k.isdigit():
+            int_k = int(str_k)
+            if dict.__contains__(self, int_k):
+                return super().__getitem__(int_k)
+        raise KeyError(key)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: Any) -> bool:
+        if dict.__contains__(self, key):
+            return True
+        str_k = str(key)
+        if dict.__contains__(self, str_k):
+            return True
+        return bool(str_k.isdigit() and dict.__contains__(self, int(str_k)))
+
+    def pop(self, key: Any, *args: Any) -> Any:
+        if dict.__contains__(self, key):
+            return super().pop(key)
+        str_k = str(key)
+        if dict.__contains__(self, str_k):
+            return super().pop(str_k)
+        if str_k.isdigit() and dict.__contains__(self, int(str_k)):
+            return super().pop(int(str_k))
+        if args:
+            return args[0]
+        raise KeyError(key)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        if key in self:
+            return self[key]
+        self[key] = default
+        return default
 
 
-def _find_invoice(invoice_id: int) -> dict[str, Any] | None:
-    return next((i for i in _INVOICE_STORE if i["id"] == invoice_id), None)
+def _validate_invoice_id(invoice_id: Any) -> None:
+    """驗證發票識別碼格式：僅接受純數字整數或標準 UUID。"""
+    s = str(invoice_id or "").strip()
+    if s.isdigit():
+        return
+    try:
+        UUID(s)
+        return
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="發票識別碼格式錯誤") from None
 
 
-def _find_flow_invoice(invoice_id: int) -> dict[str, Any] | None:
-    return _find_invoice(invoice_id) or _DRAFT_INVOICE_STORE.get(invoice_id)
+_DRAFT_INVOICE_STORE: _IdKeyedDict[dict[str, Any]] = _IdKeyedDict()
+
+
+def _get_active_invoices(request: Request | None = None) -> list[dict[str, Any]]:
+    """自資料庫讀取發票資料；若未連線至資料庫（如離線單元測試），則回傳 _INVOICE_STORE。"""
+    current_user_id = str(getattr(request.state, "invoice_user_id", "1")) if request else None
+    is_finance = bool(getattr(request.state, "is_finance_workspace", False)) if request else True
+    db_invoices = invoice_review_service.fetch_invoices(
+        user_id=current_user_id,
+        is_finance=is_finance,
+    )
+    if db_invoices is not None:
+        return db_invoices
+    return _INVOICE_STORE
+
+
+def _find_invoice(invoice_id: Any) -> dict[str, Any] | None:
+    _validate_invoice_id(invoice_id)
+    local = next((i for i in _INVOICE_STORE if str(i["id"]) == str(invoice_id)), None)
+    if local is not None:
+        return local
+    db_inv = invoice_review_service.fetch_invoice(invoice_id)
+    if db_inv is not None:
+        return db_inv
+    return None
+
+
+def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
+    _validate_invoice_id(invoice_id)
+    draft = _DRAFT_INVOICE_STORE.get(invoice_id)
+    if draft is not None:
+        return draft
+    for k, v in _DRAFT_INVOICE_STORE.items():
+        if str(k) == str(invoice_id):
+            return v
+    return _find_invoice(invoice_id)
 
 
 def _build_flow_steps(
     current_step: int,
-    invoice_id: int,
+    invoice_id: str,
     is_completed: bool,
     *,
     max_stage: int = 9,
@@ -550,7 +642,8 @@ def _render_invoice_list_view(
     }
     section_title, active_route, section_filter = section_config[section]
     request.state.active_sidebar_route = active_route
-    base_invoices = [_ensure_invoice_14_fields(i) for i in _INVOICE_STORE if section_filter(i)]
+    active_invoices = _get_active_invoices(request)
+    base_invoices = [_ensure_invoice_14_fields(i) for i in active_invoices if section_filter(i)]
     invoices = list(base_invoices)
 
     if status and status in INVOICE_STATUS_LABEL:
@@ -692,7 +785,7 @@ def _build_batch_filing_context(
     passed_records = []
     dept_map = {"1": "採購部", "2": "行銷部", "3": "採購部", "4": "資訊部", "5": "研發部"}
 
-    for inv in _INVOICE_STORE:
+    for inv in _get_active_invoices():
         snapshot = _to_filing_snapshot(inv)
         if not _in_date_range(snapshot["invoice_date"], from_date, to_date):
             continue
@@ -776,7 +869,7 @@ def invoice_filing_list(
 def export_batch_filing(
     request: Request,
     period: Annotated[str, Form()] = "11308",
-    invoice_ids: Annotated[list[int] | None, Form()] = None,
+    invoice_ids: Annotated[list[str] | None, Form()] = None,
 ) -> Response:
     """批次產生並下載格式 21 申報檔（每期一檔，檔名為本公司統編.TXT）。
 
@@ -789,7 +882,9 @@ def export_batch_filing(
     ids = invoice_ids or []
     if not ids:
         raise HTTPException(status_code=400, detail="請至少勾選一筆發票")
-    selected_invoices = [i for i in _INVOICE_STORE if int(i["id"]) in ids]
+    all_invoices = _get_active_invoices(request)
+    id_strs = {str(x) for x in ids}
+    selected_invoices = [i for i in all_invoices if str(i["id"]) in id_strs]
     if not selected_invoices:
         raise HTTPException(status_code=400, detail="找不到勾選的發票")
 
@@ -830,14 +925,15 @@ def invoice_voucher_list(
 def create_new_invoice(request: Request) -> RedirectResponse:
     """建立暫存發票草稿並進入步驟 1（上傳發票）；未完成步驟 3 採購核對修正前不寫入發票清單。"""
     _DRAFT_INVOICE_STORE.clear()
-    new_id = max((int(i["id"]) for i in _INVOICE_STORE), default=0) + 1
+    numeric_ids = [int(i["id"]) for i in _INVOICE_STORE if str(i["id"]).isdigit()]
+    new_id = str(max(numeric_ids) + 1) if numeric_ids else str(uuid4())
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
     new_invoice: dict[str, Any] = _ensure_invoice_14_fields(
         {
             "id": new_id,
             "uploaded_by": current_user_id,
             "format_identification": "三聯式手開發票",
-            "invoice_number": f"AB{12345677 + new_id}",
+            "invoice_number": "",
             "invoice_date": "113/08/15",
             "buyer_name": "範例科技股份有限公司",
             "seller_name": "範例銷貨人",
@@ -871,7 +967,7 @@ def create_new_invoice(request: Request) -> RedirectResponse:
 
 
 @router.get("/{invoice_id}", response_class=HTMLResponse)
-def invoice_detail(request: Request, invoice_id: int) -> HTMLResponse:
+def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
     """發票審核詳情：辨識結果、AI 判斷理由、核准 / 駁回。"""
     invoice = _find_invoice(invoice_id)
     if not invoice:
@@ -901,7 +997,7 @@ def _render_flow_page(
 ) -> HTMLResponse:
     _ensure_invoice_14_fields(invoice)
     fields_14 = _build_14_fields_rows(invoice)
-    invoice_id = int(invoice["id"])
+    invoice_id = str(invoice["id"])
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
     if max_flow_step < 9 or step <= 3:
         request.state.active_sidebar_route = "/invoices/upload"
@@ -931,6 +1027,9 @@ def _render_flow_page(
 
     batch_filing = _build_batch_filing_context()
     single_filing = _single_filing_check(invoice, batch_filing["period"])
+    is_first_four_readonly = bool(
+        (int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed")) and step <= 4
+    )
 
     return templates.TemplateResponse(
         request,
@@ -953,6 +1052,7 @@ def _render_flow_page(
             else None,
             "error": error,
             "max_flow_step": max_flow_step,
+            "is_first_four_readonly": is_first_four_readonly,
         },
     )
 
@@ -960,7 +1060,7 @@ def _render_flow_page(
 @router.get("/{invoice_id}/flow", response_class=HTMLResponse)
 def invoice_flow(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     step: Annotated[int, Query(ge=1, le=9)] = 4,
 ) -> HTMLResponse:
     """發票作業流程（步驟 1～9；採購部僅開放步驟 1～4）。"""
@@ -978,7 +1078,7 @@ def invoice_flow(
 @router.post("/{invoice_id}/flow/upload", response_model=None)
 async def upload_invoice_file(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     file: Annotated[UploadFile | None, File()] = None,
 ) -> Response:
     """步驟 1：上傳發票檔案並進入步驟 2（OCR 辨識預覽）；此時僅暫存於記憶體，尚未寫入發票清單。"""
@@ -986,6 +1086,11 @@ async def upload_invoice_file(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
+    if int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed"):
+        raise HTTPException(
+            status_code=400,
+            detail="此發票已進入財務審核或已完成，步驟 1～4 僅供檢視，不可重新上傳檔案。",
+        )
 
     if file and file.filename:
         raw_bytes = await file.read()
@@ -1013,7 +1118,7 @@ async def upload_invoice_file(
 
 
 @router.get("/{invoice_id}/file")
-def get_invoice_file(request: Request, invoice_id: int) -> Response:
+def get_invoice_file(request: Request, invoice_id: str) -> Response:
     """取得當次作業暫存之發票檔案預覽內容。"""
     invoice = _find_flow_invoice(invoice_id)
     if not invoice or not invoice.get("file_bytes"):
@@ -1025,7 +1130,7 @@ def get_invoice_file(request: Request, invoice_id: int) -> Response:
     )
 
 
-def _commit_draft_after_correction(invoice_id: int, invoice: dict[str, Any]) -> None:
+def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> None:
     """完成步驟 3 採購核對修正後，清除暫存影像並將發票正式寫入發票清單。"""
     invoice.pop("file_bytes", None)
     invoice.pop("file_media_type", None)
@@ -1035,11 +1140,32 @@ def _commit_draft_after_correction(invoice_id: int, invoice: dict[str, Any]) -> 
         if not _find_invoice(invoice_id):
             _INVOICE_STORE.insert(0, invoice)
 
+    invoice_review_service.save_invoice(invoice, invoice_id)
+
+
+@router.post("/{invoice_id}/flow/re-ocr")
+def re_ocr_invoice(
+    request: Request,
+    invoice_id: str,
+) -> RedirectResponse:
+    """步驟 3：重新執行 AI OCR 辨識。"""
+    invoice = _find_flow_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    if int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed"):
+        raise HTTPException(
+            status_code=400,
+            detail="此發票已進入財務審核或已完成，步驟 1～4 僅供檢視，無法重新辨識。",
+        )
+    _ensure_invoice_14_fields(invoice)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
+
 
 @router.post("/{invoice_id}/flow/correct")
 def correct_invoice_fields(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     invoice_number: Annotated[str, Form()],
     invoice_date: Annotated[str, Form()],
     format_identification: Annotated[str | None, Form()] = None,
@@ -1063,6 +1189,11 @@ def correct_invoice_fields(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
+    if int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed"):
+        raise HTTPException(
+            status_code=400,
+            detail="此發票已進入財務審核或已完成，步驟 1～4 僅供檢視，無法修改。",
+        )
     _ensure_invoice_14_fields(invoice)
 
     if format_identification is not None:
@@ -1126,7 +1257,7 @@ def correct_invoice_fields(
 @router.post("/{invoice_id}/flow/advance")
 def advance_flow_step(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     from_step: Annotated[int, Form()],
 ) -> RedirectResponse:
     """前往下一步驟；若尚未完成步驟 3 採購核對修正則不寫入發票清單。"""
@@ -1149,7 +1280,7 @@ def advance_flow_step(
 
 
 @router.post("/{invoice_id}/flow/finish-first-four")
-def finish_first_four_steps(request: Request, invoice_id: int) -> RedirectResponse:
+def finish_first_four_steps(request: Request, invoice_id: str) -> RedirectResponse:
     """非財務部門完成前四步發票核對，標記待財務部接續處理並返回發票管理列表。"""
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
@@ -1162,7 +1293,7 @@ def finish_first_four_steps(request: Request, invoice_id: int) -> RedirectRespon
 
 
 @router.post("/{invoice_id}/flow/complete")
-def complete_invoice_flow(request: Request, invoice_id: int) -> RedirectResponse:
+def complete_invoice_flow(request: Request, invoice_id: str) -> RedirectResponse:
     """確認發票作業完成。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
@@ -1246,8 +1377,16 @@ _DEMO_REVIEW_INPUTS: dict[int, dict[str, Any]] = {
         ],
     },
 }
-_FINANCE_CASES: dict[int, ReviewCase] = {}
-_FINANCE_HISTORY: dict[int, list[StatusChange]] = {}
+
+
+def _demo_review_input(invoice_id: Any) -> dict[str, Any]:
+    """示範審核輸入僅對應整數 ID 的測試發票；資料庫發票（UUID）一律回傳空值。"""
+    key = str(invoice_id)
+    return _DEMO_REVIEW_INPUTS.get(int(key), {}) if key.isdigit() else {}
+
+
+_FINANCE_CASES: _IdKeyedDict[ReviewCase] = _IdKeyedDict()
+_FINANCE_HISTORY: _IdKeyedDict[list[StatusChange]] = _IdKeyedDict()
 _REVIEW_STATUS_TO_V15 = {
     "pending": "pending_department_approval",
     "approved": STATUS_APPROVED,
@@ -1261,9 +1400,9 @@ _RETURN_EXTRA_FIELDS = ["attachment", "invoice_date", "seller_tax_id", "buyer_ta
 
 def _finance_case(invoice: dict[str, Any]) -> ReviewCase:
     """取得示範發票的審核資料；第一次讀取時由示範發票轉為 Schema v1.5 欄位。"""
-    invoice_id = int(invoice["id"])
+    invoice_id = str(invoice["id"])
     if invoice_id not in _FINANCE_CASES:
-        demo = _DEMO_REVIEW_INPUTS.get(invoice_id, {})
+        demo = _demo_review_input(invoice_id)
         number = str(invoice.get("invoice_number") or "").strip().upper()
         deduction = str(invoice.get("deduction_code") or "").strip()[:1]
         category = invoice.get("tax_category") or "應稅"
@@ -1293,7 +1432,7 @@ def _finance_case(invoice: dict[str, Any]) -> ReviewCase:
 
 def _sync_invoice(invoice: dict[str, Any], case: ReviewCase) -> None:
     """把審核結果寫回示範發票，讓步驟流程與申報檔頁面看到相同狀態。"""
-    _FINANCE_CASES[int(invoice["id"])] = case
+    _FINANCE_CASES[str(invoice["id"])] = case
     if case.tax_type:
         invoice["tax_category"] = _TAX_TYPE_TO_CATEGORY[case.tax_type]
         invoice["tax_type"] = (
@@ -1317,7 +1456,7 @@ def _apply_change(invoice: dict[str, Any], case: ReviewCase, change: StatusChang
     """套用狀態異動：更新欄位確認列、狀態與歷程（示範資料；正式版由 repository 同交易寫入）。"""
     updates = {(r.field_name, r.item_id): r for r in change.field_review_updates}
     reviews = tuple(updates.get((r.field_name, r.item_id), r) for r in case.field_reviews)
-    _FINANCE_HISTORY.setdefault(int(invoice["id"]), []).append(change)
+    _FINANCE_HISTORY.setdefault(str(invoice["id"]), []).append(change)
     _sync_invoice(invoice, replace(case, status=change.new_status, field_reviews=reviews))
 
 
@@ -1328,7 +1467,7 @@ def _reviewer_id(request: Request) -> str:
 def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str, Any]:
     """步驟 5 財務審核畫面所需資料。"""
     case = _finance_case(invoice)
-    demo = _DEMO_REVIEW_INPUTS.get(int(invoice["id"]), {})
+    demo = _demo_review_input(invoice["id"])
     reviewable = case.status in REVIEWABLE_STATUSES
     field_options = [
         (r.field_name, r.item_id or "", field_label(r.field_name)) for r in case.field_reviews
@@ -1344,7 +1483,7 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
             {"trail": t, "label": field_label(t.field_name)}
             for t in build_change_history(demo.get("changes", []))
         ],
-        "history": [_history_entry(c) for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])],
+        "history": [_history_entry(c) for c in _FINANCE_HISTORY.get(str(invoice["id"]), [])],
         "tax_types": TAX_TYPES,
         "deduction_codes": DEDUCTION_CODES,
         "expense_categories": EXPENSE_CATEGORIES,
@@ -1377,7 +1516,7 @@ def _history_entry(change: StatusChange) -> dict[str, Any]:
     return {"change": change, "label": label, "lines": [], "note": change.reason}
 
 
-def _finance_review_target(request: Request, invoice_id: int) -> dict[str, Any]:
+def _finance_review_target(request: Request, invoice_id: str) -> dict[str, Any]:
     if getattr(request.state, "invoice_max_step", 9) < 5:
         raise DeniedError
     invoice = _find_invoice(invoice_id)
@@ -1386,7 +1525,7 @@ def _finance_review_target(request: Request, invoice_id: int) -> dict[str, Any]:
     return invoice
 
 
-def _review_redirect(invoice_id: int) -> RedirectResponse:
+def _review_redirect(invoice_id: str) -> RedirectResponse:
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=5", status_code=303)
 
 
@@ -1401,7 +1540,7 @@ def _review_error(
 @router.post("/{invoice_id}/finance-review/accounting", response_model=None)
 def finance_update_accounting(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     tax_type: Annotated[str, Form()] = "",
     deduction_code: Annotated[str, Form()] = "",
     expense_category: Annotated[str, Form()] = "",
@@ -1428,7 +1567,7 @@ def finance_update_accounting(
 
 
 @router.post("/{invoice_id}/finance-review/approve", response_model=None)
-def finance_approve(request: Request, invoice_id: int) -> Response:
+def finance_approve(request: Request, invoice_id: str) -> Response:
     """步驟 5：核准；有任何未處理項目時列出原因並擋下。"""
     invoice = _finance_review_target(request, invoice_id)
     case = _finance_case(invoice)
@@ -1443,7 +1582,7 @@ def finance_approve(request: Request, invoice_id: int) -> Response:
 @router.post("/{invoice_id}/finance-review/return", response_model=None)
 def finance_return(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     return_field: Annotated[list[str] | None, Form()] = None,
     return_reason: Annotated[list[str] | None, Form()] = None,
 ) -> Response:
@@ -1472,7 +1611,7 @@ def finance_return(
 # 退回時把示範發票的欄位拍一份快照，申請人存檔或重新上傳後與快照比對，得到實際修改的欄位。
 # TODO(StacieChen): 接上資料庫後改由 invoice_changes（本輪修改）判斷 changed_fields，
 #   部門改讀 invoices.department_id，刪除 _RETURN_SNAPSHOTS 與 _DEMO_DEPARTMENT_ID。
-_RETURN_SNAPSHOTS: dict[int, dict[str, Any]] = {}
+_RETURN_SNAPSHOTS: _IdKeyedDict[dict[str, Any]] = _IdKeyedDict()
 # 示範發票沒有部門欄位；未登入部門（測試替身）時使用此示範值，發票部門一律視為與目前部門相同
 _DEMO_DEPARTMENT_ID = "demo"
 # 示範發票欄位 → Schema v1.5 欄位；發票字軌號碼另拆成 invoice_track／invoice_number
@@ -1495,7 +1634,7 @@ def _file_digest(raw: bytes | None) -> str | None:
 
 def _returned_case(invoice: dict[str, Any]) -> ReviewCase | None:
     """示範發票目前是否在「退回補正」；只有已進入財務審核的發票才有案件資料。"""
-    if not _find_invoice(int(invoice["id"])) or invoice.get("review_status") != "returned":
+    if not _find_invoice(str(invoice["id"])) or invoice.get("review_status") != "returned":
         return None
     case = _finance_case(invoice)
     return case if case.status == STATUS_RETURNED else None
@@ -1503,14 +1642,14 @@ def _returned_case(invoice: dict[str, Any]) -> ReviewCase | None:
 
 def _take_return_snapshot(invoice: dict[str, Any]) -> None:
     """財務退回成功後，記下退回當下的欄位與附件，作為比對修改的基準。"""
-    _RETURN_SNAPSHOTS[int(invoice["id"])] = {
+    _RETURN_SNAPSHOTS[str(invoice["id"])] = {
         "fields": {name: invoice.get(name) for name in _SNAPSHOT_FIELDS},
         "file_digest": _file_digest(invoice.get("file_bytes")),
         "attachment_replaced": False,
     }
 
 
-def _note_attachment_upload(invoice_id: int, raw: bytes) -> None:
+def _note_attachment_upload(invoice_id: str, raw: bytes) -> None:
     """退回補正期間重新上傳附件：步驟 3 存檔會清除暫存檔，所以上傳當下就記錄已更換。"""
     snapshot = _RETURN_SNAPSHOTS.get(invoice_id)
     if snapshot is not None and raw and _file_digest(raw) != snapshot["file_digest"]:
@@ -1519,7 +1658,7 @@ def _note_attachment_upload(invoice_id: int, raw: bytes) -> None:
 
 def _changed_fields(invoice: dict[str, Any]) -> set[tuple[str, str | None]]:
     """與退回快照比對，回傳實際修改的 (v1.5 欄位, item_id)；示範發票只有表頭欄位。"""
-    snapshot = _RETURN_SNAPSHOTS.get(int(invoice["id"]))
+    snapshot = _RETURN_SNAPSHOTS.get(str(invoice["id"]))
     if snapshot is None:
         return set()
     changed: set[tuple[str, str | None]] = set()
@@ -1554,7 +1693,7 @@ def _return_request(invoice: dict[str, Any], case: ReviewCase) -> ReturnRequest 
             "changed_by": c.changed_by,
             "reason": c.reason,
         }
-        for c in _FINANCE_HISTORY.get(int(invoice["id"]), [])
+        for c in _FINANCE_HISTORY.get(str(invoice["id"]), [])
     ]
     return_fields = [
         {"field_name": r.field_name, "item_id": r.item_id, "review_comment": r.review_comment}
@@ -1622,7 +1761,7 @@ def _apply_resubmit(
         )
         for r in case.field_reviews
     )
-    _FINANCE_CASES[int(invoice["id"])] = replace(
+    _FINANCE_CASES[str(invoice["id"])] = replace(
         case,
         status=plan.target_status,
         submission_round=plan.next_round,
@@ -1634,7 +1773,7 @@ def _apply_resubmit(
         tax_amount=Decimal(str(invoice.get("tax_amount") or 0)),
         total_amount=Decimal(str(invoice.get("total_amount") or 0)),
     )
-    _FINANCE_HISTORY.setdefault(int(invoice["id"]), []).append(
+    _FINANCE_HISTORY.setdefault(str(invoice["id"]), []).append(
         StatusChange(
             invoice_id=case.invoice_id,
             old_status=plan.expected_status,
@@ -1644,7 +1783,7 @@ def _apply_resubmit(
             changed_at=datetime.now(UTC),
         )
     )
-    _RETURN_SNAPSHOTS.pop(int(invoice["id"]), None)
+    _RETURN_SNAPSHOTS.pop(str(invoice["id"]), None)
     invoice["review_status"] = "pending"
     invoice["first_four_checked"] = True
     invoice["stage"] = 4
@@ -1653,7 +1792,7 @@ def _apply_resubmit(
 @router.post("/{invoice_id}/procurement/resubmit", response_model=None)
 def procurement_resubmit(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     response_key: Annotated[list[str] | None, Form()] = None,
     response_action: Annotated[list[str] | None, Form()] = None,
     response_note: Annotated[list[str] | None, Form()] = None,
@@ -1715,7 +1854,7 @@ def _apply_terminate(
     request: Request, invoice: dict[str, Any], case: ReviewCase, plan: TerminatePlan
 ) -> None:
     """套用終止計畫（示範資料；正式版由 C 的 service 以 expected_status 為條件寫入）。"""
-    _FINANCE_HISTORY.setdefault(int(invoice["id"]), []).append(
+    _FINANCE_HISTORY.setdefault(invoice["id"], []).append(
         StatusChange(
             invoice_id=case.invoice_id,
             old_status=plan.expected_status,
@@ -1725,15 +1864,16 @@ def _apply_terminate(
             changed_at=datetime.now(UTC),
         )
     )
-    _RETURN_SNAPSHOTS.pop(int(invoice["id"]), None)
+    _RETURN_SNAPSHOTS.pop(invoice["id"], None)
     _sync_invoice(invoice, replace(case, status=plan.target_status))
 
 
 @router.post("/{invoice_id}/procurement/terminate", response_model=None)
 def procurement_terminate(
-    request: Request, invoice_id: int, reason: Annotated[str, Form()] = ""
+    request: Request, invoice_id: str, reason: Annotated[str, Form()] = ""
 ) -> Response:
     """步驟 3：申請人終止被退回的請款單（原因必填），終止後不能再重送。"""
+    _validate_invoice_id(invoice_id)
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -1767,7 +1907,7 @@ def procurement_terminate(
 @router.post("/{invoice_id}/review")
 def review_invoice(
     request: Request,
-    invoice_id: int,
+    invoice_id: str,
     decision: Annotated[str, Form()],
     purpose: Annotated[str | None, Form()] = None,
     account_code: Annotated[str | None, Form()] = None,
@@ -1801,7 +1941,7 @@ def review_invoice(
 
 
 @router.post("/{invoice_id}/filing")
-def generate_filing(request: Request, invoice_id: int) -> RedirectResponse:
+def generate_filing(request: Request, invoice_id: str) -> RedirectResponse:
     """步驟 6：產生示範申報檔。"""
     if getattr(request.state, "invoice_max_step", 9) < 6:
         raise DeniedError
@@ -1819,7 +1959,7 @@ def generate_filing(request: Request, invoice_id: int) -> RedirectResponse:
 
 
 @router.post("/{invoice_id}/import-confirm")
-def confirm_import(request: Request, invoice_id: int) -> RedirectResponse:
+def confirm_import(request: Request, invoice_id: str) -> RedirectResponse:
     """步驟 7：確認手動匯入國稅局軟體。"""
     if getattr(request.state, "invoice_max_step", 9) < 7:
         raise DeniedError
@@ -1832,7 +1972,7 @@ def confirm_import(request: Request, invoice_id: int) -> RedirectResponse:
 
 
 @router.get("/{invoice_id}/export/{kind}")
-def export_invoice_data(request: Request, invoice_id: int, kind: str) -> Response:
+def export_invoice_data(request: Request, invoice_id: str, kind: str) -> Response:
     """步驟 9：匯出結果檔案（申報檔 TXT、進項資料 CSV、傳票 CSV）。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError

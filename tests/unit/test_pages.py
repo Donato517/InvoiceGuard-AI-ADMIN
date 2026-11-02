@@ -288,13 +288,13 @@ def test_new_invoice_only_saved_after_correction(admin_client: TestClient) -> No
 
 def test_batch_filing_page_and_export(admin_client: TestClient) -> None:
     # 步驟 1 上傳按鈕無重複，僅保留與 [← 返回列表] 同行之按鈕
-    step1_res = admin_client.get("/invoices/1/flow?step=1")
+    step1_res = admin_client.get("/invoices/3/flow?step=1")
     assert step1_res.status_code == 200
     assert step1_res.text.count("上傳並開始辨識") == 1
     assert 'form="flow-upload-form"' in step1_res.text
 
     # 步驟 3 左右分欄、14 項核對欄位、無原始圖檔提示，儲存按鈕無重複
-    step3_res = admin_client.get("/invoices/1/flow?step=3")
+    step3_res = admin_client.get("/invoices/3/flow?step=3")
     assert step3_res.status_code == 200
     assert "invoice-correction-split" in step3_res.text
     assert "核對欄位（14 項）" in step3_res.text

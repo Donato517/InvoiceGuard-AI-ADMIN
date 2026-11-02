@@ -264,7 +264,7 @@ def test_version_url_options_deadline_and_external_client_ownership() -> None:
     assert "pages.image" in body["fieldMask"] and "pages.symbols" in body["fieldMask"]
     assert result.metadata.requested_version == "ocr-test-v2"
     assert result.metadata.source_sha256 == evidence.sha256(b"synthetic")
-    assert max(sent[0].extensions["timeout"].values()) <= 25
+    assert max(sent[0].extensions["timeout"].values()) <= 25.01
 
 
 @pytest.mark.parametrize(

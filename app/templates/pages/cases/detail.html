@@ -1,0 +1,106 @@
+{#
+  @template pages/cases/detail.html
+  @description 真實發票案件詳情（唯讀）：表頭、明細、原圖、AI 辨識、人工修正、送出當下檢核、狀態歷程。
+  @route GET /cases/{invoice_id}
+  @context detail: CaseDetail         header、items、file、field_reviews、changes、status_history、
+                                      recognition、warnings
+  @context status_labels / tax_type_labels / source_labels: dict  代碼 → 中文
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}案件詳情{% endblock %}
+{% block content %}
+  {% set h = detail.header %}
+  <div class="page-heading">
+    <h2>案件 {{ h.invoice_id }}</h2>
+    <p class="muted small-text">唯讀檢視；此頁不提供核准、退回或編輯。<a href="/cases">返回列表</a></p>
+  </div>
+  <section class="card">
+    <h3>基本資料</h3>
+    <dl class="detail-list">
+      <dt>狀態</dt><dd>{{ status_labels.get(h.status, h.status) }}（第 {{ h.submission_round }} 輪）</dd>
+      <dt>提交者／部門</dt><dd>{{ h.submitter_name or "—" }}／{{ h.department_name or "—" }}</dd>
+      <dt>提交時間</dt><dd>{{ h.submitted_at or "—" }}</dd>
+      <dt>發票號碼</dt><dd>{{ (h.invoice_track or "") ~ (h.invoice_number or "") or "—" }}</dd>
+      <dt>發票日期／期別</dt><dd>{{ h.invoice_date or "—" }}／{{ h.tax_period or "—" }}</dd>
+      <dt>銷貨人</dt><dd>{{ h.seller_name or "—" }}（{{ h.seller_tax_id or "—" }}）</dd>
+      <dt>買受人</dt><dd>{{ h.buyer_name or "—" }}（{{ h.buyer_tax_id or "—" }}）</dd>
+      <dt>課稅別</dt><dd>{{ tax_type_labels.get(h.tax_type, h.tax_type or "—") }}</dd>
+      <dt>銷售額</dt><dd>{{ h.sales_amount if h.sales_amount is not none else "—" }}</dd>
+      <dt>稅額</dt><dd>{{ h.tax_amount if h.tax_amount is not none else "—" }}</dd>
+      <dt>總計</dt><dd>{{ h.total_amount if h.total_amount is not none else "—" }}（{{ h.total_amount_zh or "—" }}）</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h3>原始影像</h3>
+    {% if detail.file %}
+      <p class="muted small-text">{{ detail.file.original_filename or "" }} · {{ detail.file.mime_type or "" }} · 版本 {{ detail.file.version_no }}</p>
+      {% if detail.file.mime_type == "application/pdf" %}
+        {# 站台以 X-Frame-Options: DENY 禁止被嵌入，所以 PDF 不用 iframe，改在新分頁開啟（仍經 /image 驗權） #}
+        <p><a class="btn btn--secondary btn--small" href="/cases/{{ h.invoice_id }}/image" target="_blank" rel="noopener">在新分頁開啟 PDF</a></p>
+      {% else %}
+        <img src="/cases/{{ h.invoice_id }}/image" alt="發票原始影像" width="100%" data-case-image>
+        <p class="alert alert--warning" role="alert" data-case-image-error hidden></p>
+        <script src="{{ static_url('js/case-image.js') }}" defer></script>
+      {% endif %}
+    {% else %}
+      <p class="alert alert--warning" role="alert">此案件沒有可顯示的原圖（沒有目前有效的影像紀錄）。</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h3>明細</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th scope="col">序號</th><th scope="col">品名</th><th scope="col">數量</th><th scope="col">單價</th><th scope="col">金額</th></tr></thead>
+      <tbody>
+        {% for item in detail.items %}
+          <tr><td>{{ item.line_no }}</td><td>{{ item.item_name or "—" }}</td><td>{{ item.quantity if item.quantity is not none else "—" }}</td><td>{{ item.unit_price if item.unit_price is not none else "—" }}</td><td>{{ item.line_amount if item.line_amount is not none else "—" }}</td></tr>
+        {% else %}<tr><td colspan="5">沒有明細。</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="card">
+    <h3>送出當下保存的檢核提醒</h3>
+    <p class="muted small-text">以下是前台送出時保存的結果，不是依目前資料重新檢核；不代表財會覆核或申報檢核。</p>
+    {% if detail.warnings %}
+      <ul>{% for w in detail.warnings %}<li>{{ w.field }}：{{ w.message }}（{{ w.code }}）</li>{% endfor %}</ul>
+    {% else %}<p>沒有保存的提醒。</p>{% endif %}
+  </section>
+  <section class="card">
+    <h3>AI 辨識</h3>
+    {% if detail.recognition %}
+      {% set r = detail.recognition %}
+      <p>{{ r.ai_provider }} {{ r.model_name or "" }} · 結果 {{ r.result_status }}{% if r.confidence_score is not none %} · 信心 {{ r.confidence_score }}{% endif %}</p>
+      <pre>{{ r.extracted_fields | case_json }}</pre>
+    {% else %}<p>沒有連到此案件的 AI 辨識紀錄。</p>{% endif %}
+  </section>
+  <section class="card">
+    <h3>人工修正（AI 原值 vs 送出值）</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th scope="col">輪次</th><th scope="col">欄位</th><th scope="col">AI 原值</th><th scope="col">送出值</th><th scope="col">財會勾選</th></tr></thead>
+      <tbody>
+        {% for f in detail.field_reviews %}
+          <tr><td>{{ f.submission_round }}</td><td>{{ f.field_name }}{% if f.line_no %}（明細 {{ f.line_no }}）{% endif %}</td><td>{{ f.ai_original_value | case_json }}</td><td>{{ f.submitted_value | case_json }}</td><td>{{ "已勾選" if f.is_checked else "未勾選" }}</td></tr>
+        {% else %}<tr><td colspan="5">沒有與 AI 原值不同的欄位。</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <h4>逐次修改紀錄</h4>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th scope="col">時間</th><th scope="col">欄位</th><th scope="col">舊值</th><th scope="col">新值</th><th scope="col">來源／操作者</th></tr></thead>
+      <tbody>
+        {% for c in detail.changes %}
+          <tr><td>{{ c.changed_at }}</td><td>{{ c.field_name }}{% if c.line_no %}（明細 {{ c.line_no }}）{% endif %}</td><td>{{ c.old_value | case_json }}</td><td>{{ c.new_value | case_json }}</td><td>{{ source_labels.get(c.change_source, c.change_source) }}／{{ c.changer_name or "—" }}</td></tr>
+        {% else %}<tr><td colspan="5">沒有修改紀錄。</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="card">
+    <h3>狀態歷程</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th scope="col">時間</th><th scope="col">狀態變更</th><th scope="col">原因</th><th scope="col">操作者</th></tr></thead>
+      <tbody>
+        {% for s in detail.status_history %}
+          <tr><td>{{ s.changed_at }}</td><td>{{ status_labels.get(s.old_status, s.old_status or "—") }} → {{ status_labels.get(s.new_status, s.new_status) }}</td><td>{{ s.reason or "—" }}</td><td>{{ s.changer_name or "—" }}</td></tr>
+        {% else %}<tr><td colspan="4">沒有狀態歷程。</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+{% endblock content %}

@@ -73,6 +73,7 @@ from app.services.format21_service import (
     summarize_401,
     validate_profile,
 )
+from app.services.invoice_review_service import ProtectedInvoiceError
 from app.services.procurement_case_service import (
     UNSPECIFIED_FIELD,
     ProcurementCaseError,
@@ -737,7 +738,17 @@ def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
     """將示範發票轉為 F09 讀取的 Schema v1.5 欄位，缺值不補預設，交由 F09 檢核。"""
     # TODO(StacieChen): 接上資料庫後改由 repository 讀 invoices，刪除此轉換
     number = str(invoice.get("invoice_number") or "").strip().upper()
-    approved = invoice.get("review_status") == "approved" or invoice.get("status") == "passed"
+    # 匯出資格只認可信的案件狀態：資料庫來源看原始 db_status，示範資料看 review_status；
+    # 畫面用的 status（passed 等）不是核准依據。
+    if "db_status" in invoice:
+        approved = invoice.get("db_status") == "approved"
+    else:
+        approved = invoice.get("review_status") == "approved"
+    if "db_status" in invoice:
+        # 資料庫來源：申報用金額取原始值，NULL 保持 None 交給 F09 判定缺漏，不當成 0
+        sales_amount, tax_amount = invoice.get("sales_amount_db"), invoice.get("tax_amount_db")
+    else:
+        sales_amount, tax_amount = invoice.get("net_amount"), invoice.get("tax_amount")
     deduction = str(invoice.get("deduction_code") or "").strip()[:1]
     category = invoice.get("tax_category")
     return {
@@ -747,10 +758,12 @@ def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
         "invoice_date": _roc_to_iso(invoice.get("invoice_date")),
         "seller_tax_id": invoice.get("seller_tax_id"),
         "buyer_tax_id": invoice.get("buyer_tax_id"),
-        "sales_amount": invoice.get("net_amount"),
-        "tax_amount": invoice.get("tax_amount"),
+        "sales_amount": sales_amount,
+        "tax_amount": tax_amount,
         "tax_type": _TAX_CATEGORY_TO_TYPE.get(str(category), category),
-        "status": "approved" if approved else str(invoice.get("status") or ""),
+        "status": "approved"
+        if approved
+        else str(invoice.get("db_status") or invoice.get("status") or ""),
         "deduction_code": deduction if deduction and deduction in "1234" else "",
     }
 
@@ -798,8 +811,7 @@ def _build_batch_filing_context(
                 "id": inv["id"],
                 "invoice_number": inv.get("invoice_number", ""),
                 "invoice_date": inv.get("invoice_date", ""),
-                "department_name": inv.get("department_name")
-                or dept_map.get(str(inv["id"]), "採購部"),
+                "department_name": inv.get("department_name") or dept_map.get(str(inv["id"]), ""),
                 "sales": int(inv.get("net_amount", 0)),
                 "tax": int(inv.get("tax_amount", 0)),
                 "checked": exportable,
@@ -1132,6 +1144,12 @@ def get_invoice_file(request: Request, invoice_id: str) -> Response:
 
 def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> None:
     """完成步驟 3 採購核對修正後，清除暫存影像並將發票正式寫入發票清單。"""
+    if invoice.get("db_status") not in (None, "draft"):
+        # fail-closed：已提交案件（含退回補正中）不可經此路徑寫回資料庫；補正重送由 W2 提供
+        raise HTTPException(
+            status_code=409,
+            detail="已提交的案件目前無法由此流程修改；補正重送功能尚未開放。",
+        )
     invoice.pop("file_bytes", None)
     invoice.pop("file_media_type", None)
     invoice["stage"] = max(invoice.get("stage", 3), 4)
@@ -1140,7 +1158,13 @@ def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> 
         if not _find_invoice(invoice_id):
             _INVOICE_STORE.insert(0, invoice)
 
-    invoice_review_service.save_invoice(invoice, invoice_id)
+    try:
+        invoice_review_service.save_invoice(invoice, invoice_id)
+    except ProtectedInvoiceError:
+        raise HTTPException(
+            status_code=409,
+            detail="已提交的案件目前無法由此流程修改；補正重送功能尚未開放。",
+        ) from None
 
 
 @router.post("/{invoice_id}/flow/re-ocr")

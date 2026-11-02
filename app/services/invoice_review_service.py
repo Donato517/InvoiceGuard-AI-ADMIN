@@ -8,6 +8,7 @@
 from typing import Any
 
 from app.db.repositories import invoice_repository as repository
+from app.db.repositories.invoice_repository import ProtectedInvoiceError as ProtectedInvoiceError
 
 
 def fetch_invoices(
@@ -51,6 +52,9 @@ def save_invoice(invoice: dict[str, Any], invoice_id: Any) -> None:
     try:
         repository.save_invoice(session, invoice, invoice_id)
         session.commit()
+    except repository.ProtectedInvoiceError:
+        session.rollback()
+        raise
     except Exception:
         session.rollback()
     finally:

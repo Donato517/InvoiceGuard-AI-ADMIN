@@ -37,9 +37,11 @@ SELECT_INVOICES = text("""
            i.validation_results,
            i.submitted_by::text AS submitted_by,
            i.department_id::text AS department_id,
+           d.department_name,
            f.original_filename,
            f.mime_type
     FROM public.invoices i
+    LEFT JOIN public.departments d ON d.department_id = i.department_id
     LEFT JOIN LATERAL (
         SELECT original_filename, mime_type
         FROM public.invoice_files
@@ -81,9 +83,11 @@ SELECT_INVOICE_BY_ID = text("""
            i.validation_results,
            i.submitted_by::text AS submitted_by,
            i.department_id::text AS department_id,
+           d.department_name,
            f.original_filename,
            f.mime_type
     FROM public.invoices i
+    LEFT JOIN public.departments d ON d.department_id = i.department_id
     LEFT JOIN LATERAL (
         SELECT original_filename, mime_type
         FROM public.invoice_files
@@ -137,7 +141,12 @@ UPSERT_INVOICE = text("""
         status = EXCLUDED.status,
         validation_results = EXCLUDED.validation_results,
         submitted_at = now()
+    WHERE public.invoices.status = 'draft' AND public.invoices.submission_round = 0
 """)
+
+
+class ProtectedInvoiceError(Exception):
+    """已提交（非草稿）的案件不可經 ADMIN 的核對修正路徑改寫；補正重送尚未開放（W2）。"""
 
 
 _TAX_TYPE_TO_DB = {"應稅": "taxable", "零稅率": "zero_rated", "免稅": "tax_exempt"}
@@ -193,9 +202,10 @@ def _row_to_invoice_dict(
         view_status = "rejected"
         is_completed = True
     elif status_raw.startswith("pending_"):
+        # 待審核（含 pending_accounting_review／pending_department_approval）絕不是已通過或已核准
         stage = 5
         review_status = "pending"
-        view_status = "passed"
+        view_status = "pending"
         is_completed = False
     else:
         stage = 4
@@ -203,42 +213,53 @@ def _row_to_invoice_dict(
         view_status = "pending"
         is_completed = False
 
-    raw_tax_type = str(row.get("tax_type") or "taxable")
+    raw_tax_type = str(row.get("tax_type") or "")
     if raw_tax_type == "tax_exempt":
         tax_category = "免稅"
         tax_type = "3 - 免稅"
     elif raw_tax_type == "zero_rated":
         tax_category = "零稅率"
         tax_type = "2 - 零稅率"
-    else:
+    elif raw_tax_type == "taxable":
         tax_category = "應稅"
         tax_type = "1 - 應稅"
+    else:
+        # 資料庫沒有課稅別（草稿可為 NULL）：保留空白，不推測為應稅
+        tax_category = ""
+        tax_type = ""
 
+    # 缺值保持空白／0，不以範例值取代；數量、單價、明細金額只取第一筆明細（小數精度另案處理）
     item_desc = ""
-    qty = 1
-    unit_p = int(row.get("sales_amount") or 0)
-    amt = int(row.get("sales_amount") or 0)
+    qty = 0
+    unit_p = 0
+    amt = 0
     if items:
         item_desc = "、".join(it.get("item_name", "") for it in items if it.get("item_name"))
         first_it = items[0]
-        qty = int(first_it.get("quantity") or 1)
-        unit_p = int(first_it.get("unit_price") or unit_p)
-        amt = int(first_it.get("line_amount") or amt)
+        qty = int(first_it.get("quantity") or 0)
+        unit_p = int(first_it.get("unit_price") or 0)
+        amt = int(first_it.get("line_amount") or 0)
 
     return {
         "id": row["invoice_id"],
-        "uploaded_by": row.get("submitted_by") or "1",
+        "db_status": status_raw,  # 資料庫原始狀態碼；核准判斷與匯出資格只看這個，不看畫面狀態
+        "department_id": row.get("department_id") or "",
+        "department_name": row.get("department_name") or "",
+        "uploaded_by": row.get("submitted_by") or "",
         "format_identification": "三聯式手開發票",
         "invoice_number": invoice_number,
         "invoice_date": _format_date(row.get("invoice_date")),
-        "buyer_name": row.get("buyer_name") or "範例科技股份有限公司",
-        "seller_name": row.get("seller_name") or "範例銷貨人",
-        "seller_tax_id": row.get("seller_tax_id") or "24681357",
-        "buyer_tax_id": row.get("buyer_tax_id") or "12345678",
-        "item_description": item_desc or "辦公用品",
+        "buyer_name": row.get("buyer_name") or "",
+        "seller_name": row.get("seller_name") or "",
+        "seller_tax_id": row.get("seller_tax_id") or "",
+        "buyer_tax_id": row.get("buyer_tax_id") or "",
+        "item_description": item_desc,
         "quantity": qty,
         "unit_price": unit_p,
         "amount": amt,
+        # 申報用原始金額：資料庫 NULL 保持 None、真正的 0 保持 0；不經 int()／or 0 轉換
+        "sales_amount_db": row.get("sales_amount"),
+        "tax_amount_db": row.get("tax_amount"),
         "net_amount": int(row.get("sales_amount") or 0),
         "tax_category": tax_category,
         "tax_amount": int(row.get("tax_amount") or 0),
@@ -251,9 +272,9 @@ def _row_to_invoice_dict(
         "is_completed": is_completed,
         "file_name": row.get("original_filename"),
         "file_media_type": row.get("mime_type") or "image/jpeg",
-        "purpose": item_desc or "公務使用",
-        "account_code": "5601 辦公用品費",
-        "deduction_code": "1 - 進貨及費用",
+        "purpose": item_desc,
+        "account_code": "",  # 會計欄位資料契約未核定（資料庫無此欄位），不填假科目
+        "deduction_code": "",
         "tax_type": tax_type,
         "import_confirmed_at": None,
         "filing_preview": None,
@@ -315,7 +336,7 @@ def save_invoice(db: Session, invoice: dict[str, Any], invoice_id: Any) -> None:
     user_uuid = to_uuid_str(invoice.get("uploaded_by", "1"))
     dept_uuid = to_uuid_str(invoice.get("department_id", "1"))
 
-    db.execute(
+    result = db.execute(
         UPSERT_INVOICE,
         {
             "invoice_id": uuid_id,
@@ -339,3 +360,6 @@ def save_invoice(db: Session, invoice: dict[str, Any], invoice_id: Any) -> None:
             "department_id": dept_uuid,
         },
     )
+    # 衝突且不是草稿時 WHERE 條件不成立，不會更新任何列：視為被保護，絕不靜默成功
+    if result.rowcount == 0:
+        raise ProtectedInvoiceError(uuid_id)

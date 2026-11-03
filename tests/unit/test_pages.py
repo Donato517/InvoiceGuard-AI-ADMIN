@@ -260,7 +260,7 @@ def test_new_invoice_is_not_saved_to_list_until_api_submit(
         files={"file": ("invoice.png", b"fake-png-bytes", "image/png")},
     )
     assert upload_res.status_code == 303
-    assert upload_res.headers["location"] == "/invoices/6/flow?step=2"
+    assert upload_res.headers["location"] == "/invoices/6/flow?step=3"
     assert admin_client.get("/invoices/6/file").status_code == 200
 
     # 舊的示範核對（flow/correct）不可用來儲存 API 辨識的草稿，否則會把示範預設值寫進發票清單
@@ -448,11 +448,10 @@ def test_new_invoice_has_no_dummy_data_in_14_fields(admin_client: TestClient) ->
     redirect_url = res.headers["location"]
     invoice_id = redirect_url.split("/")[2]
 
-    # 檢查步驟 2（OCR 預覽）與步驟 3（核對欄位）
+    # 檢查步驟 2（OCR 預覽）已重導向至步驟 3（核對欄位）
     step2_res = admin_client.get(f"/invoices/{invoice_id}/flow?step=2")
-    assert step2_res.status_code == 200
-    assert "範例科技股份有限公司" not in step2_res.text
-    assert "範例銷貨人" not in step2_res.text
+    assert step2_res.status_code == 303
+    assert step2_res.headers["location"] == f"/invoices/{invoice_id}/flow?step=3"
 
     step3_res = admin_client.get(f"/invoices/{invoice_id}/flow?step=3")
     assert step3_res.status_code == 200

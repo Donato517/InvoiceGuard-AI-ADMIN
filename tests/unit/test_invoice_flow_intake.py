@@ -38,17 +38,20 @@ def _upload(admin_client: TestClient, invoice_id: str) -> Any:
     )
 
 
-def test_upload_calls_api_recognize_and_shows_result_on_step2(
+def test_upload_calls_api_recognize_and_shows_result_on_step3(
     admin_client: TestClient, flow_api: FakeApi, draft: str
 ) -> None:
     response = _upload(admin_client, draft)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/invoices/{draft}/flow?step=2"
+    assert response.headers["location"] == f"/invoices/{draft}/flow?step=3"
     assert flow_api.paths() == ["/api/v1/invoices/recognize"]
-    html = admin_client.get(f"/invoices/{draft}/flow?step=2").text
-    assert "12345678" in html and "辦公文具" not in html  # 明細在步驟 3
-    assert "買受人統編未辨識，請輸入" in html
+    # 步驟 2 已跳過並直接重導向至步驟 3
+    step2_res = admin_client.get(f"/invoices/{draft}/flow?step=2")
+    assert step2_res.status_code == 303
+    assert step2_res.headers["location"] == f"/invoices/{draft}/flow?step=3"
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    assert "12345678" in html
     assert "範例科技股份有限公司" not in html  # 不再顯示示範預設值
 
 

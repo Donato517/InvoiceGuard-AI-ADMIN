@@ -22,20 +22,20 @@
     <div id="invoice-drop-icon"
          class="dropzone__icon"
          aria-hidden="true"
-         {% if invoice.file_bytes %}hidden{% endif %}>☁️</div>
+         {% if invoice.file_bytes or invoice.file_name %}hidden{% endif %}>☁️</div>
     <div id="invoice-file-preview"
          class="dropzone__preview"
-         {% if not invoice.file_bytes %}hidden{% endif %}>
+         {% if not (invoice.file_bytes or invoice.file_name) %}hidden{% endif %}>
       <img id="invoice-preview-image"
            class="invoice-file-preview__img"
-           {% if invoice.file_bytes and invoice.file_media_type != 'application/pdf' %}src="/invoices/{{ invoice.id }}/file"{% endif %}
+           {% if (invoice.file_bytes or invoice.file_name) and invoice.file_media_type != 'application/pdf' %}src="/invoices/{{ invoice.id }}/file"{% endif %}
            alt="發票預覽：{{ invoice.file_name or '' }}"
-           {% if not invoice.file_bytes or invoice.file_media_type == 'application/pdf' %}hidden{% endif %}>
+           {% if not (invoice.file_bytes or invoice.file_name) or invoice.file_media_type == 'application/pdf' %}hidden{% endif %}>
       <iframe id="invoice-preview-frame"
               class="invoice-file-preview__frame"
               title="發票檔案預覽"
-              {% if invoice.file_bytes and invoice.file_media_type == 'application/pdf' %}src="/invoices/{{ invoice.id }}/file"{% endif %}
-              {% if not invoice.file_bytes or invoice.file_media_type != 'application/pdf' %}hidden{% endif %}></iframe>
+              {% if (invoice.file_bytes or invoice.file_name) and invoice.file_media_type == 'application/pdf' %}src="/invoices/{{ invoice.id }}/file"{% endif %}
+              {% if not (invoice.file_bytes or invoice.file_name) or invoice.file_media_type != 'application/pdf' %}hidden{% endif %}></iframe>
     </div>
     <h3>選擇或拖曳發票檔案到這裡</h3>
     <input id="invoice-file"

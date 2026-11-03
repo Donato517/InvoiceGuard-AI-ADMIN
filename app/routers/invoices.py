@@ -28,6 +28,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
 from app.core.templating import templates
+from app.db.repositories import case_repository
+from app.db.repositories.invoice_repository import try_get_db_session
+from app.integrations.supabase_storage import S3StorageClient
 from app.routers.e_admin import require_e_origin, session_evidence
 from app.routers.intake import api_message, get_intake_client
 from app.schemas.account_codes import ACCOUNT_CODES, EXPENSE_CATEGORIES
@@ -581,6 +584,30 @@ def _find_invoice(invoice_id: Any) -> dict[str, Any] | None:
     return None
 
 
+def _fetch_storage_file_bytes(invoice_id: Any) -> tuple[bytes, str] | None:
+    """嘗試從 Supabase Storage 與資料庫讀取發票原始檔案內容。"""
+    try:
+        uuid_obj = UUID(str(invoice_id))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    session = try_get_db_session()
+    if session is None:
+        return None
+    try:
+        file_info = case_repository.get_current_file(session, uuid_obj)
+        if file_info is None:
+            return None
+        _, location = file_info
+        client = S3StorageClient.from_settings(bucket=location.bucket_name)
+        content, _ = client.get(location.storage_path)
+        mime = location.mime_type or "image/jpeg"
+        return content, mime
+    except Exception:
+        return None
+    finally:
+        session.close()
+
+
 def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
     _validate_invoice_id(invoice_id)
     draft = _DRAFT_INVOICE_STORE.get(invoice_id)
@@ -589,7 +616,12 @@ def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
     for k, v in _DRAFT_INVOICE_STORE.items():
         if str(k) == str(invoice_id):
             return v
-    return _find_invoice(invoice_id)
+    inv = _find_invoice(invoice_id)
+    if inv is not None and not inv.get("file_bytes"):
+        fetched = _fetch_storage_file_bytes(invoice_id)
+        if fetched:
+            inv["file_bytes"], inv["file_media_type"] = fetched
+    return inv
 
 
 def _build_flow_steps(
@@ -617,12 +649,13 @@ def _build_flow_steps(
         can_navigate = (
             state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
         )
+        nav_step = 3 if idx == 2 else idx
         steps.append(
             {
                 "number": idx,
                 "label": label,
                 "state": state,
-                "url": f"/invoices/{invoice_id}/flow?step={idx}" if can_navigate else None,
+                "url": f"/invoices/{invoice_id}/flow?step={nav_step}" if can_navigate else None,
             }
         )
     return steps
@@ -1159,7 +1192,7 @@ def _render_flow_page(
         invoice_id,
         invoice["is_completed"],
         max_stage=int(invoice.get("stage", step)),
-        has_file_bytes=bool(invoice.get("file_bytes")),
+        has_file_bytes=bool(invoice.get("file_bytes") or invoice.get("file_name")),
         allowed_max_step=max_flow_step,
     )
     checks = _build_checks(invoice)
@@ -1213,7 +1246,7 @@ def invoice_flow(
     invoice_id: str,
     step: Annotated[int, Query(ge=1, le=9)] = 4,
     period: Annotated[str | None, Query()] = None,
-) -> HTMLResponse:
+) -> Response:
     """發票作業流程（步驟 1～9；採購部僅開放步驟 1～4）。"""
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
     if step > max_flow_step:
@@ -1222,18 +1255,11 @@ def invoice_flow(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice)
+
+    if step == 2:
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
 
     return _render_flow_page(request, invoice, step, period=period)
-    """發票作業流程（步驟 1～9；採購部僅開放步驟 1～4）。"""
-    max_flow_step = getattr(request.state, "invoice_max_step", 9)
-    if step > max_flow_step:
-        raise DeniedError
-    invoice = _find_flow_invoice(invoice_id)
-    if not invoice:
-        raise HTTPException(status_code=404, detail="找不到指定發票")
-    _check_invoice_access(request, invoice)
-
-    return _render_flow_page(request, invoice, step)
 
 
 def _media_type(filename: str, content_type: str) -> str:
@@ -1279,8 +1305,8 @@ async def upload_invoice_file(
         invoice["file_bytes"] = raw_bytes
         invoice["file_media_type"] = _media_type(file.filename, content_type)
         _note_attachment_upload(invoice_id, raw_bytes)
-        invoice["stage"] = max(invoice.get("stage", 1), 2)
-        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
+        invoice["stage"] = max(invoice.get("stage", 1), 3)
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
 
     client = get_intake_client(request)
     content = await file.read(intake_service.MAX_UPLOAD_BYTES + 1)
@@ -1307,8 +1333,8 @@ async def upload_invoice_file(
     invoice["intake_state"] = {}
     invoice.pop("submitted_invoice_id", None)
     _note_attachment_upload(invoice_id, content)
-    invoice["stage"] = max(invoice.get("stage", 1), 2)
-    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
+    invoice["stage"] = max(invoice.get("stage", 1), 3)
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
 
 
 def _intake_view(invoice: dict[str, Any]) -> dict[str, Any]:
@@ -1459,14 +1485,28 @@ def _finish_submit(invoice_id: str, invoice: dict[str, Any], case_id: UUID) -> R
 
 @router.get("/{invoice_id}/file")
 def get_invoice_file(request: Request, invoice_id: str) -> Response:
-    """取得當次作業暫存之發票檔案預覽內容。"""
+    """取得當次作業暫存或已儲存發票之檔案內容。"""
     invoice = _find_flow_invoice(invoice_id)
-    if not invoice or not invoice.get("file_bytes"):
+    if not invoice:
         raise HTTPException(status_code=404, detail="找不到發票檔案")
     _check_invoice_access(request, invoice, require_owner=True)
+
+    file_bytes = invoice.get("file_bytes")
+    media_type = invoice.get("file_media_type") or "image/jpeg"
+
+    if not file_bytes:
+        fetched = _fetch_storage_file_bytes(invoice_id)
+        if fetched:
+            file_bytes, media_type = fetched
+            invoice["file_bytes"] = file_bytes
+            invoice["file_media_type"] = media_type
+
+    if not file_bytes:
+        raise HTTPException(status_code=404, detail="找不到發票檔案")
+
     return Response(
-        content=invoice["file_bytes"],
-        media_type=invoice.get("file_media_type", "image/jpeg"),
+        content=file_bytes,
+        media_type=media_type,
     )
 
 

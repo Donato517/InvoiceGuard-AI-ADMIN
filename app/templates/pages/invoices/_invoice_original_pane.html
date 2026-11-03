@@ -15,15 +15,15 @@
   <div id="invoiceOriginalPane">
     {% if invoice.file_bytes %}
       <div class="correction-original-actions">
-        <span class="muted small-text">{{ invoice.file_name }}</span>
+        <span class="muted small-text">{{ invoice.file_name or "原始檔案" }}</span>
         <a href="/invoices/{{ invoice.id }}/file"
            target="_blank"
            rel="noopener noreferrer">新視窗檢視原檔</a>
         <a href="/invoices/{{ invoice.id }}/file"
-           download="{{ invoice.file_name }}"
+           download="{{ invoice.file_name or 'invoice' }}"
            class="btn btn--secondary btn--small">下載原始檔</a>
       </div>
-      {% if invoice.file_media_type == "application/pdf" %}
+      {% if invoice.file_media_type == "application/pdf" or (invoice.file_name and invoice.file_name.lower().endswith(".pdf")) %}
         <iframe class="correction-original-pdf"
                 title="發票 PDF 原始文件預覽"
                 src="/invoices/{{ invoice.id }}/file"></iframe>
@@ -48,6 +48,12 @@
         <p>尚未上傳原始發票。</p>
         <p>請先在發票上傳步驟選取 JPG、PNG 或 PDF。</p>
         <small>不會以示範圖片、空白發票或重繪內容代替原始檔。</small>
+      </div>
+    {% endif %}
+    {% if step == 5 %}
+      <div class="correction-original-uploader" style="margin-top: 1rem; padding: 0.75rem 1rem; background: var(--color-surface, #fff); border: 1px solid var(--color-border, #e2e8f0); border-radius: var(--radius-sm, 6px); font-size: 0.875rem;">
+        <span class="muted">上傳者編號：</span>
+        <code>{{ (finance_review and finance_review.case and finance_review.case.submitted_by) or invoice.uploaded_by or "—" }}</code>
       </div>
     {% endif %}
   </div>

@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
@@ -1322,6 +1322,7 @@ def _intake_view(invoice: dict[str, Any]) -> dict[str, Any]:
         "checked": state.get("checked", False),
         "submitted_invoice_id": invoice.get("submitted_invoice_id"),
         "review_action": f"/invoices/{invoice['id']}/flow/review",
+        "check_url": f"/invoices/{invoice['id']}/flow/check",
     }
 
 
@@ -1388,6 +1389,45 @@ async def review_invoice_intake(request: Request, invoice_id: str) -> Response:
         state = {"banner": error.public_message}
     invoice["intake_state"] = state
     return _render_flow_page(request, invoice, 3)
+
+
+@router.post(
+    "/{invoice_id}/flow/check", response_model=None, dependencies=[Depends(require_e_origin)]
+)
+async def check_invoice_intake(request: Request, invoice_id: str) -> JSONResponse:
+    """步驟 3 輸入時的即時檢核（不需按鈕）：呼叫 API 的必填、業務警示與查重，回傳各欄位的結果 JSON。
+
+    只暫存目前表單，不建立案件；API 失敗時回 error 訊息，畫面需說明「資料尚未送出」。
+    """
+    invoice = _find_flow_invoice(invoice_id)
+    if not invoice or invoice.get("intake_form") is None:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    if invoice.get("submitted_invoice_id"):
+        return JSONResponse({"error": "此發票已提交，不能再檢核。"}, status_code=409)
+    client = get_intake_client(request)
+    data = await request.form()
+    try:
+        form = intake_mapping.form_from_post(data)
+        invoice["intake_form"] = form
+        outcome = await run_in_threadpool(intake_service.check, client, form)
+    except IntakeNotConfiguredError:
+        raise HTTPException(status_code=401, detail="請重新登入後再試") from None
+    except IntakeApiError as error:
+        return JSONResponse(
+            {"error": api_message(error), "errors": intake_mapping.field_errors(error.details)},
+            status_code=502 if error.status >= 500 else 200,
+        )
+    except (IntakeTransportError, IntakeError) as error:
+        return JSONResponse({"error": error.public_message}, status_code=502)
+    return JSONResponse(
+        {
+            "missing": outcome.missing,
+            "warnings": outcome.warnings,
+            "duplicate": outcome.duplicate,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _user_uuid(request: Request) -> UUID:

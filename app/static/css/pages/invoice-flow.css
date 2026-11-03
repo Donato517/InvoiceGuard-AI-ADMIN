@@ -686,3 +686,102 @@
     max-height: calc(100vh - 18rem);
   }
 }
+
+/* ==========================================================================
+   步驟 3 核對表單：必填標示、即時格式提示與檢核訊息（對齊前台 .field-required／.field-hint）
+   ========================================================================== */
+/* 必填標示：紅色、同一行橫向顯示（要壓過 .invoice14-field > label span 的圓形編號樣式） */
+.invoice14-field > label span.field-required,
+.field-required {
+  display: inline;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin-left: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-danger);
+  white-space: nowrap;
+  background: none;
+  border-radius: 0;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+}
+
+.field-hint--ok {
+  color: var(--color-success-soft-text);
+}
+
+.field-hint--compatible {
+  color: var(--color-warning-soft-text);
+}
+
+.field-hint--error {
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+.invoice14-field input.is-valid,
+.invoice14-field select.is-valid,
+.table input.is-valid {
+  border-color: var(--color-success);
+}
+
+.table input.is-invalid {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+}
+
+.field-notes .field-error,
+.field-notes .field-warning,
+.field-notes .field-missing {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+}
+
+.field-notes .field-error {
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+.field-notes .field-warning {
+  color: var(--color-warning-soft-text);
+}
+
+/* AI 沒辨識到的必填欄位：先用淺色提示（尚未輸入），輸入後才依規則顯示紅字 */
+.field-notes .field-missing {
+  color: var(--color-warning-soft-text);
+}
+
+.live-check-summary {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-sm);
+  background-color: var(--color-warning-soft);
+  border-radius: 0.5rem;
+}
+
+.live-check-summary[data-state="clean"] {
+  color: var(--color-success-soft-text);
+  background-color: var(--color-success-soft);
+}
+
+.live-check-summary[data-state="issues"] {
+  color: var(--color-warning-soft-text);
+}
+
+.live-check-summary[data-state="error"] {
+  color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+}
+
+.live-check-summary[data-state="idle"],
+.live-check-summary[data-state="checking"] {
+  color: var(--color-text-muted);
+  background-color: var(--color-surface-muted, #f4f6fa);
+}

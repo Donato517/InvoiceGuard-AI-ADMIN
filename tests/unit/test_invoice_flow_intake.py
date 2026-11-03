@@ -143,3 +143,98 @@ def test_flow_posts_without_same_origin_are_rejected(
 
     assert upload.status_code == 403 and review.status_code == 403
     assert flow_api.requests == []
+
+
+def test_step3_shows_original_image_beside_the_form_and_no_check_button(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+
+    assert "invoice-correction-split" in html
+    assert f'src="/invoices/{draft}/file"' in html  # 左側原圖
+    assert 'id="flow-review-form"' in html
+    assert f'data-live-check-url="/invoices/{draft}/flow/check"' in html
+    assert 'value="check"' not in html  # 不需要「檢核」按鈕
+    assert "invoice-flow-review.js" in html
+    assert 'class="field-required">*必填</span>' in html
+
+
+def test_live_check_returns_per_field_results_as_json(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    import httpx
+
+    flow_api.routes["/api/v1/invoices/check-required"] = httpx.Response(
+        200,
+        json={
+            "required_complete": False,
+            "missing": [
+                {
+                    "field": "seller_tax_id",
+                    "code": "required_missing",
+                    "message": "x",
+                    "line_no": None,
+                }
+            ],
+        },
+    )
+    _upload(admin_client, draft)
+
+    response = admin_client.post(
+        f"/invoices/{draft}/flow/check", headers=_ORIGIN, data=review_data("check")
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert list(body["missing"]) == ["seller_tax_id"]
+    assert body["duplicate"] is False and body["warnings"] == {}
+    assert response.headers["cache-control"] == "no-store"
+    assert flow_api.paths()[-3:] == [
+        "/api/v1/invoices/check-required",
+        "/api/v1/invoices/check-warnings",
+        "/api/v1/invoices/check-duplicate",
+    ]
+
+
+def test_live_check_reports_api_failure_as_an_error_not_as_passed(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    import httpx
+
+    _upload(admin_client, draft)
+    flow_api.routes["/api/v1/invoices/check-required"] = httpx.Response(
+        500, json={"error": {"code": "X", "message": "boom"}}
+    )
+
+    response = admin_client.post(
+        f"/invoices/{draft}/flow/check", headers=_ORIGIN, data=review_data("check")
+    )
+
+    assert response.status_code == 502
+    assert "error" in response.json() and "missing" not in response.json()
+
+
+def test_live_check_requires_same_origin_and_does_not_call_the_api(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+    calls = len(flow_api.requests)
+
+    response = admin_client.post(f"/invoices/{draft}/flow/check", data=review_data("check"))
+
+    assert response.status_code == 403 and len(flow_api.requests) == calls
+
+
+def test_live_check_is_refused_after_submission(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+    admin_client.post(f"/invoices/{draft}/flow/review", headers=_ORIGIN, data=review_data("submit"))
+
+    response = admin_client.post(
+        f"/invoices/{draft}/flow/check", headers=_ORIGIN, data=review_data("check")
+    )
+
+    assert response.status_code == 409

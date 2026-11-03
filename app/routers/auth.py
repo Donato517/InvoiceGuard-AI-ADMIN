@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import ValidationError
 
-from app.constants import SESSION_COOKIE_NAME, WELCOME_CODE, WELCOME_PATH
+from app.constants import API_TOKEN_COOKIE_NAME, SESSION_COOKIE_NAME, WELCOME_CODE, WELCOME_PATH
 from app.core.config import settings
 from app.core.constants import SITE_NAMES
 from app.core.exceptions import NotFoundError
@@ -21,6 +21,7 @@ from app.routers import e_admin as e_guard
 from app.routers.e_admin import local_setup_available, require_e_origin, session_evidence
 from app.schemas.e_admin import Action, EError, UnauthenticatedError
 from app.schemas.e_login import LoginInput
+from app.services import invoice_intake_service as intake_service
 from app.services.e_admin_service import EModule, get_e_module
 from app.services.e_registry import REGISTRY, Capability, validate_registry
 
@@ -114,6 +115,17 @@ async def login(request: Request, module: Module) -> HTMLResponse | RedirectResp
         secure=settings.cookie_secure,
         samesite="lax",
     )
+    # 同一組帳密向 API 換發 Session Token（發票辨識／檢核／提交用）；失敗不影響 ADMIN 登入，用到時再要求重新登入
+    api_token = intake_service.obtain_api_token(data.email, data.password.get_secret_value())
+    if api_token:
+        response.set_cookie(
+            API_TOKEN_COOKIE_NAME,
+            api_token,
+            path="/",
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite="lax",
+        )
     return response
 
 
@@ -123,6 +135,9 @@ def logout(request: Request, module: Module) -> RedirectResponse:
     module.logout(session_evidence(request))
     response = RedirectResponse("/login", status_code=303, headers={"Cache-Control": "no-store"})
     clear_session_cookie(response)
+    response.delete_cookie(
+        API_TOKEN_COOKIE_NAME, httponly=True, secure=settings.cookie_secure, samesite="lax"
+    )
     return response
 
 

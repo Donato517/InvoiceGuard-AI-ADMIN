@@ -1,0 +1,33 @@
+{#
+  @template pages/intake/done.html
+  @description 發票上傳流程完成頁：顯示提交結果（或提交結果不明時查證到的案件）。
+  @route POST /intake/review（action=submit）
+  @context invoice_id: UUID
+  @context result: SubmitView | None   API 提交回應；None 表示由查證取得案件（recovered=True）
+  @context recovered: bool
+  @context status_labels: dict
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}已提交{% endblock %}
+{% block content %}
+  <div class="page-heading">
+    <h2>發票已提交</h2>
+  </div>
+  <section class="card">
+    {% if recovered %}
+      <p class="alert alert--info">先前的提交已經成功，這是查到的案件，沒有重複建立。</p>
+    {% endif %}
+    <p>案件編號：<code>{{ invoice_id }}</code></p>
+    {% if result %}
+      <p>目前狀態：{{ status_labels.get(result.status, result.status) }}（狀態由 API 回報；後續審核流程尚未在此頁開通）</p>
+      <p>期別：{{ result.tax_period }}</p>
+      {% if result.modified_fields %}<p>與 AI 原值不同的欄位：{{ result.modified_fields | length }} 個（已保存供審核）。</p>{% endif %}
+      {% if result.warnings %}
+        <h3>送出當下的檢核提醒</h3>
+        <ul>{% for w in result.warnings %}<li>{{ w.message }}</li>{% endfor %}</ul>
+      {% endif %}
+    {% endif %}
+    <p class="muted small-text">案件讀取需要另行核定的權限；若無法開啟，請聯絡管理員。</p>
+    <p><a href="/cases/{{ invoice_id }}">查看案件</a> · <a href="/intake">再上傳一張</a></p>
+  </section>
+{% endblock content %}

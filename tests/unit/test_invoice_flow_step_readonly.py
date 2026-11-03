@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.routers import invoices as inv_router
 
+_ORIGIN = {"Origin": "http://testserver"}  # 流程頁的上傳／核對 POST 需同源
+
 
 def test_step1_and_step3_readonly_when_stage_gte_5(admin_client: TestClient) -> None:
     # 建立一個已達步驟 5 的發票
@@ -27,6 +29,7 @@ def test_step1_upload_blocked_when_stage_gte_5(admin_client: TestClient) -> None
     invoice_id = 4
     resp = admin_client.post(
         f"/invoices/{invoice_id}/flow/upload",
+        headers=_ORIGIN,
         files={"file": ("test.jpg", b"fake image bytes", "image/jpeg")},
     )
     assert resp.status_code == 400

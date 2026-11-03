@@ -141,6 +141,13 @@ class Settings(BaseSettings):
         return self.is_vercel or self.APP_ENV != "local"
 
     @property
+    def intake_api_base_url(self) -> str:
+        """ADMIN 後端呼叫發票 API 的位址：雲端用正式網址，本機直連本機 API（8000，loopback）。"""
+        if self.is_vercel or self.APP_ENV != "local":
+            return PRODUCTION["API_URL"]
+        return "http://127.0.0.1:8000"
+
+    @property
     def module_backend(self) -> Literal["remote", "cloud"]:
         """auto 模式只在 Vercel 選擇雲端；此選擇不代表完成授權。"""
         if self.MODULE_BACKEND == "auto":

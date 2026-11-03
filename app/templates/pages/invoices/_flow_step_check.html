@@ -3,6 +3,14 @@
   @description 步驟 4：系統自動檢核結果（HTML 原型 flowStep 3）。檢核在後端執行，這裡只顯示結果。
   @context checks: list[dict]  [{label, ok}]：發票格式、賣方統編位數、買方統編、日期、稅額、重複發票
 #}
+{% if intake %}
+  {% if intake.submitted_invoice_id %}
+    <p class="alert alert--success">已提交，案件已建立。案件狀態由 API 決定。</p>
+    <p><a href="/cases/{{ intake.submitted_invoice_id }}">查看案件</a> · <a href="/invoices/new">再上傳一張</a></p>
+  {% else %}
+    <p class="alert alert--warning">尚未提交。請回到步驟 3 按「檢核」與「確認提交」；檢核結果來自 API，只是提醒，通過不代表資料合法。</p>
+  {% endif %}
+{% else %}
 <p class="alert alert--info">以下為系統基本檢核，不代表正式稅務驗證。</p>
 <table class="table">
   <thead>
@@ -24,3 +32,4 @@
     </tr>
   </tbody>
 </table>
+{% endif %}

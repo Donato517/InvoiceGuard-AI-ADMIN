@@ -120,6 +120,14 @@ def block_external_services(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", deny_connection)
 
 
+@pytest.fixture(autouse=True)
+def no_api_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """登入時向 API 換發 Token 在單元測試一律不執行（不連線）；需要時由個別測試覆寫。"""
+    from app.services import invoice_intake_service
+
+    monkeypatch.setattr(invoice_intake_service, "obtain_api_token", lambda email, password: None)
+
+
 @pytest.fixture
 def client() -> TestClient:
     """未登入的瀏覽器。follow_redirects=False 以便檢查導向。"""

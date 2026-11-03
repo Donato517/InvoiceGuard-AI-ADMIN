@@ -1,0 +1,26 @@
+{#
+  @template pages/intake/upload.html
+  @description 發票上傳流程步驟 1：選擇發票檔案（JPG／PNG／單頁 PDF，4 MB 以內）後送 API 辨識。
+  @route GET /intake；表單 POST /intake/recognize
+  @context message: str  上一次失敗的訊息（可空）
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}上傳發票{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <h2>上傳發票</h2>
+    <p class="muted small-text">選擇三聯式發票的 JPG、PNG 或單頁 PDF（4 MB 以內），系統會呼叫 AI 辨識並帶入下一步的核對頁。</p>
+  </div>
+  {% if message %}<p class="alert alert--danger" role="alert">{{ message }}</p>{% endif %}
+  <section class="card">
+    <form method="post" action="/intake/recognize" enctype="multipart/form-data" class="form">
+      <label for="intake-file">發票檔案</label>
+      <input id="intake-file" name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required>
+      <p class="muted small-text">影像會保存在私有儲存空間，辨識結果須由你逐欄確認後才會送出；AI 辨識可能有誤。</p>
+      <button type="submit" class="btn btn--primary">開始辨識</button>
+    </form>
+  </section>
+{% endblock content %}

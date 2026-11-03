@@ -8,7 +8,7 @@
   <p class="alert alert--warning">進度已進入步驟 5（財務審核）以上，步驟 1～4 為唯讀模式，不可重新上傳發票。</p>
 {% else %}
   <p class="alert alert--info">
-    支援 JPG、PNG、PDF（20 MB 以下），可點擊或直接拖曳發票檔案至下方區域。基於資安考量，系統不會將發票圖檔存入資料庫；需完成「AI OCR 辨識」與「採購核對修正」後，才會儲存作業進度並顯示於發票清單。
+    支援 JPG、PNG、PDF（單頁，4 MB 以下），可點擊或直接拖曳發票檔案至下方區域。送出後會把影像傳到 API 做 Document AI OCR 辨識；API 會暫存影像（保留期限見辨識結果）並寫入辨識紀錄，逾期未提交即刪除。
   </p>
 {% endif %}
 <form id="flow-upload-form"

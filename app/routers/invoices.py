@@ -21,12 +21,14 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
 from app.core.templating import templates
-from app.routers.e_admin import session_evidence
+from app.routers.e_admin import require_e_origin, session_evidence
+from app.routers.intake import api_message, get_intake_client
 from app.schemas.account_codes import ACCOUNT_CODES, EXPENSE_CATEGORIES
 from app.schemas.e_admin import Action, DeniedError, Target, UnauthenticatedError
 from app.schemas.finance_review import (
@@ -43,6 +45,13 @@ from app.schemas.finance_review import (
     ReviewCase,
     StatusChange,
 )
+from app.schemas.intake import (
+    IntakeApiError,
+    IntakeError,
+    IntakeFileError,
+    IntakeNotConfiguredError,
+    IntakeTransportError,
+)
 from app.schemas.procurement_case import (
     ATTACHMENT_FIELD,
     RESPONSE_ACTIONS,
@@ -52,6 +61,8 @@ from app.schemas.procurement_case import (
     ReturnRequest,
     TerminatePlan,
 )
+from app.services import invoice_intake_mapping as intake_mapping
+from app.services import invoice_intake_service as intake_service
 from app.services import invoice_review_service
 from app.services.company_profile_service import HardcodedCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
@@ -1053,6 +1064,7 @@ def _render_flow_page(
             "error": error,
             "max_flow_step": max_flow_step,
             "is_first_four_readonly": is_first_four_readonly,
+            "intake": _intake_view(invoice),
         },
     )
 
@@ -1075,13 +1087,28 @@ def invoice_flow(
     return _render_flow_page(request, invoice, step)
 
 
-@router.post("/{invoice_id}/flow/upload", response_model=None)
+def _media_type(filename: str, content_type: str) -> str:
+    lowered = filename.lower()
+    if lowered.endswith(".pdf") or "pdf" in content_type.lower():
+        return "application/pdf"
+    if lowered.endswith(".png") or "png" in content_type.lower():
+        return "image/png"
+    return "image/jpeg"
+
+
+@router.post(
+    "/{invoice_id}/flow/upload", response_model=None, dependencies=[Depends(require_e_origin)]
+)
 async def upload_invoice_file(
     request: Request,
     invoice_id: str,
     file: Annotated[UploadFile | None, File()] = None,
 ) -> Response:
-    """步驟 1：上傳發票檔案並進入步驟 2（OCR 辨識預覽）；此時僅暫存於記憶體，尚未寫入發票清單。"""
+    """步驟 1：上傳發票影像並呼叫 API 辨識（Document AI OCR → 模型整理欄位），成功後進入步驟 2。
+
+    影像只暫存於記憶體供核對對照；API 另依其保留期限保存影像並寫入辨識紀錄（有成本與副作用）。
+    已在發票清單的既有發票（退回補正的重新上傳附件）只更新附件，不重新辨識。
+    """
     invoice = _find_flow_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
@@ -1091,30 +1118,154 @@ async def upload_invoice_file(
             status_code=400,
             detail="此發票已進入財務審核或已完成，步驟 1～4 僅供檢視，不可重新上傳檔案。",
         )
+    if file is None or not file.filename:
+        return _render_flow_page(
+            request, invoice, 1, error="請先選擇或拖曳發票檔案後再進行 AI OCR 辨識。"
+        )
 
-    if file and file.filename:
+    content_type = file.content_type or "application/octet-stream"
+    if _DRAFT_INVOICE_STORE.get(invoice_id) is None:
         raw_bytes = await file.read()
         invoice["file_name"] = file.filename
         invoice["file_bytes"] = raw_bytes
+        invoice["file_media_type"] = _media_type(file.filename, content_type)
         _note_attachment_upload(invoice_id, raw_bytes)
-        content_type = file.content_type or ""
-        if file.filename.lower().endswith(".pdf") or "pdf" in content_type.lower():
-            invoice["file_media_type"] = "application/pdf"
-        elif file.filename.lower().endswith(".png") or "png" in content_type.lower():
-            invoice["file_media_type"] = "image/png"
-        else:
-            invoice["file_media_type"] = "image/jpeg"
+        invoice["stage"] = max(invoice.get("stage", 1), 2)
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
 
-    if not invoice.get("file_name"):
-        return _render_flow_page(
-            request,
-            invoice,
-            1,
-            error="請先選擇或拖曳發票檔案後再進行 AI OCR 辨識。",
+    client = get_intake_client(request)
+    content = await file.read(intake_service.MAX_UPLOAD_BYTES + 1)
+    try:
+        recognition, form = await run_in_threadpool(
+            intake_service.recognize,
+            client,
+            content=content,
+            filename=file.filename,
+            content_type=content_type,
         )
+    except IntakeFileError as error:
+        return _render_flow_page(request, invoice, 1, error=error.public_message)
+    except IntakeApiError as error:
+        return _render_flow_page(request, invoice, 1, error=api_message(error))
+    except IntakeTransportError as error:
+        return _render_flow_page(request, invoice, 1, error=error.public_message)
 
+    invoice["file_name"] = file.filename
+    invoice["file_bytes"] = content
+    invoice["file_media_type"] = _media_type(file.filename, content_type)
+    invoice["recognition"] = recognition
+    invoice["intake_form"] = form
+    invoice["intake_state"] = {}
+    invoice.pop("submitted_invoice_id", None)
+    _note_attachment_upload(invoice_id, content)
     invoice["stage"] = max(invoice.get("stage", 1), 2)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=2", status_code=303)
+
+
+def _intake_view(invoice: dict[str, Any]) -> dict[str, Any]:
+    """流程頁步驟 2～4 的 API 辨識／核對畫面資料；非 API 辨識的發票回空字典（沿用舊畫面）。"""
+    form = invoice.get("intake_form")
+    if form is None:
+        return {}
+    state = invoice.get("intake_state") or {}
+    return {
+        "form": form,
+        "recognition": invoice.get("recognition"),
+        "rows": intake_mapping.FIELD_ROWS,
+        "tax_type_options": intake_mapping.TAX_TYPE_OPTIONS,
+        "max_items": intake_mapping.MAX_ITEMS,
+        "banner": state.get("banner", ""),
+        "errors": state.get("errors", {}),
+        "warnings": state.get("warnings", {}),
+        "missing": state.get("missing", {}),
+        "duplicate": state.get("duplicate"),
+        "checked": state.get("checked", False),
+        "submitted_invoice_id": invoice.get("submitted_invoice_id"),
+        "review_action": f"/invoices/{invoice['id']}/flow/review",
+    }
+
+
+@router.post(
+    "/{invoice_id}/flow/review", response_model=None, dependencies=[Depends(require_e_origin)]
+)
+async def review_invoice_intake(request: Request, invoice_id: str) -> Response:
+    """步驟 3：新增／刪除明細、呼叫 API 檢核（必填、業務警示、查重）、確認提交；伺服器只暫存目前表單。"""
+    invoice = _find_flow_invoice(invoice_id)
+    if not invoice or invoice.get("intake_form") is None:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    _check_invoice_access(request, invoice, require_owner=True)
+    if invoice.get("submitted_invoice_id"):
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
+    client = get_intake_client(request)
+    data = await request.form()
+    action = str(data.get("action", ""))
+    state: dict[str, Any] = {}
+    try:
+        form = intake_mapping.form_from_post(data)
+        invoice["intake_form"] = form
+        if action == "add_item":
+            invoice["intake_form"] = intake_mapping.with_blank_item(form)
+        elif action.startswith("remove_item:"):
+            tail = action.split(":", 1)[1]
+            invoice["intake_form"] = intake_mapping.without_item(
+                form, int(tail) if tail.isdigit() else -1
+            )
+        elif action == "check":
+            outcome = await run_in_threadpool(intake_service.check, client, form)
+            state = {
+                "warnings": outcome.warnings,
+                "missing": outcome.missing,
+                "duplicate": outcome.duplicate,
+                "checked": True,
+            }
+        elif action == "submit":
+            result = await run_in_threadpool(intake_service.submit, client, form)
+            return _finish_submit(invoice_id, invoice, result.invoice_id)
+        else:
+            raise HTTPException(status_code=400, detail="未知的動作")
+    except IntakeNotConfiguredError:
+        raise HTTPException(status_code=401, detail="請重新登入後再試") from None
+    except IntakeApiError as error:
+        if error.code == "RECOGNITION_ALREADY_SUBMITTED":
+            existing = await run_in_threadpool(
+                intake_service.confirm_submitted,
+                invoice["intake_form"].recognition_id,
+                _user_uuid(request),
+            )
+            if existing is not None:
+                return _finish_submit(invoice_id, invoice, existing)
+        state = {
+            "banner": api_message(error),
+            "errors": intake_mapping.field_errors(error.details),
+        }
+    except IntakeTransportError as error:
+        state = {"banner": error.public_message}
+        if error.ambiguous and action == "submit":
+            state["banner"] = (
+                "尚未確認是否已送出，請先到案件列表確認；若沒有這筆案件可再按一次「確認提交」，系統會防止重複建立。"
+            )
+    except IntakeError as error:
+        state = {"banner": error.public_message}
+    invoice["intake_state"] = state
+    return _render_flow_page(request, invoice, 3)
+
+
+def _user_uuid(request: Request) -> UUID:
+    """目前登入者的 UUID；ADMIN 登入以外的身分（非 UUID）查不到案件，回一個不會命中的零值。"""
+    try:
+        return UUID(str(request.state.invoice_user_id))
+    except ValueError:
+        return UUID(int=0)
+
+
+def _finish_submit(invoice_id: str, invoice: dict[str, Any], case_id: UUID) -> RedirectResponse:
+    """API 已建立案件：清掉暫存影像，之後的審核狀態由 API／案件資料決定，不寫入示範發票清單。"""
+    invoice.pop("file_bytes", None)
+    invoice.pop("file_media_type", None)
+    invoice["submitted_invoice_id"] = str(case_id)
+    invoice["stage"] = max(int(invoice.get("stage", 3)), 4)
+    invoice["intake_state"] = {}
+    return RedirectResponse(f"/invoices/{invoice_id}/flow?step=4", status_code=303)
 
 
 @router.get("/{invoice_id}/file")
@@ -1194,6 +1345,8 @@ def correct_invoice_fields(
             status_code=400,
             detail="此發票已進入財務審核或已完成，步驟 1～4 僅供檢視，無法修改。",
         )
+    if invoice.get("intake_form") is not None:
+        raise HTTPException(status_code=400, detail="API 辨識的發票請使用步驟 3 的核對表單送出。")
     _ensure_invoice_14_fields(invoice)
 
     if format_identification is not None:

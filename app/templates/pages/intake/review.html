@@ -1,0 +1,54 @@
+{#
+  @template pages/intake/review.html
+  @description 發票上傳流程核對頁：14 項核對欄位（表頭）＋多筆品名明細；顯示 API 的辨識提醒、必填缺漏、業務警示、查重結果。
+  @route POST /intake/recognize、POST /intake/review
+  @context form: IntakeForm            目前表單（字串）
+  @context banner: str                 整頁錯誤訊息（可空）
+  @context errors: dict                欄位 key → 格式錯誤訊息（422；item key 為 items.N.欄位）
+  @context warnings: dict              欄位 key → [業務警示]（API check-warnings）
+  @context missing: dict               欄位 key → 必填缺漏訊息（API check-required）
+  @context duplicate: bool | None      查重結果；None 為未查
+  @context recognition: RecognitionView | None  剛辨識完才有；顯示辨識提醒與模型資訊
+  @context original: str | None        剛辨識完才有：原始影像的 data URI（僅 JPG／PNG）；其餘情況由瀏覽器 sessionStorage 取回
+  @context original_note: str          無法內嵌影像時的說明（例如 PDF）
+  @context checked: bool               是否剛執行過檢核
+  @context rows: tuple[FieldRow]       14 項核對欄位與 API 欄位對照
+  @context tax_type_options: tuple     課稅別選項
+  @context max_items: int
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}核對發票{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <style>
+    .intake-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+    .intake-original img { max-width: 100%; height: auto; display: block; }
+    @media (max-width: 900px) { .intake-layout { grid-template-columns: 1fr; } }
+  </style>
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <h2>核對發票資料</h2>
+    <p class="muted small-text">AI 辨識結果可能有誤，請逐欄對照原始發票確認；送出後會建立案件，初始狀態由 API 決定，送出後會顯示。</p>
+  </div>
+  {% if banner %}<p class="alert alert--danger" role="alert">{{ banner }}</p>{% endif %}
+  {% include "pages/intake/_check_summary.html" %}
+  {% if recognition %}
+    <section class="card">
+      <h3>AI 辨識提醒</h3>
+      <p class="muted small-text">辨識結果：{{ recognition.result_status }}；影像保留到 {{ recognition.expires_at.strftime("%Y-%m-%d %H:%M") }}，逾時需重新上傳。</p>
+      {% if recognition.warnings %}
+        <ul>{% for w in recognition.warnings %}<li>{{ w.message }}</li>{% endfor %}</ul>
+      {% else %}<p class="muted">辨識沒有提出額外提醒。</p>{% endif %}
+    </section>
+  {% endif %}
+  <div class="intake-layout">
+  <section id="intake-original" class="card intake-original" data-recognition-id="{{ form.recognition_id }}">
+    <h3>原始發票影像</h3>
+    <img id="intake-original-img" alt="原始發票影像" {% if original %}src="{{ original }}"{% endif %} hidden>
+    <p id="intake-original-note" class="muted small-text">{{ original_note or "此頁已無法顯示原始影像（可能已重新整理）；請對照手邊的原始發票，或重新上傳。" }}</p>
+  </section>
+  {% include "pages/intake/_review_form.html" %}
+  </div>
+  <script src="{{ static_url('js/intake-original.js') }}" defer></script>
+{% endblock content %}

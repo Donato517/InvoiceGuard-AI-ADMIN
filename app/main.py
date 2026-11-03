@@ -18,6 +18,7 @@ from app.core.logging_config import setup_logging
 from app.routers import (
     accounts,
     auth,
+    cases,
     dashboard,
     db_inspection,
     departments,
@@ -26,6 +27,7 @@ from app.routers import (
     e_admin,
     e_function_settings,
     health,
+    intake,
     invoices,
     knowledge,
     robots,
@@ -58,6 +60,8 @@ app.include_router(robots.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(invoices.router)
+app.include_router(cases.router)
+app.include_router(intake.router)
 app.include_router(knowledge.router)
 app.include_router(users.router)
 app.include_router(accounts.router)

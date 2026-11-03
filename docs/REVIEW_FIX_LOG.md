@@ -1005,3 +1005,11 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 
 - 問題：合併後 Windows CI 有 2 個備援測試失敗，同一份程式先前通過。原因：截止時間相減的浮點誤差，(t + 25.0) - t 可能得到 25.000000000000057，超過每輪上限；誤差極小，線上功能不受影響。Codex 從 CI 日誌找到並重現。處理：備援時限加上每輪上限；同類的測試改為容許浮點誤差；新增固定時鐘的回歸測試，修正前會失敗。
 - 處理檔案：app/services/rag_qa_service.py、tests/unit/test_rag_qa_service.py。
+
+## 2026-11-03 Claude：發票作業流程串接 API 辨識並合併 /intake（審查修正）
+
+- 變更：ADMIN 登入後以同一組帳密向 API 換發 Session Token（httpOnly cookie），`/invoices/{id}/flow` 步驟 1～4 改接 API 辨識、檢核、提交；`GET /intake` 轉入流程頁；核對表單與檢核摘要抽成共用 partial。
+- 自我審查發現並已修正：(1) 新增的上傳與核對 POST 沒有同源檢查，會觸發付費 OCR，已加 `require_e_origin`，並補測試；(2) 同步 httpx 呼叫在 async 路由內會阻塞事件迴圈（OCR 約 20 秒），改用 `run_in_threadpool`；(3) 查證已提交案件時 `UUID(request.state.invoice_user_id)` 遇到非 UUID 身分會 500，改用 `_user_uuid` 回零值。
+- 正式抽樣（10 張，經本機 ADMIN→API→Document AI）：字軌＋號碼 9/10 正確（1 張漏），日期 8/10 有值（1 張靠期別推算），買方統編 9/10，賣方統編 8/10；金額自洽 9/10；其餘欄位僅抽 2 張對照原圖，沒有逐欄真值。API 對漏欄與不一致都有提醒。
+- 驗證：ADMIN pytest 2518 passed、9 skipped、1 failed（`test_document_ai_bundle_retains_legacy_contract`，此 venv 缺 Pillow，改動前即如此；`test_document_ai_bundle.py` 同因無法載入）；ruff、djlint、`check_project` 通過。未驗：tests/e2e、雲端部署。
+- 已知限制：ADMIN 切換部門不會同步 API Session 的部門；token 過期時回 401 錯誤頁而不是導向登入；`POST /intake/recognize`、`/review` 暫留；`tests/unit/test_document_ai_bundle.py` 與 shared integrations 測試需先安裝 Pillow。

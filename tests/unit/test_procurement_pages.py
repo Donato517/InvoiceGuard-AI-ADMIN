@@ -18,6 +18,8 @@ from fastapi.testclient import TestClient
 
 from app.routers import invoices as invoices_router
 
+_ORIGIN = {"Origin": "http://testserver"}  # 流程頁的上傳／核對 POST 需同源
+
 FINANCE_USER = "finance-9"
 
 
@@ -140,6 +142,7 @@ def test_changed_field_and_reupload_count_as_corrected(client: TestClient) -> No
     _correct(client, net_amount=1600, tax_amount=80, total_amount=1680)
     upload = client.post(
         "/invoices/3/flow/upload",
+        headers=_ORIGIN,
         files={"file": ("new.png", b"\x89PNG new attachment", "image/png")},
     )
     assert upload.status_code == 303

@@ -4,7 +4,8 @@
                或填原因後終止（不能再重送）；規則由 procurement_case_service 判斷，失敗原因逐項顯示。
   @route POST /invoices/{invoice_id}/procurement/resubmit、POST /invoices/{invoice_id}/procurement/terminate、POST /invoices/{invoice_id}/flow/upload（重新上傳附件）
   @context invoice: dict              發票資料
-  @context procurement_return: dict   {items: [{key, label, reason, is_changed}], actions, errors, submission_round, returned_at}
+  @context procurement_return: dict   {items: [{key, label, reason, is_changed}], actions, errors, submission_round, returned_at, db_backed}
+               db_backed 為 true（資料庫案件）時只顯示退回項目與終止；線上修改補正與重送尚未提供。
 #}
 {% set pr = procurement_return %}
 <section class="fr-section" aria-label="退回補正">
@@ -13,9 +14,13 @@
     <span class="badge badge--flagged">待補正</span>
     <span class="muted small-text">第 {{ pr.submission_round }} 次送出被退回{% if pr.returned_at %}（{{ pr.returned_at.strftime("%Y-%m-%d %H:%M") }}）{% endif %}</span>
   </h3>
-  <p class="alert alert--warning">
-    財務人員退回以下項目。請先在下方核對欄位修改並按「儲存補正內容」（附件請重新上傳），再逐項選擇處理方式後重新送出。
-  </p>
+  {% if pr.db_backed %}
+    <p class="alert alert--warning">財務人員退回以下項目，請依原因準備補正資料。</p>
+  {% else %}
+    <p class="alert alert--warning">
+      財務人員退回以下項目。請先在下方核對欄位修改並按「儲存補正內容」（附件請重新上傳），再逐項選擇處理方式後重新送出。
+    </p>
+  {% endif %}
   {% if pr.errors %}
     <ul class="fr-issue-list" role="alert">
       {% for message in pr.errors %}
@@ -28,6 +33,19 @@
   {% endif %}
   {% if not pr["items"] %}
     <p class="alert alert--info">讀取不到退回項目，請聯絡財務人員。</p>
+  {% elif pr.db_backed %}
+    <ul class="fr-issue-list">
+      {% for item in pr["items"] %}
+        <li class="fr-issue fr-issue--warning">
+          <span class="fr-issue__level">待補正</span>
+          <span><strong>{{ item.label }}</strong>：{{ item.reason }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="alert alert--info">
+      目前尚未提供線上修改被退回的案件與重新送出。請與財務人員聯絡，或在下方終止這張請款單（終止後不能再重送）。
+    </p>
+    {% include "pages/invoices/_procurement_terminate.html" %}
   {% else %}
     <form method="post"
           action="/invoices/{{ invoice.id }}/procurement/resubmit"
@@ -58,22 +76,7 @@
       </ul>
       <button type="submit" class="btn btn--primary">重新送出財務審核</button>
     </form>
-    <details class="fr-details">
-      <summary>終止（不再重送）</summary>
-      <form method="post"
-            action="/invoices/{{ invoice.id }}/procurement/terminate"
-            class="form"
-            data-confirm="終止後不能再重送，確定要終止這張請款單嗎？">
-        <div class="form-field">
-          <label for="terminate-reason">終止原因</label>
-          <input id="terminate-reason"
-                 name="reason"
-                 required
-                 placeholder="例如：供應商將重開發票，改另立新單">
-        </div>
-        <button type="submit" class="btn btn--danger">終止</button>
-      </form>
-    </details>
+    {% include "pages/invoices/_procurement_terminate.html" %}
     <details class="fr-details">
       <summary>重新上傳附件</summary>
       <form method="post"

@@ -33,6 +33,7 @@ INVOICE_ID = "5b0f8b0e-6c7a-4c55-9a1e-0a1b2c3d4e5f"
 SUBMITTER = "00000000-0000-4000-8000-0000000000a1"
 FINANCE = "00000000-0000-4000-8000-0000000000f9"
 NOW = datetime(2026, 11, 3, 4, 0, tzinfo=UTC)
+_ORIGIN = {"Origin": "http://testserver"}
 
 
 def _case(**changes: Any) -> ReviewCase:
@@ -141,10 +142,12 @@ def test_step5_reads_the_database_case_and_history(client: TestClient, fake: Fak
 def test_approve_writes_to_the_database_with_the_accounting_note(
     client: TestClient, fake: FakeDb
 ) -> None:
-    client.post(f"/invoices/{INVOICE_ID}/finance-review/accounting", data=ACCOUNTING)
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
     assert fake.tax_saves == []  # 課稅別與資料庫相同，不重複寫入
 
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 303
     change, case, tax_type = fake.commits[0]
@@ -163,6 +166,7 @@ def test_approve_writes_to_the_database_with_the_accounting_note(
 def test_changed_tax_type_is_saved_to_the_database(client: TestClient, fake: FakeDb) -> None:
     client.post(
         f"/invoices/{INVOICE_ID}/finance-review/accounting",
+        headers=_ORIGIN,
         data=ACCOUNTING | {"tax_type": "zero_rated"},
     )
 
@@ -172,7 +176,7 @@ def test_changed_tax_type_is_saved_to_the_database(client: TestClient, fake: Fak
 def test_approve_without_deduction_code_is_blocked_and_writes_nothing(
     client: TestClient, fake: FakeDb
 ) -> None:
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 400 and "請選擇扣抵代號" in response.text
     assert fake.commits == []
@@ -182,9 +186,11 @@ def test_self_approval_is_blocked_for_database_invoices(
     admin_client: TestClient, fake: FakeDb
 ) -> None:
     client = _as_finance(SUBMITTER, admin_client)
-    client.post(f"/invoices/{INVOICE_ID}/finance-review/accounting", data=ACCOUNTING)
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
 
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 400 and "不能核准自己送出的請款單" in response.text
     assert fake.commits == []
@@ -195,7 +201,7 @@ def test_non_uuid_reviewer_cannot_write_review_records(
 ) -> None:
     client = _as_finance("finance-9", admin_client)
 
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 400 and "請以正式帳號登入" in response.text
     assert fake.commits == []
@@ -206,6 +212,7 @@ def test_return_writes_items_to_the_database(client: TestClient, fake: FakeDb) -
 
     response = client.post(
         f"/invoices/{INVOICE_ID}/finance-review/return",
+        headers=_ORIGIN,
         data={
             "return_field": ["total_amount", "attachment"],
             "return_reason": ["請附折讓單", "補上採購單"],
@@ -224,10 +231,12 @@ def test_return_writes_items_to_the_database(client: TestClient, fake: FakeDb) -
 
 
 def test_conflict_is_reported_and_nothing_is_recorded(client: TestClient, fake: FakeDb) -> None:
-    client.post(f"/invoices/{INVOICE_ID}/finance-review/accounting", data=ACCOUNTING)
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
     fake.commit_error = svc.ReviewConflictError()
 
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 400 and "剛被其他人改變" in response.text
     assert inv._ACCOUNTING_DRAFT  # 失敗時保留暫存，使用者可重試
@@ -236,10 +245,12 @@ def test_conflict_is_reported_and_nothing_is_recorded(client: TestClient, fake: 
 def test_database_unavailable_is_reported_and_nothing_is_recorded(
     client: TestClient, fake: FakeDb
 ) -> None:
-    client.post(f"/invoices/{INVOICE_ID}/finance-review/accounting", data=ACCOUNTING)
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
     fake.commit_error = svc.ReviewUnavailableError()
 
-    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
     assert response.status_code == 400 and "資料庫目前無法使用" in response.text
 
@@ -408,3 +419,20 @@ def test_repository_never_commits_or_rolls_back() -> None:
     text = Path(repo.__file__).read_text(encoding="utf-8")
 
     assert ".commit(" not in text and ".rollback(" not in text
+
+
+def test_approve_and_return_without_same_origin_are_refused(
+    client: TestClient, fake: FakeDb
+) -> None:
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
+
+    approve = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    returned = client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/return",
+        data={"return_field": ["attachment"], "return_reason": ["補上採購單"]},
+    )
+
+    assert approve.status_code == 403 and returned.status_code == 403
+    assert fake.commits == []

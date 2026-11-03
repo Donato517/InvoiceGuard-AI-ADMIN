@@ -42,11 +42,13 @@ class LoadedReview:
         case: 審核用案件（輪次已篩選）。
         changes: invoice_changes 原始列，已依時間排序，供 build_change_history。
         history: 審核歷程（StatusChange，供畫面顯示）。
+        department_id: 案件所屬部門（申請人端依部門範圍判斷可否操作）。
     """
 
     case: ReviewCase
     changes: list[dict[str, object]]
     history: list[StatusChange]
+    department_id: str | None = None
 
 
 def is_uuid(value: object) -> bool:
@@ -84,6 +86,7 @@ def load(
         _close(db)
     return LoadedReview(
         case=build_review_case(row, reviews),
+        department_id=row.get("department_id"),
         changes=changes,  # type: ignore[arg-type]
         history=[
             StatusChange(
@@ -104,14 +107,16 @@ def commit_change(
     *,
     case: ReviewCase,
     tax_type: str | None,
+    record_reviewer: bool = True,
     session_factory: SessionFactory = case_repository.open_session,
 ) -> None:
-    """把核准或退回寫入資料庫（狀態、審核歷程、退回項目在同一個交易）。
+    """把核准、退回或申請人終止寫入資料庫（狀態、審核歷程、退回項目在同一個交易）。
 
     Args:
         change: finance_review_service 產生的狀態異動；changed_by 必須是 UUID。
         case: 異動前的審核資料（取輪次與課稅別）。
         tax_type: 要一併寫入的課稅別；None 保持不變。
+        record_reviewer: 是否記為審核者；申請人終止傳 False。
 
     Raises:
         ReviewConflictError: 資料庫狀態已不是 change.expected_status。
@@ -125,7 +130,11 @@ def commit_change(
         raise ReviewUnavailableError from None
     try:
         applied = repo.apply_status_change(
-            db, change, tax_type=tax_type, submission_round=case.submission_round
+            db,
+            change,
+            tax_type=tax_type,
+            submission_round=case.submission_round,
+            record_reviewer=record_reviewer,
         )
         if not applied:
             db.rollback()

@@ -14,12 +14,15 @@
     {% for message in warnings.get(key, []) %}<p class="field-warning" data-check-kind="warning" data-severity="warning">{{ message }}</p>{% endfor %}
   </div>
 {% endmacro %}
-{% macro field(name, label, value, required=false, key=none) %}
+{% macro field(name, num, label, value, required=false, key=none, placeholder="", readonly=false) %}
   {% set k = key or name %}
   <div class="invoice14-field">
-    <label for="f-{{ k }}">{{ label }}{% if required %}<span class="field-required">*必填</span>{% endif %}</label>
-    <input id="f-{{ k }}" name="{{ name }}" value="{{ value }}"
-           {% if errors.get(k) or missing.get(k) %}aria-invalid="true"{% endif %}>
+    <label for="f-{{ k }}">
+      {% if num %}<span>{{ num }}</span>{% endif %}{{ label }}{% if required %}<span class="field-required">*必填</span>{% endif %}
+    </label>
+    <input id="f-{{ k }}" name="{{ name }}" value="{{ value }}" placeholder="{{ placeholder }}"
+           {% if readonly %}readonly{% endif %}
+           {% if errors.get(k) or missing.get(k) %}aria-invalid="true" class="is-invalid"{% endif %}>
     {{ note(k) }}
   </div>
 {% endmacro %}
@@ -29,28 +32,60 @@
     <section class="card">
       <h3>核對欄位（14 項）</h3>
       <div class="invoice14-grid">
-        {% for row in rows %}
-          {% if row.per_item %}
-            {% if row.index == 6 %}
-              <div class="invoice14-field"><span>{{ row.index }}～9</span> 品名／數量／單價／金額：請見下方「品名明細」</div>
-            {% endif %}
-          {% elif not row.editable %}
-            <div class="invoice14-field"><span>{{ row.index }}</span> {{ row.label }}：<span class="muted">{{ row.note }}</span></div>
-          {% elif row.index == 2 %}
-            {{ field("invoice_track", "2 發票字軌（2 碼英文）", form.invoice_track, true) }}
-            {{ field("invoice_number", "2 發票號碼（8 碼數字）", form.invoice_number, true) }}
-          {% elif row.index == 3 %}
-            {{ field("invoice_date", "3 發票日期（YYYY-MM-DD）", form.invoice_date, true) }}
-          {% elif row.index == 4 %}
-            {{ field("buyer_name", "4 買受人名稱", form.buyer_name) }}
-          {% elif row.index == 5 %}
-            {{ field("buyer_tax_id", "5 買受人統編", form.buyer_tax_id) }}
-          {% elif row.index == 10 %}
-            {{ field("sales_amount", "10 銷售額合計", form.sales_amount, true) }}
-          {% elif row.index == 11 %}
-            <div class="invoice14-field">
-              <label for="f-tax_type">11 課稅別<span class="field-required">*必填</span></label>
-              <select id="f-tax_type" name="tax_type">
+        {# 1 發票聯式／識別 #}
+        <div class="invoice14-field">
+          <label><span>1</span>發票聯式／識別</label>
+          <input value="{{ form.invoice_type or '由 AI 辨識判斷（僅供參考）' }}" readonly disabled class="muted">
+        </div>
+
+        {# 2 發票字軌號碼 #}
+        <div class="invoice14-field">
+          <label for="f-invoice_track">
+            <span>2</span>發票字軌號碼<span class="field-required">*必填</span>
+          </label>
+          <div class="invoice14-subfields">
+            <div>
+              <input id="f-invoice_track" name="invoice_track" value="{{ form.invoice_track }}"
+                     placeholder="字軌（2 碼英文）" maxlength="2"
+                     {% if errors.get("invoice_track") or missing.get("invoice_track") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("invoice_track") }}
+            </div>
+            <div>
+              <input id="f-invoice_number" name="invoice_number" value="{{ form.invoice_number }}"
+                     placeholder="號碼（8 碼數字）" maxlength="8"
+                     {% if errors.get("invoice_number") or missing.get("invoice_number") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("invoice_number") }}
+            </div>
+          </div>
+        </div>
+
+        {# 3 發票日期 #}
+        {{ field("invoice_date", "3", "發票日期（YYYY-MM-DD）", form.invoice_date, true) }}
+
+        {# 4 買受人名稱 #}
+        {{ field("buyer_name", "4", "買受人名稱", form.buyer_name) }}
+
+        {# 5 買受人統編 #}
+        {{ field("buyer_tax_id", "5", "買受人統編", form.buyer_tax_id) }}
+
+        {# 6～9 品名明細摘要 #}
+        <div class="invoice14-field">
+          <label><span>6～9</span>品名／數量／單價／金額</label>
+          <input value="請見下方「品名明細」" readonly disabled class="muted">
+        </div>
+
+        {# 10 銷售額合計 #}
+        {{ field("sales_amount", "10", "銷售額合計", form.sales_amount, true) }}
+
+        {# 11 課稅別與稅額 #}
+        <div class="invoice14-field">
+          <label for="f-tax_type">
+            <span>11</span>課稅別與稅額<span class="field-required">*必填</span>
+          </label>
+          <div class="invoice14-subfields">
+            <div>
+              <select id="f-tax_type" name="tax_type"
+                      {% if errors.get("tax_type") or missing.get("tax_type") %}aria-invalid="true" class="is-invalid"{% endif %}>
                 <option value="">請選擇</option>
                 {% for code, label in tax_type_options %}
                   <option value="{{ code }}" {% if form.tax_type == code %}selected{% endif %}>{{ label }}</option>
@@ -58,15 +93,62 @@
               </select>
               {{ note("tax_type") }}
             </div>
-            {{ field("tax_amount", "11 稅額", form.tax_amount, true) }}
-          {% elif row.index == 12 %}
-            {{ field("total_amount", "12 總計", form.total_amount, true) }}
-            {{ field("total_amount_zh", "12 總計國字大寫", form.total_amount_zh) }}
-          {% elif row.index == 14 %}
-            {{ field("seller_name", "14 銷貨人名稱", form.seller_name) }}
-            {{ field("seller_tax_id", "14 銷貨人統編", form.seller_tax_id, true) }}
-          {% endif %}
-        {% endfor %}
+            <div>
+              <input id="f-tax_amount" name="tax_amount" value="{{ form.tax_amount }}"
+                     placeholder="稅額"
+                     {% if errors.get("tax_amount") or missing.get("tax_amount") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("tax_amount") }}
+            </div>
+          </div>
+        </div>
+
+        {# 12 總計／國字大寫 #}
+        <div class="invoice14-field">
+          <label for="f-total_amount">
+            <span>12</span>總計／國字大寫<span class="field-required">*必填</span>
+          </label>
+          <div class="invoice14-subfields">
+            <div>
+              <input id="f-total_amount" name="total_amount" value="{{ form.total_amount }}"
+                     placeholder="總計"
+                     {% if errors.get("total_amount") or missing.get("total_amount") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("total_amount") }}
+            </div>
+            <div>
+              <input id="f-total_amount_zh" name="total_amount_zh" value="{{ form.total_amount_zh }}"
+                     placeholder="國字大寫"
+                     {% if errors.get("total_amount_zh") or missing.get("total_amount_zh") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("total_amount_zh") }}
+            </div>
+          </div>
+        </div>
+
+        {# 13 備註 #}
+        <div class="invoice14-field">
+          <label><span>13</span>備註</label>
+          <input value="無備註（API 目前沒有備註欄位）" readonly disabled class="muted">
+        </div>
+
+        {# 14 銷貨人 #}
+        <div class="invoice14-field invoice14-field--full">
+          <label for="f-seller_tax_id">
+            <span>14</span>銷貨人<span class="field-required">*必填</span>
+          </label>
+          <div class="invoice14-subfields">
+            <div>
+              <input id="f-seller_name" name="seller_name" value="{{ form.seller_name }}"
+                     placeholder="銷貨人名稱"
+                     {% if errors.get("seller_name") or missing.get("seller_name") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("seller_name") }}
+            </div>
+            <div>
+              <input id="f-seller_tax_id" name="seller_tax_id" value="{{ form.seller_tax_id }}"
+                     placeholder="銷貨人統編（8 碼數字）" maxlength="8"
+                     {% if errors.get("seller_tax_id") or missing.get("seller_tax_id") %}aria-invalid="true" class="is-invalid"{% endif %}>
+              {{ note("seller_tax_id") }}
+            </div>
+          </div>
+        </div>
       </div>
       {{ note("items") }}
     </section>
@@ -76,8 +158,12 @@
         <table class="table">
           <thead>
             <tr>
-              <th scope="col">#</th><th scope="col">品名／用途</th><th scope="col">數量</th>
-              <th scope="col">單價</th><th scope="col">金額</th><th scope="col">操作</th>
+              <th scope="col" style="width: 2.5rem;">#</th>
+              <th scope="col">品名／用途</th>
+              <th scope="col" style="width: 5.5rem;">數量</th>
+              <th scope="col" style="width: 6.5rem;">單價</th>
+              <th scope="col" style="width: 6.5rem;">金額</th>
+              <th scope="col" style="width: 4rem;">操作</th>
             </tr>
           </thead>
           <tbody>

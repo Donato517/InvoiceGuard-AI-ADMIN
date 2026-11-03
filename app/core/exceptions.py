@@ -80,7 +80,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
         if exc.status_code == 404:
             return templates.TemplateResponse(request, "pages/errors/404.html", status_code=404)
-        return _error_page(request, exc.status_code, "無法處理這個請求")
+        message = exc.detail if isinstance(exc.detail, str) and exc.detail else "無法處理這個請求"
+        return _error_page(request, exc.status_code, message)
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> HTMLResponse:

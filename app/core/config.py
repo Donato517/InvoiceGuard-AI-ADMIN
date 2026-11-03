@@ -142,10 +142,10 @@ class Settings(BaseSettings):
 
     @property
     def intake_api_base_url(self) -> str:
-        """ADMIN 後端呼叫發票 API 的位址：雲端用正式網址，本機直連本機 API（8000，loopback）。"""
+        """ADMIN 後端呼叫發票 API 的位址：雲端用正式網址，本機直連本機 API（8100，loopback）。"""
         if self.is_vercel or self.APP_ENV != "local":
             return PRODUCTION["API_URL"]
-        return "http://127.0.0.1:8000"
+        return "http://127.0.0.1:8100"
 
     @property
     def module_backend(self) -> Literal["remote", "cloud"]:

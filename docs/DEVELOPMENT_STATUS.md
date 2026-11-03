@@ -193,6 +193,12 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
 - 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
 
+2026-11-03 發票作業流程與 `/intake` 合併、ADMIN→API 認證定案（方案 A；**本機改動、尚未 Commit；僅離線替身測試，未對真實 API／Document AI 驗證**）：
+- 認證：ADMIN 登入成功後以同一組帳密向 API `POST /api/v1/auth/login` 換發 Session Token，存 httpOnly cookie `ig_admin_api_token`（`app/routers/auth.py`、`invoice_intake_service.obtain_api_token`）；換發失敗不影響 ADMIN 登入，之後的辨識／檢核／提交回 401 要求重新登入。呼叫端用該使用者自己的 Token（`BearerCredentials`），位址由 `settings.intake_api_base_url`（本機 `http://127.0.0.1:8000`，雲端正式 API）。已知限制：ADMIN「切換部門」不會同步 API Session 的選取部門；ADMIN 與 API 的 Session 到期時間各自計算。
+- 合併：`/invoices/{id}/flow` 步驟 1～4 改接 API——步驟 1 上傳即呼叫 `recognize`（Document AI OCR → Groq），步驟 2 顯示辨識結果與提醒，步驟 3 用共用核對表單（`pages/intake/_review_form.html`）送 `POST /invoices/{id}/flow/review`（新增／刪除明細、檢核、確認提交），步驟 4 顯示提交結果並連到 `/cases/{id}`。API 辨識的草稿不再寫入示範發票清單，也不套用 `_ensure_invoice_14_fields` 的示範預設值顯示；提交後清除暫存影像。既有清單內發票（退回補正的重新上傳附件）仍只更新附件、不辨識；步驟 5 以後仍是示範資料。
+- `GET /intake` 改為轉入 `/invoices/new`；`POST /intake/recognize`、`/intake/review` 暫留（尚有測試），待遷移後移除。流程頁權限沿用 `inv.upload`；`inv.intake` 已註冊但流程頁不再需要它。
+- 未做／未驗證：真實 API 與 Document AI 的端到端、流程頁草稿仍存在伺服器記憶體（多執行個體不共用）、影像保留政策與文案需 API 組確認。
+
 C 組 `/intake` 與 `/cases` 交付候選（2026-11-03，分支 `feature/c-intake-delivery`，基準 `origin/main` `3de8f5a`；**本機候選、尚未 Push／PR；正式環境無法使用**）：
 - 內容：`/intake`（上傳 → 呼叫既有 API 辨識 → 14 項核對與多筆明細＋原圖並排 → API 必填／業務警示／查重 → 提交）與 `/cases`（真實案件唯讀檢視）。ADMIN 不複製 AI 辨識或檢核規則，不寫入資料庫。交接資訊見 [INTAKE_HANDOVER.md](INTAKE_HANDOVER.md)；規劃與缺口見 [ADMIN_INVOICE_INTAKE_PLAN.md](ADMIN_INVOICE_INTAKE_PLAN.md)。
 - **雙重關閉（正式環境不可用）**：`inv.intake` 未註冊於功能目錄，路由依賴一律 403（`app/routers/intake.py` `require_intake_access`、`e_registry.capability`）；ADMIN→API 授權方案未核定，`build_intake_client()` 無條件拒絕（503，`invoice_intake_service.py`）。不要加入導覽選單。

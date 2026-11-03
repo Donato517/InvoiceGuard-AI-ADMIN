@@ -6,9 +6,9 @@
 <section class="correction-original-column" aria-label="發票原始檔">
   <div class="correction-panel-header">
     <div class="correction-panel-title">發票原圖／PDF 原始文件</div>
-    {% if step == 3 and not is_first_four_readonly %}
+    {% if step == 3 and not is_first_four_readonly and not intake %}
       <button type="button" class="btn btn--secondary btn--small" id="btn-re-ocr">再辨識</button>
-    {% elif step == 3 and is_first_four_readonly %}
+    {% elif step == 3 and is_first_four_readonly and not intake %}
       <button type="button" class="btn btn--secondary btn--small" disabled title="唯讀模式下不可再辨識">再辨識</button>
     {% endif %}
   </div>

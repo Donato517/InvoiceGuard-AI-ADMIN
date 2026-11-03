@@ -1,6 +1,8 @@
 {#
   @template pages/intake/_review_form.html
   @description 核對表單（14 項表頭欄位＋多筆品名明細＋檢核／提交按鈕）；/intake 核對頁與發票作業流程步驟 3 共用。
+  @context live_check: bool    流程頁為 true：輸入時即時檢核（不顯示「檢核」按鈕），並用 check_url 呼叫伺服器檢核
+  @context check_url: str      即時檢核端點（live_check 時使用）
   @context review_action: str   表單送出位置（預設 /intake/review；流程頁為 /invoices/{id}/flow/review）
   @context form, errors, warnings, missing, rows, tax_type_options, max_items: 同 pages/intake/review.html
 #}
@@ -15,13 +17,14 @@
 {% macro field(name, label, value, required=false, key=none) %}
   {% set k = key or name %}
   <div class="invoice14-field">
-    <label for="f-{{ k }}">{{ label }}{% if required %} <span class="muted">*必填</span>{% endif %}</label>
+    <label for="f-{{ k }}">{{ label }}{% if required %}<span class="field-required">*必填</span>{% endif %}</label>
     <input id="f-{{ k }}" name="{{ name }}" value="{{ value }}"
            {% if errors.get(k) or missing.get(k) %}aria-invalid="true"{% endif %}>
     {{ note(k) }}
   </div>
 {% endmacro %}
-  <form method="post" action="{{ review_action | default('/intake/review') }}" class="form">
+  <form method="post" action="{{ review_action | default('/intake/review') }}" class="form"
+        {% if live_check %}id="flow-review-form" data-live-check-url="{{ check_url }}"{% endif %}>
     <input type="hidden" name="recognition_id" value="{{ form.recognition_id }}">
     <section class="card">
       <h3>核對欄位（14 項）</h3>
@@ -46,7 +49,7 @@
             {{ field("sales_amount", "10 銷售額合計", form.sales_amount, true) }}
           {% elif row.index == 11 %}
             <div class="invoice14-field">
-              <label for="f-tax_type">11 課稅別 <span class="muted">*必填</span></label>
+              <label for="f-tax_type">11 課稅別<span class="field-required">*必填</span></label>
               <select id="f-tax_type" name="tax_type">
                 <option value="">請選擇</option>
                 {% for code, label in tax_type_options %}
@@ -100,7 +103,7 @@
       <p><button type="submit" name="action" value="add_item" class="btn btn--secondary btn--small" {% if form.items | length >= max_items %}disabled{% endif %}>新增明細</button></p>
     </section>
     <p>
-      <button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>
+      {% if not live_check %}<button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>{% endif %}
       <button type="submit" name="action" value="submit" class="btn btn--primary">確認提交</button>
       <a href="/intake">重新上傳</a>
     </p>

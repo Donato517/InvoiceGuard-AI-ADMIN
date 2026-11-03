@@ -30,6 +30,10 @@
 {% if procurement_return %}
   {% include "pages/invoices/_procurement_return.html" %}
 {% endif %}
+{% if db_invoice %}
+  {#- 資料庫案件由 API 建立，舊的示範修改已停用；退回補正的修改與重送尚未提供 -#}
+  <p class="alert alert--info">此案件已由 API 建立，這裡不能修改欄位。{% if not procurement_return %}目前沒有待處理的補正。{% endif %}</p>
+{% else %}
 {% if is_first_four_readonly %}
   <p class="alert alert--warning">進度已進入步驟 5（財務審核）以上，核對欄位為唯讀模式，不可修改。</p>
 {% else %}
@@ -249,4 +253,5 @@
     </form>
   </section>
 </div>
+{% endif %}
 {% endif %}

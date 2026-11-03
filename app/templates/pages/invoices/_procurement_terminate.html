@@ -1,0 +1,22 @@
+{#
+  @template pages/invoices/_procurement_terminate.html
+  @description 申請人終止被退回的請款單（原因必填，終止後不能再重送）；示範案件與資料庫案件共用。
+  @route POST /invoices/{invoice_id}/procurement/terminate
+  @context invoice: dict  發票資料
+#}
+<details class="fr-details">
+  <summary>終止（不再重送）</summary>
+  <form method="post"
+        action="/invoices/{{ invoice.id }}/procurement/terminate"
+        class="form"
+        data-confirm="終止後不能再重送，確定要終止這張請款單嗎？">
+    <div class="form-field">
+      <label for="terminate-reason">終止原因</label>
+      <input id="terminate-reason"
+             name="reason"
+             required
+             placeholder="例如：供應商將重開發票，改另立新單">
+    </div>
+    <button type="submit" class="btn btn--danger">終止</button>
+  </form>
+</details>

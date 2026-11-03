@@ -1202,6 +1202,7 @@ def _render_flow_page(
             "max_flow_step": max_flow_step,
             "is_first_four_readonly": is_first_four_readonly,
             "intake": _intake_view(invoice),
+            "db_invoice": _is_db_invoice(invoice),
         },
     )
 
@@ -1986,6 +1987,7 @@ def _save_db_accounting(
     account: str,
 ) -> Response:
     """資料庫發票：課稅別寫入 invoices.tax_type；扣抵代號與會計科目暫存到核准（無對應欄位）。"""
+    require_e_origin(request)
     invoice_id = str(invoice["id"])
     try:
         if tax_type and tax_type != case.tax_type:
@@ -2064,6 +2066,7 @@ def _commit_db_change(
     request: Request, invoice: dict[str, Any], change: StatusChange, case: ReviewCase
 ) -> Response:
     """把核准或退回寫進資料庫（同一交易）；成功後清掉會計暫存並回審核頁，重新讀取就是資料庫的結果。"""
+    require_e_origin(request)  # 寫入正式資料的變更只接受同源瀏覽器 POST
     invoice_id = str(invoice["id"])
     try:
         finance_db.commit_change(change, case=case, tax_type=case.tax_type)
@@ -2101,7 +2104,10 @@ def _file_digest(raw: bytes | None) -> str | None:
 
 
 def _returned_case(invoice: dict[str, Any]) -> ReviewCase | None:
-    """示範發票目前是否在「退回補正」；只有已進入財務審核的發票才有案件資料。"""
+    """發票目前是否在「退回補正」：資料庫發票以資料庫狀態為準；示範發票只有已進入財務審核的才有案件資料。"""
+    if _is_db_invoice(invoice):
+        case = _load_db_review(str(invoice["id"])).case
+        return case if case.status == STATUS_RETURNED else None
     if not _find_invoice(str(invoice["id"])) or invoice.get("review_status") != "returned":
         return None
     case = _finance_case(invoice)
@@ -2125,7 +2131,12 @@ def _note_attachment_upload(invoice_id: str, raw: bytes) -> None:
 
 
 def _changed_fields(invoice: dict[str, Any]) -> set[tuple[str, str | None]]:
-    """與退回快照比對，回傳實際修改的 (v1.5 欄位, item_id)；示範發票只有表頭欄位。"""
+    """與退回快照比對，回傳實際修改的 (v1.5 欄位, item_id)；示範發票只有表頭欄位。
+
+    資料庫發票目前沒有線上修改補正（舊的示範修改已停用，重送尚未實作），一律視為尚未修改。
+    """
+    if _is_db_invoice(invoice):
+        return set()
     snapshot = _RETURN_SNAPSHOTS.get(str(invoice["id"]))
     if snapshot is None:
         return set()
@@ -2161,7 +2172,11 @@ def _return_request(invoice: dict[str, Any], case: ReviewCase) -> ReturnRequest 
             "changed_by": c.changed_by,
             "reason": c.reason,
         }
-        for c in _FINANCE_HISTORY.get(str(invoice["id"]), [])
+        for c in (
+            _load_db_review(str(invoice["id"])).history
+            if _is_db_invoice(invoice)
+            else _FINANCE_HISTORY.get(str(invoice["id"]), [])
+        )
     ]
     return_fields = [
         {"field_name": r.field_name, "item_id": r.item_id, "review_comment": r.review_comment}
@@ -2200,6 +2215,7 @@ def _procurement_return_view(
         "errors": errors or [],
         "submission_round": case.submission_round,
         "returned_at": return_request.returned_at if return_request else None,
+        "db_backed": _is_db_invoice(invoice),
     }
 
 
@@ -2336,6 +2352,66 @@ def _apply_terminate(
     _sync_invoice(invoice, replace(case, status=plan.target_status))
 
 
+def _terminate_db_invoice(
+    request: Request, invoice: dict[str, Any], scope: CaseScope, reason: str
+) -> Response:
+    """資料庫發票：申請人終止被退回的請款單，寫入 invoices.status=voided 與審核歷程（同一交易）。
+
+    規則（待補正才可終止、部門範圍、原因必填）沿用 prepare_terminate；寫入條件為狀態仍是待補正。
+    終止不是財務審核，不改 reviewed_by／reviewed_at。
+    """
+    require_e_origin(request)
+    invoice_id = str(invoice["id"])
+    loaded = _load_db_review(invoice_id)
+    if not finance_db.is_uuid(scope.user_id):
+        return _procurement_error_page(request, invoice, [_NEED_REAL_LOGIN_MESSAGE], loaded.case)
+    row = {
+        "invoice_id": invoice_id,
+        "status": loaded.case.status,
+        "department_id": loaded.department_id,
+    }
+    try:
+        plan = prepare_terminate(row, scope, reason)
+    except ProcurementCaseError as error:
+        return _procurement_error_page(
+            request, invoice, [b.message for b in error.blockers], loaded.case, str(error)
+        )
+    change = StatusChange(
+        invoice_id=invoice_id,
+        old_status=plan.expected_status,
+        new_status=plan.target_status,
+        reason=plan.reason,
+        changed_by=scope.user_id,
+        changed_at=datetime.now(UTC),
+    )
+    try:
+        finance_db.commit_change(change, case=loaded.case, tax_type=None, record_reviewer=False)
+    except finance_db.ReviewConflictError:
+        return _procurement_error_page(request, invoice, [_CONFLICT_MESSAGE], loaded.case)
+    except finance_db.ReviewUnavailableError:
+        return _procurement_error_page(request, invoice, [_DB_UNAVAILABLE_MESSAGE], loaded.case)
+    return RedirectResponse("/invoices", status_code=303)
+
+
+def _procurement_error_page(
+    request: Request,
+    invoice: dict[str, Any],
+    messages: list[str],
+    case: ReviewCase,
+    header_error: str | None = None,
+) -> Response:
+    """申請人端操作失敗：回步驟 3 並列出原因；不在待補正時頁面沒有退回補正區，改用頁首訊息。"""
+    response = _render_flow_page(
+        request,
+        invoice,
+        3,
+        error=None if case.status == STATUS_RETURNED else (header_error or "；".join(messages)),
+        procurement_errors=messages,
+    )
+    response.status_code = 400
+    return response
+
+
 @router.post("/{invoice_id}/procurement/terminate", response_model=None)
 def procurement_terminate(
     request: Request, invoice_id: str, reason: Annotated[str, Form()] = ""
@@ -2346,8 +2422,10 @@ def procurement_terminate(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
-    case = _finance_case(invoice)
     scope = _case_scope(request)
+    if _is_db_invoice(invoice):
+        return _terminate_db_invoice(request, invoice, scope, reason)
+    case = _finance_case(invoice)
     # 示範發票沒有部門欄位，轉 v1.5 欄位時部門與目前範圍相同
     row = {
         "invoice_id": str(invoice_id),

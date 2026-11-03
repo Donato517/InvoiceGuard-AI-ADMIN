@@ -1027,3 +1027,10 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 問題：舊的 `flow/correct`（及 `advance` 第 3 步、`finish-first-four`）用範例預設值組欄位並 upsert 到 `public.invoices`；沒上傳過的新草稿直接 POST 就能寫入，對資料庫發票會覆蓋真實欄位。
 - 處理檔案：app/routers/invoices.py（`_refuse_legacy_demo_write`、移除 `save_invoice` 呼叫）、app/services/invoice_review_service.py、app/db/repositories/invoice_repository.py（刪除 `save_invoice`、`UPSERT_INVOICE`）、tests/unit/test_legacy_flow_write_guard.py。
 - 驗證：ADMIN pytest 2561 passed 以上、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。測試以「開啟 DB Session 即失敗」的替身證明草稿與資料庫發票的舊端點不碰資料庫。未驗：真實環境。
+
+## 2026-11-03 Claude：申請人終止與退回補正（顯示）改讀寫資料庫
+
+- 問題：申請人端的退回補正顯示與終止只讀寫記憶體（`_FINANCE_HISTORY`、`_apply_terminate`）；資料庫案件的退回原因看不到，終止不會寫入 `invoices.status`。
+- 處理：`finance_review_repository.apply_status_change` 新增 `record_reviewer`（終止不覆蓋審核者），`get_review_row` 讀 `department_id`；`finance_review_db_service.LoadedReview` 帶部門；`app/routers/invoices.py` 的 `_returned_case`／`_return_request`／`_changed_fields` 對資料庫案件讀資料庫，新增 `_terminate_db_invoice`；樣板新增 `_procurement_terminate.html`，資料庫案件的步驟 3 只顯示退回項目與終止；資料庫寫入的審核與終止新增同源檢查。
+- 驗證：新增 `tests/unit/test_applicant_return_db.py`（10 項）與同源檢查測試；ADMIN pytest 2572 passed 以上、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。未驗：SQL 在真實 PostgreSQL、真實 DB 寫入、瀏覽器目視（無待補正的資料庫案件可操作）。
+- 已知缺口：重送與線上修改補正尚未提供；申報檔、傳票與步驟 6～9 仍是記憶體示範。

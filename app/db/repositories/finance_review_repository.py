@@ -21,7 +21,7 @@ GET_REVIEW_ROW = text("""
     SELECT i.invoice_id::text AS invoice_id, i.status, i.submission_round,
         i.submitted_by::text AS submitted_by, i.invoice_track, i.invoice_number,
         i.seller_tax_id, i.sales_amount, i.tax_amount, i.total_amount, i.tax_type,
-        i.validation_results
+        i.validation_results, i.department_id::text AS department_id
     FROM public.invoices i
     WHERE i.invoice_id = CAST(:invoice_id AS uuid) AND i.status <> 'draft'
 """)
@@ -49,8 +49,8 @@ LIST_REVIEW_HISTORY = text("""
 UPDATE_STATUS = text("""
     UPDATE public.invoices
     SET status = :new_status,
-        reviewed_by = CAST(:reviewer AS uuid),
-        reviewed_at = :changed_at,
+        reviewed_by = CASE WHEN :record_reviewer THEN CAST(:reviewer AS uuid) ELSE reviewed_by END,
+        reviewed_at = CASE WHEN :record_reviewer THEN :changed_at ELSE reviewed_at END,
         tax_type = COALESCE(:tax_type, tax_type),
         updated_at = now()
     WHERE invoice_id = CAST(:invoice_id AS uuid) AND status = :expected_status
@@ -114,7 +114,12 @@ def update_tax_type(db: Session, invoice_id: str, tax_type: str, expected_status
 
 
 def apply_status_change(
-    db: Session, change: StatusChange, *, tax_type: str | None, submission_round: int
+    db: Session,
+    change: StatusChange,
+    *,
+    tax_type: str | None,
+    submission_round: int,
+    record_reviewer: bool = True,
 ) -> bool:
     """依 StatusChange 更新案件狀態並寫入審核歷程與退回項目；不 commit。
 
@@ -126,6 +131,8 @@ def apply_status_change(
         change: 狀態異動；reviewer 與時間取自其 changed_by／changed_at。
         tax_type: 要一併寫入的課稅別；None 保持不變。
         submission_round: 案件目前輪次，用來定位 invoice_field_reviews。
+        record_reviewer: 是否把 change.changed_by 記為審核者（invoices.reviewed_by／reviewed_at）；
+            申請人的終止不是財務審核，傳 False 讓審核者欄位維持原值。
     """
     params = {
         "invoice_id": change.invoice_id,
@@ -134,6 +141,7 @@ def apply_status_change(
         "reviewer": change.changed_by,
         "changed_at": change.changed_at,
         "tax_type": tax_type,
+        "record_reviewer": record_reviewer,
     }
     if db.execute(UPDATE_STATUS, params).first() is None:
         return False

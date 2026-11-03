@@ -608,6 +608,44 @@ def _fetch_storage_file_bytes(invoice_id: Any) -> tuple[bytes, str] | None:
         session.close()
 
 
+def _create_draft_invoice(invoice_id: str, uploaded_by: str = "1") -> dict[str, Any]:
+    """建立空白發票草稿資料字典。"""
+    return _ensure_invoice_14_fields(
+        {
+            "id": invoice_id,
+            "uploaded_by": uploaded_by,
+            "format_identification": "",
+            "invoice_number": "",
+            "invoice_date": "",
+            "buyer_name": "",
+            "seller_name": "",
+            "seller_tax_id": "",
+            "buyer_tax_id": "",
+            "item_description": "",
+            "quantity": "",
+            "unit_price": "",
+            "amount": "",
+            "net_amount": "",
+            "tax_category": "應稅",
+            "tax_amount": "",
+            "total_amount": "",
+            "total_chinese": "",
+            "remarks": "",
+            "stage": 1,
+            "status": "pending",
+            "review_status": "pending",
+            "is_completed": False,
+            "file_name": None,
+            "purpose": "",
+            "account_code": "6211004 管理-文具用品",
+            "deduction_code": "1 - 進貨及費用",
+            "tax_type": "1 - 應稅",
+            "import_confirmed_at": None,
+            "filing_preview": None,
+        }
+    )
+
+
 def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
     _validate_invoice_id(invoice_id)
     draft = _DRAFT_INVOICE_STORE.get(invoice_id)
@@ -617,11 +655,21 @@ def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
         if str(k) == str(invoice_id):
             return v
     inv = _find_invoice(invoice_id)
-    if inv is not None and not inv.get("file_bytes"):
-        fetched = _fetch_storage_file_bytes(invoice_id)
-        if fetched:
-            inv["file_bytes"], inv["file_media_type"] = fetched
-    return inv
+    if inv is not None:
+        if not inv.get("file_bytes"):
+            fetched = _fetch_storage_file_bytes(invoice_id)
+            if fetched:
+                inv["file_bytes"], inv["file_media_type"] = fetched
+        return inv
+
+    # 若為有效 UUID 但尚未寫入資料庫（如伺服器重啟或剛進入流程的草稿），自動建立記憶體草稿，避免 404
+    try:
+        UUID(str(invoice_id))
+        draft = _create_draft_invoice(str(invoice_id))
+        _DRAFT_INVOICE_STORE[str(invoice_id)] = draft
+        return draft
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _build_flow_steps(
@@ -1103,44 +1151,10 @@ def invoice_voucher_list(
 @router.get("/new")
 def create_new_invoice(request: Request) -> RedirectResponse:
     """建立暫存發票草稿並進入步驟 1（上傳發票）；未完成步驟 3 採購核對修正前不寫入發票清單。"""
-    _DRAFT_INVOICE_STORE.clear()
     numeric_ids = [int(i["id"]) for i in _INVOICE_STORE if str(i["id"]).isdigit()]
     new_id = str(max(numeric_ids) + 1) if numeric_ids else str(uuid4())
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
-    new_invoice: dict[str, Any] = _ensure_invoice_14_fields(
-        {
-            "id": new_id,
-            "uploaded_by": current_user_id,
-            "format_identification": "",
-            "invoice_number": "",
-            "invoice_date": "",
-            "buyer_name": "",
-            "seller_name": "",
-            "seller_tax_id": "",
-            "buyer_tax_id": "",
-            "item_description": "",
-            "quantity": "",
-            "unit_price": "",
-            "amount": "",
-            "net_amount": "",
-            "tax_category": "應稅",
-            "tax_amount": "",
-            "total_amount": "",
-            "total_chinese": "",
-            "remarks": "",
-            "stage": 1,
-            "status": "pending",
-            "review_status": "pending",
-            "is_completed": False,
-            "file_name": None,
-            "purpose": "",
-            "account_code": "6211004 管理-文具用品",
-            "deduction_code": "1 - 進貨及費用",
-            "tax_type": "1 - 應稅",
-            "import_confirmed_at": None,
-            "filing_preview": None,
-        }
-    )
+    new_invoice = _create_draft_invoice(new_id, uploaded_by=current_user_id)
     _DRAFT_INVOICE_STORE[new_id] = new_invoice
     return RedirectResponse(f"/invoices/{new_id}/flow?step=1", status_code=303)
 
@@ -1810,11 +1824,15 @@ _ACCOUNTING_DRAFT: dict[str, dict[str, str | None]] = {}
 
 
 def _is_db_invoice(invoice: dict[str, Any]) -> bool:
-    """從資料庫讀到的發票（UUID 且不在記憶體清單）審核直接讀寫資料庫；整數 ID 或記憶體內的發票仍只在記憶體。"""
+    """從資料庫讀到的發票（UUID 且存在於資料庫、非草稿）審核直接讀寫資料庫；整數 ID 或記憶體內的發票仍只在記憶體。"""
     invoice_id = str(invoice["id"])
-    return finance_db.is_uuid(invoice_id) and not any(
-        str(item["id"]) == invoice_id for item in _INVOICE_STORE
-    )
+    if invoice_id in _DRAFT_INVOICE_STORE:
+        return False
+    if not finance_db.is_uuid(invoice_id):
+        return False
+    if any(str(item["id"]) == invoice_id for item in _INVOICE_STORE):
+        return False
+    return _find_invoice(invoice_id) is not None
 
 
 def _db_error(request: Request, invoice: dict[str, Any], message: str) -> HTMLResponse:

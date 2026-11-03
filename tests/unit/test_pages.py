@@ -505,3 +505,11 @@ def test_stage_six_derives_period_and_accepts_company_ban(admin_client: TestClie
         assert "✓ 可列入申報" in res.text
     finally:
         _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
+
+
+def test_uncommitted_uuid_draft_recovers_without_404(admin_client: TestClient) -> None:
+    """伺服器重啟或記憶體快取遺失後，既有 UUID 草稿網址仍可正常載入，不拋出 404。"""
+    draft_uuid = "d8556791-38b9-4cba-b180-15271e26f8a1"
+    res = admin_client.get(f"/invoices/{draft_uuid}/flow?step=3")
+    assert res.status_code == 200
+    assert "invoice-correction-split" in res.text

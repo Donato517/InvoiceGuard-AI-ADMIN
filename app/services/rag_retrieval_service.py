@@ -11,7 +11,7 @@
     - 先取得問題向量再開 DB 連線（呼叫模型期間不持有 DB 交易）；本流程只讀，不 commit。
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -113,6 +113,7 @@ def search(
     client: VertexEmbeddingClient,
     open_session: Callable[[], Session] = rag_repository.open_session,
     timeout_seconds: float = QUERY_TIMEOUT_SECONDS,
+    extra_queries: Sequence[str] = (),
 ) -> SearchResult:
     """依目前部門選用的知識庫檢索與問題最相關的段落。
 
@@ -124,9 +125,11 @@ def search(
         client: 向量用戶端（task=query）。
         open_session: 開啟 DB 連線（測試替換為替身）。
         timeout_seconds: 問題轉向量的時間上限。
+        extra_queries: 問題理解產生的查詢句；與原問題同一批轉向量，各查一次後
+            依段落去重並保留最小距離（比較題才不會只查到一邊）。
 
     Returns:
-        檢索結果：保留 DB 的相似度排序，附來源文件與版本；部門沒有選用知識庫時為空結果。
+        檢索結果：依距離排序，附來源文件與版本；部門沒有選用知識庫時為空結果。
 
     Raises:
         RagRuleError: 問題空白。
@@ -136,14 +139,22 @@ def search(
     if not text:
         raise RagRuleError("QUESTION_REQUIRED", "請輸入問題")
     limit = max(1, min(int(top_k), MAX_TOP_K))
-    batch = client.embed_texts([text], task="query", timeout_seconds=timeout_seconds)
+    batch = client.embed_texts(
+        [text, *extra_queries], task="query", timeout_seconds=timeout_seconds
+    )
     db = open_session()
     try:
         if not rag_repository.has_qa_access(db, user_id, department_id):
             return SearchResult(hits=(), sources=())
-        candidates = rag_repository.search_chunks(
-            db, batch.vectors[0], batch.model, department_id, limit
-        )
+        nearest: dict[str, RetrievalCandidate] = {}
+        for vector in batch.vectors:
+            for candidate in rag_repository.search_chunks(
+                db, vector, batch.model, department_id, limit
+            ):
+                kept = nearest.get(candidate.chunk_id)
+                if kept is None or candidate.distance < kept.distance:
+                    nearest[candidate.chunk_id] = candidate
     finally:
         db.close()
+    candidates = sorted(nearest.values(), key=lambda candidate: candidate.distance)
     return build_result(candidates, batch.model, limit)

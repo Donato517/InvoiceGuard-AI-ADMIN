@@ -120,6 +120,8 @@ def active_departments(monkeypatch: pytest.MonkeyPatch) -> list[DepartmentOption
         DepartmentOption("d2", "technology_d", "資訊部"),
     ]
     monkeypatch.setattr(qa.rag_repository, "list_departments", lambda db: departments)
+    by_id = {department.department_id: department for department in departments}
+    monkeypatch.setattr(qa.rag_repository, "get_department", lambda db, id: by_id.get(id))
     return departments
 
 
@@ -305,6 +307,65 @@ def test_department_question_uses_four_condition_search(monkeypatch: pytest.Monk
     answer = _ask("發票遺失？", FakeChat("要取得影本 [1]"), actor=FINANCE, kb=None)
 
     assert answer.grounded and seen == [("發票遺失？", FINANCE.department_id)]
+
+
+def test_department_question_understands_and_searches_with_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """部門問答（ask）與資訊部測試同流程：帶入目前部門名稱、理解問題、多查詢檢索、依題型回答。"""
+    monkeypatch.setattr(
+        qa.rag_repository,
+        "get_department",
+        lambda db, id: (
+            DepartmentOption(id, "finance_d", CONTACT) if id == FINANCE.department_id else None
+        ),
+    )
+    seen: dict[str, Any] = {}
+
+    def search(*args: Any, **kwargs: Any) -> Any:
+        seen["extra"] = kwargs["extra_queries"]
+        return qa.retrieval.SearchResult(hits=(hit(0.1),), sources=())
+
+    monkeypatch.setattr(qa.retrieval, "search", search)
+    chat = FakeChat("白話說明：\n一句常識。\n主要差別：\n・甲 [1]\n依據：\n・文件 [1]")
+    chat.understanding = (
+        '{"type":"comparison","concepts":["甲","乙"],"need":"想知道差別",'
+        '"queries":["甲的定義","乙的定義"]}'
+    )
+
+    answer = _ask("甲和乙差在哪？", chat, actor=FINANCE, kb=None)
+
+    assert answer.grounded and seen["extra"] == ("甲的定義", "乙的定義")
+    understand, *answers = chat.calls
+    assert understand[0][0].text == f"【提問部門】{CONTACT}\n甲和乙差在哪？"
+    prompt = answers[0][0][0].text
+    assert "【題型】比較題（問兩者差在哪）" in prompt and f"【提問部門】{CONTACT}" in prompt
+
+
+def test_department_question_without_department_row_still_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        qa.retrieval, "search", lambda *args, **kwargs: qa.retrieval.SearchResult((hit(0.1),), ())
+    )
+    chat = FakeChat("規定 [1]")
+
+    answer = _ask("問題", chat, FINANCE, None)
+
+    assert answer.grounded
+    assert "【提問部門】" not in chat.answer_calls[0][0][0].text
+
+
+def test_department_no_answer_names_department_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        qa.retrieval, "search", lambda *args, **kwargs: qa.retrieval.SearchResult((), ())
+    )
+    chat = FakeChat()
+    chat.understanding = '{"need":"想知道差別","queries":[]}'
+
+    answer = _ask("問題", chat, FINANCE, None)
+
+    assert "目前部門可用的知識庫" in answer.text and "「」" not in answer.text
 
 
 def test_service_errors_return_fixed_message(
@@ -616,7 +677,9 @@ def test_exhausted_deadline_after_retrieval_is_a_service_failure(
 
     answer = _ask("問題", FakeChat("回答 [1]"), actor=IT, kb=None)
 
-    assert answer.text == qa.SERVICE_UNAVAILABLE and answer.note == "超過整題時限"
+    # 部門問答也先理解問題；時間用完時理解結果不採用，並在測試說明註記
+    assert answer.text == qa.SERVICE_UNAVAILABLE
+    assert answer.note and answer.note.startswith("超過整題時限")
 
 
 def test_other_groq_failure_still_tries_groq_in_second_round(review_hits: list[SearchHit]) -> None:
@@ -1390,12 +1453,77 @@ def test_department_changes_understanding_queries_but_never_selected_kb_scope(
     assert "不可編造該部門的內部流程" in chats[1].answer_calls[0][1]["system_instruction"]
 
 
-def test_ask_remains_a_single_query_without_understanding(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(qa, "understand_question", lambda *args: pytest.fail("ask 不得理解問題"))
-    monkeypatch.setattr(
-        qa.retrieval, "search", lambda *args, **kwargs: qa.retrieval.SearchResult((hit(0.1),), ())
+# ---- 題型、關鍵名詞與白話說明（2026-11-03）----
+
+
+def test_understanding_reads_type_and_concepts() -> None:
+    chat = FakeChat()
+    chat.understanding = (
+        '{"type":"comparison","concepts":[" 甲 ","乙",3,"丙","丁"],'
+        '"need":"差別","queries":["甲","乙"]}'
     )
-    chat = FakeChat("規定 [1]")
-    answer = _ask("問題", chat, FINANCE, None)
-    assert answer.grounded and len(chat.calls) == 2
-    assert chat.calls[0][1]["system_instruction"] == qa.SYSTEM_PROMPT
+    result = qa.understand_question("甲乙差在哪", None, chat)
+    assert result.question_type == "comparison"
+    assert result.concepts == ("甲", "乙", "丙")
+    assert "比較題不可只查其中一邊" in chat.calls[0][1]["system_instruction"]
+
+
+@pytest.mark.parametrize("raw_type", ['"unknown"', "3", "null"])
+def test_understanding_ignores_bad_type(raw_type: str) -> None:
+    chat = FakeChat()
+    chat.understanding = f'{{"type":{raw_type},"need":"目的","queries":[]}}'
+    result = qa.understand_question("問題", None, chat)
+    assert result.failure is None and result.question_type == "" and result.concepts == ()
+
+
+def test_system_prompt_allows_plain_explanation_only_for_concepts() -> None:
+    assert "只有概念格式的「白話說明」可以用一般常識" in qa.SYSTEM_PROMPT
+    assert "白話說明不可寫數字、比例、期限、義務、例外或條號" in qa.SYSTEM_PROMPT
+    assert "9. 白話說明" in qa.REVIEW_RULES
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("白話說明：\n就是對增值部分課稅。\n主要差別：\n・稅率 5% [1]", False),
+        ("白話說明：\n稅率是 5%。\n主要差別：\n・甲 [1]", True),
+        ("白話說明：\n依第十條辦理。\n依據：\n・文件 [1]", True),
+        ("白話說明：\n稅率是百分之五 [1]。\n主要差別：\n・甲 [1]", False),
+        ("適用情況。\n你可以這樣做：\n1、做事 [1]", False),
+    ],
+)
+def test_plain_facts_without_source(text: str, expected: bool) -> None:
+    assert qa.plain_facts_without_source(text) is expected
+
+
+def test_concept_answer_passes_checks(review_hits: list[SearchHit]) -> None:
+    review_hits.append(hit(0.1))
+    text = (
+        "白話說明：\n加值型就是對每一手增加的價值課稅。\n\n"
+        "主要差別：\n・甲的計算方式 [1]\n・乙的計算方式 [1]\n\n"
+        "跟你的工作有什麼關係：\n・可扣抵 [1]\n\n依據：\n・文件 [1]"
+    )
+    answer = _ask("甲和乙差在哪？", FakeChat(text))
+    assert answer.grounded and answer.text.startswith("白話說明：")
+
+
+def test_concept_answer_with_uncited_difference_is_discarded(review_hits: list[SearchHit]) -> None:
+    review_hits.append(hit(0.1))
+    text = "白話說明：\n一句常識。\n\n主要差別：\n・沒有來源的差別\n\n依據：\n・文件 [1]"
+    answer = _ask("甲和乙差在哪？", FakeChat(text))
+    assert not answer.grounded and "步驟沒有來源" in (answer.note or "")
+
+
+def test_plain_section_number_without_source_is_discarded(review_hits: list[SearchHit]) -> None:
+    review_hits.append(hit(0.1))
+    text = "白話說明：\n稅率是 5%。\n\n主要差別：\n・甲 [1]\n\n依據：\n・文件 [1]"
+    answer = _ask("甲是什麼？", FakeChat(text))
+    assert not answer.grounded and answer.note and "白話說明出現數字或條號" in answer.note
+
+
+def test_question_type_is_added_to_answer_prompt(review_hits: list[SearchHit]) -> None:
+    review_hits.append(hit(0.1))
+    chat = FakeChat("重點：\n・甲 [1]")
+    chat.understanding = '{"type":"definition","concepts":["甲"],"need":"甲的意思","queries":[]}'
+    _ask("甲是什麼？", chat)
+    assert "【題型】定義題（問名詞是什麼意思）" in chat.answer_calls[0][0][0].text

@@ -7,6 +7,7 @@
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -154,3 +155,26 @@ def test_blank_question_rejected_before_embedding(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(RagRuleError):
         _search(repo, question="  ")
     assert repo.calls == []
+
+
+def test_extra_queries_share_one_batch_and_keep_nearest_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """比較題的多句查詢：同一批轉向量，各查一次，同一段只留最小距離並依距離排序。"""
+    far = replace(GOOD, distance=0.3)
+    other = replace(GOOD, chunk_id="c-2", chunk_index=1, distance=0.2)
+    results = iter([[far], [GOOD, other]])
+    texts: list[Sequence[str]] = []
+
+    class TwoVectors(FakeEmbedding):
+        def embed_texts(self, texts_in: Sequence[str], **kwargs: Any) -> EmbeddingBatch:
+            texts.append(tuple(texts_in))
+            return EmbeddingBatch(vectors=((0.1,), (0.2,)), model=MODEL, dimensions=1)
+
+    repo = Repo(monkeypatch, [])
+    monkeypatch.setattr(rag_repository, "search_chunks", lambda *args: next(results))
+    result = search(
+        "甲乙差在哪", USER, FINANCE, 5, TwoVectors(), open_session=repo.open, extra_queries=("乙",)
+    )
+    assert texts == [("甲乙差在哪", "乙")]
+    assert [(h.chunk_index, h.distance) for h in result.hits] == [(0, 0.12), (1, 0.2)]

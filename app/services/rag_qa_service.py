@@ -1,6 +1,6 @@
 """
 模組名稱：app.services.rag_qa_service
-功能說明：RAG 問答——資訊部測試先理解問題，再檢索知識庫段落；有相關段落才請回答模型分析，並檢查引用。
+功能說明：RAG 問答——先理解問題（題型、關鍵名詞、查詢句），再檢索知識庫段落；有相關段落才請回答模型分析，並檢查引用。
 相依模組：app.services.rag_retrieval_service、app.db.repositories.rag_repository、
           app.integrations.vertex_embedding、app.integrations.groq
 注意事項：
@@ -17,8 +17,13 @@
     - 回答分兩輪：第一輪寫初稿，第二輪對照段落檢查並修正，連同程式檢查發現的問題一起交給模型；
       沒有完成第二輪或沒有通過檢查的內容一律不顯示。
     - 問題理解、向量與兩輪回答共用同一個截止時間；DB 查詢與驗權不在此預算內。
-    - ask 保留單一查詢；ask_test 先以預設模型理解問題，再於所選知識庫內多查詢檢索。
+    - ask（部門問答）與 ask_test（資訊部測試）走同一套流程：先以預設模型理解問題，再多查詢檢索。
+      ask 依目前部門指派的知識庫、自動帶入目前部門名稱；ask_test 依勾選的知識庫與選填部門。
       部門影響問題理解與回答角度，不改變知識庫範圍；理解失敗仍以原問題繼續。
+    - 題型（2026-11-03）：定義題、比較題用「概念格式」（白話說明 → 主要差別／重點 → 跟你的工作有什麼關係
+      → 依據），其他用「步驟格式」。白話說明可以用一般常識解釋名詞意思與制度目的，但不可寫數字、
+      期限、義務、例外或條號；程式檢查白話說明有數字或條號卻沒有來源時丟棄回答。
+      比較題依每個關鍵名詞各產生一句查詢，避免只查到一邊。
     - 問答為即時對話（v1.5 核定），不保存問題或回答，也不寫入日誌。
     - GroqClient 目前沒有 temperature 參數，無法再降低隨機性；需要時由專案負責人調整共用模組。
 """
@@ -92,8 +97,9 @@ _INSUFFICIENT_NOTE = "模型判斷參考段落不足以回答"
 _CITATION = re.compile(r"[\[［【]\s*[\[［]?\s*(\d+)\s*[\]］]?\s*[\]］】]")
 # 相鄰的來源視為同一組，例：[1][2]、[1]、[2]
 _CITATION_GROUP = re.compile(rf"(?:{_CITATION.pattern}[ \t、,，]*)+")
-# 操作區塊：從「你可以這樣做」到「目前還需要確認」或「依據」；沒有標題時只看編號步驟
-_STEPS_START = re.compile(r"^\s*[你您]可以這樣做\s*[：:]", re.MULTILINE)
+# 需要來源的區塊：從「你可以這樣做」（步驟格式）或「主要差別／重點」（概念格式）
+# 到「目前還需要確認」或「依據」；沒有標題時只看編號步驟
+_STEPS_START = re.compile(r"^\s*(?:[你您]可以這樣做|主要差別|重點)\s*[：:]", re.MULTILINE)
 _STEPS_END = re.compile(r"^\s*(?:目前還需要確認|依據)\s*[：:]", re.MULTILINE)
 # 步驟從行首開始；縮排的編號是上一步的子清單
 _STEP_LINE = re.compile(r"^\d{1,2}\s*[、.．)）]")
@@ -103,6 +109,20 @@ _TOP_BULLET_LINE = re.compile(r"^[・•\-*]")
 _NEEDS_SECTION = re.compile(
     r"^\s*目前還需要確認\s*[：:].*?(?=^\s*依據\s*[：:]|\Z)", re.MULTILINE | re.DOTALL
 )
+# 概念格式的「白話說明」：到下一個區塊標題為止
+_PLAIN_SECTION = re.compile(
+    r"^\s*白話說明\s*[：:](.*?)"
+    r"(?=^\s*(?:主要差別|重點|跟你的工作有什麼關係|[你您]可以這樣做|目前還需要確認|依據)\s*[：:]|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+# 白話說明只能解釋名詞與目的；出現數字、比例或條項款就必須有來源
+_PLAIN_FACT = re.compile(r"[0-9０-９%％]|百分之|第\s*[〇零一二三四五六七八九十百兩\d]+\s*[條項款]")
+# 理解步驟的題型；回答依題型選格式
+QUESTION_TYPES = {
+    "definition": "定義題（問名詞是什麼意思）",
+    "comparison": "比較題（問兩者差在哪）",
+    "procedure": "流程題（問該怎麼做）",
+}
 # Groq／Vertex 錯誤細節只留短代碼，其他內容不進測試說明
 _SAFE_DETAIL = re.compile(r"[A-Za-z0-9_/]{1,80}")
 
@@ -111,7 +131,7 @@ SYSTEM_PROMPT = f"""你是 InvoiceGuard 的知識庫小幫手，協助不熟悉�
 回答前先辨認：使用者要處理什麼事、原問題明確提供哪些事實、哪些關鍵條件還不確定。不要把推測當成使用者提供的事實，也不要顯示思考過程。
 
 規則（必須遵守）：
-1. 規定、操作要求、例外、期限、文件用途與責任歸屬，只能來自使用者訊息中的【參考段落】，不可使用段落以外的法規知識或常識補充。
+1. 規定、操作要求、例外、期限、數字、比例、金額、條號、文件用途與責任歸屬，只能來自使用者訊息中的【參考段落】，不可使用段落以外的法規知識補充。只有概念格式的「白話說明」可以用一般常識解釋名詞的意思與制度目的，幫助沒接觸過的人先懂概念；白話說明不可寫數字、比例、期限、義務、例外或條號，也不可延伸成規定，不確定的就不寫。
 2. 某個處理方法只能用在原文寫明的情況。同一段落可能包含多條規定，不可因為寫在一起就當成都適用；不可把一種情況的處理方法套用到另一種情況；不可因為某個方法做不到，就自行改用另一種處理方法。
 3. 每個實質操作都要有支持它的段落，並在該步標註來源編號，例如 [1]、[2]；條件、例外與必要文件也要有依據。來源編號必須是實際寫有該內容的段落：標註前先回到【參考段落】找到那段文字，使用該段開頭的編號；提到第幾條時，標註的段落必須真的含有那一條。只能使用參考段落中出現的編號。
 4. 可以把原文寫明的條件與處理方法整理成白話步驟，也可以簡短說明為什麼這樣做；不可增加原文沒有的處理方法、義務、期限或內部流程。每一步寫清楚誰做什麼、向誰取得或交給誰；原文沒有寫明就不要自行判定。
@@ -125,6 +145,20 @@ SYSTEM_PROMPT = f"""你是 InvoiceGuard 的知識庫小幫手，協助不熟悉�
 12. 參考段落完全無法回答【問題】時，只輸出 {_NO_INFO_MARK}，不要輸出其他文字。
 
 回答格式（畫面只顯示純文字，不要使用 Markdown，不要用 **、#、表格或 | 符號）：
+【題型】是定義題或比較題，或問題是在問名詞的意思、兩者差在哪時，用「概念格式」；其他情況用「步驟格式」。
+
+概念格式：
+白話說明：
+用一到三句一般常識說明名詞的意思或制度目的，像對沒接觸過的人解釋（這一段不標來源編號，不寫數字、比例、期限、義務、例外或條號）。
+主要差別：（比較題用這個標題；定義題改用「重點：」）
+・每點一句，寫出參考段落中的內容並標註 [來源編號]；比較題要寫出兩邊各是什麼，段落只支持一邊時，說明另一邊這次查到的資料不足
+跟你的工作有什麼關係：
+・只寫參考段落有依據的影響 [來源編號]；段落沒有寫就省略這一段
+依據：
+・這次用到的文件名稱與原文標示的條項 [來源編號]
+概念格式約 200 至 400 字。
+
+步驟格式：
 先用一到兩句說明這個回答適用的情況，直接回應使用者眼前的事。
 
 資料足以支持操作時：
@@ -141,7 +175,7 @@ SYSTEM_PROMPT = f"""你是 InvoiceGuard 的知識庫小幫手，協助不熟悉�
 依據：
 ・這次用到的文件名稱與原文標示的條項 [來源編號]
 
-正文以三到五步、約 250 至 400 字為目標；不可為了簡短省略條件、執行者或例外。
+步驟格式正文以三到五步、約 250 至 400 字為目標；不可為了簡短省略條件、執行者或例外。
 
 語氣：用繁體中文，直接、清楚，對正在處理這件事的人說話，不用寫給主管的管理建議口吻。"""
 
@@ -156,18 +190,22 @@ REVIEW_RULES = f"""這是第二輪：【初稿】是上一輪寫的，不要因�
 6. 遺漏：原文中會影響做法的條件或例外，有沒有漏掉；有就補上並標來源。
 7. 易懂：不懂規定的同仁能不能照著做。
 8. 【程式檢查發現的問題】有列出時，一定要修正。
+9. 白話說明：只能解釋名詞的意思與制度目的。出現數字、比例、期限、義務、例外或條號時，有段落支持就移到「主要差別」或「重點」並標來源，沒有就刪除；不可把白話說明寫成規定。
+10. 格式：定義題、比較題用概念格式，比較題要寫出兩邊各是什麼；流程題用步驟格式。
 
 輸出規則：只輸出修正後的完整回答，沿用上面的回答格式，不要提到初稿、檢查或修改過程。初稿正確就原樣輸出。參考段落完全無法回答【問題】時，只輸出 {_NO_INFO_MARK}。"""
 
 UNDERSTAND_SYSTEM_PROMPT = """你負責在查詢知識庫之前理解問題，只輸出 JSON，格式：
-{"need": "使用者正在處理的事，一句話", "queries": ["用來查詢知識庫的句子"]}
+{"type": "definition 或 comparison 或 procedure 或 other", "concepts": ["問題中的關鍵名詞"], "need": "使用者正在處理的事，一句話", "queries": ["用來查詢知識庫的句子"]}
 
 規則：
-1. need 寫出使用者正在處理的事、問題明說的事實，以及還不確定的關鍵條件；不要把推測寫成事實，也不要寫處理方法或建議。
-2. queries 最多 3 句，每句 100 字以內，把日常說法換成規定文件會使用的說法；保留問題中的法規名稱與條號；不要加入問題沒有提到的處理方法。
-3. 問題看起來只是條文片段時，推測使用者想知道這段文字的出處、意思或適用情形。
-4. 有【提問部門】時只當工作背景，不得假設該部門有哪些內部流程。
-5. 不回答問題，不引用任何法規內容。"""
+1. type：問名詞是什麼意思用 definition；問兩個以上的東西差在哪、怎麼區分用 comparison；問該怎麼做、要準備什麼、期限或流程用 procedure；都不是用 other。
+2. concepts 列出問題中的關鍵名詞，最多 3 個，照問題原本的說法，不自行增加。
+3. need 寫出使用者正在處理的事、問題明說的事實，以及還不確定的關鍵條件；不要把推測寫成事實，也不要寫處理方法或建議。
+4. queries 最多 3 句，每句 100 字以內，把日常說法換成規定文件會使用的說法；保留問題中的法規名稱與條號；不要加入問題沒有提到的處理方法。type 是 definition 或 comparison 時，每個關鍵名詞各寫一句查詢（查它的定義、適用對象或計算方式），比較題不可只查其中一邊。
+5. 問題看起來只是條文片段時，推測使用者想知道這段文字的出處、意思或適用情形。
+6. 有【提問部門】時只當工作背景，不得假設該部門有哪些內部流程。
+7. 不回答問題，不引用任何法規內容。"""
 
 
 @dataclass(frozen=True)
@@ -181,6 +219,8 @@ class QuestionUnderstanding:
     need: str = ""
     queries: tuple[str, ...] = ()
     failure: str | None = None
+    question_type: str = ""
+    concepts: tuple[str, ...] = ()
 
 
 def _json_object(text: str) -> Any:
@@ -253,7 +293,17 @@ def understand_question(
         queries.append(cleaned)
         if len(queries) == MAX_QUERIES:
             break
-    return QuestionUnderstanding(data["need"].strip(), tuple(queries))
+    # 題型與關鍵名詞是輔助資訊：格式不符時略過，不影響查詢
+    question_type = data.get("type") if data.get("type") in QUESTION_TYPES else ""
+    raw_concepts = data.get("concepts")
+    concepts = tuple(
+        concept.strip()
+        for concept in (raw_concepts if isinstance(raw_concepts, list) else [])
+        if isinstance(concept, str) and concept.strip()
+    )[:MAX_QUERIES]
+    return QuestionUnderstanding(
+        data["need"].strip(), tuple(queries), question_type=question_type, concepts=concepts
+    )
 
 
 @dataclass(frozen=True)
@@ -408,6 +458,14 @@ def uncited_steps(text: str) -> int:
         for block in blocks
         if any(not line.rstrip().endswith(("：", ":")) for line in block)
         and not _CITATION.search("\n".join(block))
+    )
+
+
+def plain_facts_without_source(text: str) -> bool:
+    """白話說明出現數字、比例或條項款，卻沒有標註來源時為 True（常識只能解釋名詞與目的）。"""
+    return any(
+        _PLAIN_FACT.search(section) and not _CITATION.search(section)
+        for section in _PLAIN_SECTION.findall(text)
     )
 
 
@@ -587,6 +645,13 @@ def _check_reply(reply: ChatReply, hits: list[SearchHit], contact: str) -> QaAns
             total_tokens=tokens,
             note=f"回答有 {missing} 個步驟沒有來源，已丟棄",
         )
+    if plain_facts_without_source(text):
+        return QaAnswer(
+            UNVERIFIED_ANSWER.format(contact=contact),
+            False,
+            total_tokens=tokens,
+            note="白話說明出現數字或條號卻沒有來源，已丟棄",
+        )
     unsupported = unsupported_articles(text, hits)
     if unsupported:
         return QaAnswer(
@@ -625,6 +690,7 @@ def compose_answer(
     contact: str = DEFAULT_CONTACT,
     fallback_factory: Callable[[], VertexChatClient] = VertexChatClient.from_settings,
     deadline: float | None = None,
+    question_type: str = "",
 ) -> QaAnswer:
     """分兩輪請模型回答：先寫初稿，再對照段落檢查修正；最後由程式檢查引用，不合格時回固定訊息。
 
@@ -637,6 +703,7 @@ def compose_answer(
         contact: 固定訊息的洽詢窗口。
         fallback_factory: 建立 Groq 無法回應時使用的備援用戶端。
         deadline: 整題的截止時間（time.monotonic）；None 時從現在起算 QA_TOTAL_SECONDS。
+        question_type: 選填題型（QUESTION_TYPES 的鍵）；決定概念格式或步驟格式。
 
     Returns:
         問答結果。
@@ -644,6 +711,8 @@ def compose_answer(
     if not hits:
         return QaAnswer(NO_ANSWER, grounded=False)
     prompt = _prompt(question, hits)
+    if question_type in QUESTION_TYPES:
+        prompt += f"\n\n【題型】{QUESTION_TYPES[question_type]}"
     if need:
         prompt += f"\n\n【問題重點】{need}"
     system = SYSTEM_PROMPT
@@ -707,20 +776,58 @@ def ask(
     open_session: Callable[[], Session] = rag_repository.open_session,
     fallback_factory: Callable[[], VertexChatClient] = VertexChatClient.from_settings,
 ) -> QaAnswer:
-    """依目前部門指派回答單題，保留供之後 /knowledge_qa/ 使用；本批沒有路由呼叫。"""
+    """部門問答：依目前部門指派的知識庫回答單題，供之後 /knowledge_qa/ 使用；本批沒有路由呼叫。
+
+    與 ask_test 相同流程：自動帶入目前部門名稱，先理解問題（題型、關鍵名詞、查詢句）再多查詢檢索。
+    """
     deadline = time.monotonic() + QA_TOTAL_SECONDS
     text = _clean_question(question)
-    return _answer(
+    try:
+        db = open_session()
+        try:
+            department = rag_repository.get_department(db, actor.department_id)
+        finally:
+            db.close()
+    except rag_repository.SQLAlchemyError:
+        return QaAnswer(SERVICE_UNAVAILABLE, grounded=False, note="資料庫讀取失敗")
+    department_name = department.department_name if department else None
+    client, understanding = _understand(text, department_name, chat_factory, deadline)
+    answer = _answer(
         text,
         actor,
         None,
-        None,
+        department_name,
         embedding_factory,
         chat_factory,
         open_session,
+        understanding=understanding,
+        client=client,
         fallback_factory=fallback_factory,
         deadline=deadline,
     )
+    return _with_understanding_note(answer, understanding)
+
+
+def _understand(
+    text: str,
+    department_name: str | None,
+    chat_factory: Callable[[], GroqClient],
+    deadline: float,
+) -> tuple[GroqClient | None, QuestionUnderstanding]:
+    """建立對話用戶端並理解問題；用戶端無法建立時回傳 None，理解標記失敗原因。"""
+    try:
+        client = chat_factory()
+    except GroqError as error:
+        return None, QuestionUnderstanding(failure=_groq_failure(error))
+    return client, understand_question(text, department_name, client, deadline)
+
+
+def _with_understanding_note(answer: QaAnswer, understanding: QuestionUnderstanding) -> QaAnswer:
+    """理解失敗不算錯誤，但測試時要看得出這題少了理解步驟。"""
+    if understanding.failure is None:
+        return answer
+    failure = f"問題理解失敗（{understanding.failure}），已改用原問題查詢"
+    return replace(answer, note=f"{answer.note}；{failure}" if answer.note else failure)
 
 
 def ask_test(
@@ -766,14 +873,7 @@ def ask_test(
     except rag_repository.SQLAlchemyError:
         return QaAnswer(SERVICE_UNAVAILABLE, grounded=False, note="資料庫讀取失敗")
     department_name = department.department_name if department else None
-    client: GroqClient | None
-    try:
-        client = chat_factory()
-    except GroqError as error:
-        client = None
-        understanding = QuestionUnderstanding(failure=_groq_failure(error))
-    else:
-        understanding = understand_question(text, department_name, client, deadline)
+    client, understanding = _understand(text, department_name, chat_factory, deadline)
     answer = _answer(
         text,
         actor,
@@ -788,19 +888,16 @@ def ask_test(
         fallback_factory=fallback_factory,
         deadline=deadline,
     )
-    if understanding.failure is None:
-        return answer
-    # 退回原問題不算錯誤，但測試時要看得出這題少了理解步驟
-    failure = f"問題理解失敗（{understanding.failure}），已改用原問題查詢"
-    return replace(answer, note=f"{answer.note}；{failure}" if answer.note else failure)
+    return _with_understanding_note(answer, understanding)
 
 
 def _no_answer_text(need: str, knowledge_names: Sequence[str]) -> str:
     if not need:
         return NO_ANSWER
+    where = f"「{'、'.join(knowledge_names)}」" if knowledge_names else "目前部門可用的知識庫"
     return (
         f"你想了解的應該是：{need}\n"
-        f"我在「{'、'.join(knowledge_names)}」裡查不到足夠的資料，所以先不回答，以免給你不正確的資訊。\n"
+        f"我在{where}裡查不到足夠的資料，所以先不回答，以免給你不正確的資訊。\n"
         "可以換個說法，或補充事情的經過再問一次；也可以問負責這項業務的同仁。"
     )
 
@@ -870,6 +967,7 @@ def _answer(
                             if deadline is None
                             else min(retrieval.QUERY_TIMEOUT_SECONDS, _remaining(deadline))
                         ),
+                        extra_queries=understanding.queries,
                     ).hits
                 )
             groups = reference_groups(text)
@@ -921,6 +1019,7 @@ def _answer(
         contact=contact,
         fallback_factory=fallback_factory,
         deadline=deadline,
+        question_type=understanding.question_type,
     )
     if understanding.need and (answer.note or "").startswith(_INSUFFICIENT_NOTE):
         return replace(answer, text=_no_answer_text(understanding.need, knowledge_names))

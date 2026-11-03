@@ -19,7 +19,7 @@
   {% include "pages/invoices/_stepper.html" %}
   {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
   <section class="card" id="flow-step">
-    <h2 class="card__title">{{ steps[step - 1].label }}</h2>
+    <h2 class="card__title">{{ step_title or (steps[step - 1].label if step <= steps|length else '') }}</h2>
     {% if invoice.is_completed %}<p class="alert alert--success">已完成，目前為檢視模式。</p>{% endif %}
     {% if step == 1 %}
       {% include "pages/invoices/_flow_step_upload.html" %}

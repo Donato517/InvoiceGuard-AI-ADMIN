@@ -681,9 +681,13 @@ def _build_flow_steps(
     has_file_bytes: bool = False,
     allowed_max_step: int = 9,
 ) -> list[dict[str, Any]]:
-    """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9）。"""
+    """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9；步驟 2「AI OCR 辨識」已整合至步驟 3 故自步驟列移除）。"""
     steps = []
+    display_index = 1
     for idx, label in enumerate(INVOICE_FLOW_STEPS[:allowed_max_step], start=1):
+        if idx == 2 or label == "AI OCR 辨識":
+            continue
+
         if is_completed:
             state = "active" if idx == current_step else "done"
         elif idx == current_step:
@@ -693,19 +697,20 @@ def _build_flow_steps(
         else:
             state = "locked"
 
-        # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1、2 僅顯示完成勾號不再連結返回
+        # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1 僅顯示完成勾號不再連結返回
         can_navigate = (
             state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
         )
-        nav_step = 3 if idx == 2 else idx
         steps.append(
             {
-                "number": idx,
+                "number": display_index,
+                "step": idx,
                 "label": label,
                 "state": state,
-                "url": f"/invoices/{invoice_id}/flow?step={nav_step}" if can_navigate else None,
+                "url": f"/invoices/{invoice_id}/flow?step={idx}" if can_navigate else None,
             }
         )
+        display_index += 1
     return steps
 
 
@@ -1225,6 +1230,7 @@ def _render_flow_page(
     is_first_four_readonly = bool(
         (int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed")) and step <= 4
     )
+    step_title = INVOICE_FLOW_STEPS[step - 1] if 1 <= step <= len(INVOICE_FLOW_STEPS) else ""
 
     return templates.TemplateResponse(
         request,
@@ -1233,6 +1239,7 @@ def _render_flow_page(
             "invoice": invoice,
             "fields_14": fields_14,
             "step": step,
+            "step_title": step_title,
             "steps": steps,
             "checks": checks,
             "voucher": voucher,

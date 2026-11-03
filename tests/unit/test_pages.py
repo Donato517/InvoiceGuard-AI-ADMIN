@@ -513,3 +513,5 @@ def test_uncommitted_uuid_draft_recovers_without_404(admin_client: TestClient) -
     res = admin_client.get(f"/invoices/{draft_uuid}/flow?step=3")
     assert res.status_code == 200
     assert "invoice-correction-split" in res.text
+    assert "AI OCR 辨識" not in res.text
+    assert '<h2 class="card__title">採購核對修正</h2>' in res.text

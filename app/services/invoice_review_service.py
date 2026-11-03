@@ -41,17 +41,3 @@ def fetch_invoice(invoice_id: Any) -> dict[str, Any] | None:
         return repository.get_invoice_by_id(session, invoice_id)
     finally:
         session.close()
-
-
-def save_invoice(invoice: dict[str, Any], invoice_id: Any) -> None:
-    """將發票儲存至資料庫。"""
-    session = repository.try_get_db_session()
-    if session is None:
-        return
-    try:
-        repository.save_invoice(session, invoice, invoice_id)
-        session.commit()
-    except Exception:
-        session.rollback()
-    finally:
-        session.close()

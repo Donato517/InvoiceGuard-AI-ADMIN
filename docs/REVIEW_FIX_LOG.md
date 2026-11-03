@@ -1021,3 +1021,9 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 設計取捨：invoices 沒有扣抵代號與會計科目欄位，不自行改 Schema（API 管理）；暫存於記憶體並在核准時寫入歷程原因。
 - 驗證：新增 `tests/unit/test_finance_review_db.py`（路由、服務交易、Repository SQL 順序與併發條件）；ADMIN pytest 2547 passed、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。未驗：SQL 在真實 PostgreSQL 的語法與約束（環境沒有 PostgreSQL 與解析器）、真實 DB 寫入、財務部帳號的瀏覽器操作。
 - 已知缺口：申請人端退回補正／重送／終止與申報檔、傳票仍是記憶體示範；寫入後的列表狀態標籤（`_row_to_invoice_dict` 對 returned／approved 的對應）未逐一檢查。
+
+## 2026-11-03 Claude：停用舊示範核對對資料庫的寫入
+
+- 問題：舊的 `flow/correct`（及 `advance` 第 3 步、`finish-first-four`）用範例預設值組欄位並 upsert 到 `public.invoices`；沒上傳過的新草稿直接 POST 就能寫入，對資料庫發票會覆蓋真實欄位。
+- 處理檔案：app/routers/invoices.py（`_refuse_legacy_demo_write`、移除 `save_invoice` 呼叫）、app/services/invoice_review_service.py、app/db/repositories/invoice_repository.py（刪除 `save_invoice`、`UPSERT_INVOICE`）、tests/unit/test_legacy_flow_write_guard.py。
+- 驗證：ADMIN pytest 2561 passed 以上、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。測試以「開啟 DB Session 即失敗」的替身證明草稿與資料庫發票的舊端點不碰資料庫。未驗：真實環境。

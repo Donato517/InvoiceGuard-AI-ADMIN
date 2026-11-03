@@ -1469,8 +1469,23 @@ def get_invoice_file(request: Request, invoice_id: str) -> Response:
     )
 
 
+_LEGACY_WRITE_MESSAGE = (
+    "舊的示範核對流程已停用，不會寫入資料庫。請在步驟 1 上傳並辨識發票，"
+    "用步驟 3 的核對表單確認提交（由 API 建立案件）。"
+)
+
+
+def _refuse_legacy_demo_write(invoice_id: str, invoice: dict[str, Any]) -> None:
+    """舊的示範核對（flow/correct 等）會用範例預設值組出欄位；草稿與資料庫發票一律拒絕，避免產生假資料。
+
+    草稿只能走 API 辨識後的核對表單；資料庫發票是真實案件，不能被示範欄位覆蓋。
+    """
+    if invoice_id in _DRAFT_INVOICE_STORE or _is_db_invoice(invoice):
+        raise HTTPException(status_code=409, detail=_LEGACY_WRITE_MESSAGE)
+
+
 def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> None:
-    """完成步驟 3 採購核對修正後，清除暫存影像並將發票正式寫入發票清單。"""
+    """完成步驟 3 舊的示範核對後，清除暫存影像並放入記憶體清單；不寫入資料庫（見 _refuse_legacy_demo_write）。"""
     invoice.pop("file_bytes", None)
     invoice.pop("file_media_type", None)
     invoice["stage"] = max(invoice.get("stage", 3), 4)
@@ -1478,8 +1493,6 @@ def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> 
         _DRAFT_INVOICE_STORE.pop(invoice_id, None)
         if not _find_invoice(invoice_id):
             _INVOICE_STORE.insert(0, invoice)
-
-    invoice_review_service.save_invoice(invoice, invoice_id)
 
 
 @router.post("/{invoice_id}/flow/re-ocr")
@@ -1535,6 +1548,7 @@ def correct_invoice_fields(
         )
     if invoice.get("intake_form") is not None:
         raise HTTPException(status_code=400, detail="API 辨識的發票請使用步驟 3 的核對表單送出。")
+    _refuse_legacy_demo_write(invoice_id, invoice)
     _ensure_invoice_14_fields(invoice)
 
     if format_identification is not None:
@@ -1614,6 +1628,7 @@ def advance_flow_step(
     next_step = min(max_flow_step, from_step + 1)
     if invoice:
         if from_step == 3:
+            _refuse_legacy_demo_write(invoice_id, invoice)
             _commit_draft_after_correction(invoice_id, invoice)
         else:
             invoice["stage"] = max(invoice.get("stage", next_step), next_step)
@@ -1627,6 +1642,10 @@ def finish_first_four_steps(request: Request, invoice_id: str) -> RedirectRespon
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
+    if invoice_id in _DRAFT_INVOICE_STORE:
+        raise HTTPException(status_code=409, detail=_LEGACY_WRITE_MESSAGE)
+    if _is_db_invoice(invoice):
+        return RedirectResponse("/invoices", status_code=303)  # 資料庫案件已建立，不需也不可再寫入
     _commit_draft_after_correction(invoice_id, invoice)
     invoice["first_four_checked"] = True
     invoice["stage"] = max(int(invoice.get("stage", 4)), 4)

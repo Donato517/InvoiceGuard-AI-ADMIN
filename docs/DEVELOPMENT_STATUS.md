@@ -193,6 +193,11 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
 - 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
 
+2026-11-03 停用舊的示範核對寫入資料庫（**本機改動、尚未 Commit；離線測試**）：
+- 原因：`flow/correct`、`advance`（第 3 步）、`finish-first-four` 經 `_commit_draft_after_correction` 呼叫 `invoice_review_service.save_invoice`，用範例預設值組出欄位 upsert 到 `public.invoices`（`submission_round=0`），這是正式 DB 中 7 筆「辦公用品」假案件的來源；對資料庫發票還會覆蓋真實欄位。
+- 處理：刪除 `save_invoice`（service 與 repository）與 `UPSERT_INVOICE`，舊流程不再有任何寫入 DB 的程式；草稿與資料庫發票的這三個端點一律回 409（`finish-first-four` 對資料庫發票只導回列表）。整數 ID 的離線示範發票與記憶體內發票仍可用記憶體流程。草稿只能走 API 辨識後的步驟 3 核對表單提交。
+- 未處理：`procurement_*`（退回補正、重送、終止）仍是記憶體示範；既有 7 筆假資料的刪除交由組員人工處理。
+
 2026-11-03 財務審核（步驟 5）核准與退回改為寫入資料庫（**本機改動、尚未 Commit；僅離線替身測試，SQL 未在真實 PostgreSQL 執行或解析驗證**）：
 - 範圍：只針對從資料庫讀到的發票（UUID 且不在記憶體清單）。整數 ID 的離線示範發票與記憶體內的發票仍走原本只改記憶體的路徑（`test_finance_review_pages` 驗證）。
 - 讀取：`finance_review_db_service.load` 讀 `invoices`（含 `validation_results` 提交警示）、`invoice_field_reviews`、`invoice_changes`、`invoice_status_history`；審核畫面的警示、修改軌跡與審核歷程改顯示真實資料，不再顯示空白的示範資料。

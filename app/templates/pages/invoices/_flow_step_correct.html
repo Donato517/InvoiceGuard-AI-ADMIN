@@ -31,7 +31,7 @@
           <input id="format_identification"
                  name="format_identification"
                  data-invoice14="format_identification"
-                 value="{{ invoice.format_identification or '三聯式手開發票' }}"
+                 value="{{ invoice.format_identification or '' }}"
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
@@ -41,7 +41,7 @@
           <input id="invoice_number"
                  name="invoice_number"
                  data-invoice14="invoice_number"
-                 value="{{ invoice.invoice_number }}"
+                 value="{{ invoice.invoice_number or '' }}"
                  maxlength="10"
                  required
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
@@ -53,7 +53,7 @@
           <input id="invoice_date"
                  name="invoice_date"
                  data-invoice14="invoice_date"
-                 value="{{ invoice.invoice_date }}"
+                 value="{{ invoice.invoice_date or '' }}"
                  required
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
@@ -99,7 +99,7 @@
                  min="1"
                  step="1"
                  data-invoice14="quantity"
-                 value="{{ invoice.quantity or 1 }}"
+                 value="{{ invoice.quantity if invoice.quantity not in (None, '') else '' }}"
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
@@ -112,7 +112,7 @@
                  min="0"
                  step="1"
                  data-invoice14="unit_price"
-                 value="{{ invoice.unit_price if invoice.unit_price is not none else invoice.net_amount }}"
+                 value="{{ invoice.unit_price if invoice.unit_price not in (None, '') else (invoice.net_amount if invoice.net_amount not in (None, '') else '') }}"
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
@@ -125,7 +125,7 @@
                  min="0"
                  step="1"
                  data-invoice14="amount"
-                 value="{{ invoice.amount if invoice.amount is not none else invoice.net_amount }}"
+                 value="{{ invoice.amount if invoice.amount not in (None, '') else (invoice.net_amount if invoice.net_amount not in (None, '') else '') }}"
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
@@ -138,7 +138,7 @@
                  min="0"
                  step="1"
                  data-invoice14="net_amount"
-                 value="{{ invoice.net_amount }}"
+                 value="{{ invoice.net_amount if invoice.net_amount not in (None, '') else '' }}"
                  {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
         </div>
         <div class="invoice14-field">
@@ -163,7 +163,7 @@
                    step="1"
                    data-invoice14="tax_amount"
                    aria-label="稅額"
-                   value="{{ invoice.tax_amount }}"
+                   value="{{ invoice.tax_amount if invoice.tax_amount not in (None, '') else '' }}"
                    {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
           </div>
         </div>
@@ -179,7 +179,7 @@
                    step="1"
                    data-invoice14="total_amount"
                    aria-label="總計"
-                   value="{{ invoice.total_amount }}"
+                   value="{{ invoice.total_amount if invoice.total_amount not in (None, '') else '' }}"
                    {% if invoice.is_completed or is_first_four_readonly %}readonly{% endif %}>
             <input id="total_chinese"
                    name="total_chinese"

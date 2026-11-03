@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.security import create_session_token
 from app.db.session import get_db
 from app.main import app
+from app.routers.invoices import _INVOICE_STORE
 from app.services import system_service
 
 
@@ -405,3 +406,70 @@ def test_batch_filing_rejects_bad_period(admin_client: TestClient) -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_new_invoice_has_no_dummy_data_in_14_fields(admin_client: TestClient) -> None:
+    """新增發票草稿在辨識與核對階段不可預填假資料。"""
+    res = admin_client.get("/invoices/new", follow_redirects=False)
+    assert res.status_code == 303
+    redirect_url = res.headers["location"]
+    invoice_id = redirect_url.split("/")[2]
+
+    # 檢查步驟 2（OCR 預覽）與步驟 3（核對欄位）
+    step2_res = admin_client.get(f"/invoices/{invoice_id}/flow?step=2")
+    assert step2_res.status_code == 200
+    assert "範例科技股份有限公司" not in step2_res.text
+    assert "範例銷貨人" not in step2_res.text
+
+    step3_res = admin_client.get(f"/invoices/{invoice_id}/flow?step=3")
+    assert step3_res.status_code == 200
+    assert 'value="三聯式手開發票"' not in step3_res.text
+    assert 'value="範例科技股份有限公司"' not in step3_res.text
+    assert 'value="範例銷貨人"' not in step3_res.text
+    assert 'value="12345678"' not in step3_res.text
+    assert 'value="24681357"' not in step3_res.text
+    assert 'value="113/08/15"' not in step3_res.text
+
+
+def test_stage_six_derives_period_and_accepts_company_ban(admin_client: TestClient) -> None:
+    """步驟 6 依發票開立日期推算申報期別，且本公司統編檢核通過。"""
+    initial_ids = [int(i["id"]) for i in _INVOICE_STORE if str(i["id"]).isdigit()]
+    new_id = max(initial_ids) + 99
+    test_invoice = {
+        "id": new_id,
+        "uploaded_by": "1",
+        "format_identification": "三聯式電子發票",
+        "invoice_number": "XX12345678",
+        "invoice_date": "115/10/15",
+        "buyer_name": "範例科技股份有限公司",
+        "buyer_tax_id": "04595252",
+        "seller_name": "測試銷貨人",
+        "seller_tax_id": "27601907",
+        "item_description": "雲端伺服器服務",
+        "quantity": 1,
+        "unit_price": 2000,
+        "amount": 2000,
+        "net_amount": 2000,
+        "tax_category": "應稅",
+        "tax_amount": 100,
+        "total_amount": 2100,
+        "total_chinese": "貳仟壹佰元整",
+        "remarks": "",
+        "stage": 6,
+        "status": "passed",
+        "review_status": "approved",
+        "is_completed": False,
+        "file_name": None,
+        "deduction_code": "1",
+        "tax_type": "1",
+    }
+    _INVOICE_STORE.insert(0, test_invoice)
+    try:
+        res = admin_client.get(f"/invoices/{new_id}/flow?step=6")
+        assert res.status_code == 200
+        # 不應出現「不可大於申報所屬期」或「不是本公司統編」
+        assert "發票買受人統編不是本公司統編" not in res.text
+        assert "發票開立年月不可大於申報所屬期" not in res.text
+        assert "✓ 可列入申報" in res.text
+    finally:
+        _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]

@@ -228,14 +228,14 @@ def _row_to_invoice_dict(
     return {
         "id": row["invoice_id"],
         "uploaded_by": row.get("submitted_by") or "1",
-        "format_identification": "三聯式手開發票",
+        "format_identification": row.get("format_identification") or "",
         "invoice_number": invoice_number,
         "invoice_date": _format_date(row.get("invoice_date")),
-        "buyer_name": row.get("buyer_name") or "範例科技股份有限公司",
-        "seller_name": row.get("seller_name") or "範例銷貨人",
-        "seller_tax_id": row.get("seller_tax_id") or "24681357",
-        "buyer_tax_id": row.get("buyer_tax_id") or "12345678",
-        "item_description": item_desc or "辦公用品",
+        "buyer_name": row.get("buyer_name") or "",
+        "seller_name": row.get("seller_name") or "",
+        "seller_tax_id": row.get("seller_tax_id") or "",
+        "buyer_tax_id": row.get("buyer_tax_id") or "",
+        "item_description": item_desc or "",
         "quantity": qty,
         "unit_price": unit_p,
         "amount": amt,
@@ -315,6 +315,16 @@ def save_invoice(db: Session, invoice: dict[str, Any], invoice_id: Any) -> None:
     user_uuid = to_uuid_str(invoice.get("uploaded_by", "1"))
     dept_uuid = to_uuid_str(invoice.get("department_id", "1"))
 
+    tax_period = invoice.get("tax_period")
+    if not tax_period:
+        if inv_date:
+            even_m = inv_date.month if inv_date.month % 2 == 0 else inv_date.month + 1
+            tax_period = f"{inv_date.year - 1911:03d}{even_m:02d}"
+        else:
+            today = date.today()
+            even_m = today.month if today.month % 2 == 0 else today.month + 1
+            tax_period = f"{today.year - 1911:03d}{even_m:02d}"
+
     db.execute(
         UPSERT_INVOICE,
         {
@@ -322,7 +332,7 @@ def save_invoice(db: Session, invoice: dict[str, Any], invoice_id: Any) -> None:
             "invoice_track": track,
             "invoice_number": num,
             "invoice_date": inv_date,
-            "tax_period": invoice.get("tax_period") or "11308",
+            "tax_period": tax_period,
             "seller_tax_id": invoice.get("seller_tax_id"),
             "seller_name": invoice.get("seller_name"),
             "buyer_tax_id": invoice.get("buyer_tax_id"),

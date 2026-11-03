@@ -163,7 +163,7 @@ def test_successful_resubmit_starts_round_two(client: TestClient) -> None:
     invoice = invoices_router._find_invoice(3)
     assert (invoice["review_status"], invoice["stage"]) == ("pending", 4)
     case = invoices_router._FINANCE_CASES[3]
-    assert (case.status, case.submission_round) == ("pending_department_approval", 2)
+    assert (case.status, case.submission_round) == ("pending_accounting_review", 2)
     assert all(not r.is_checked and r.review_comment is None for r in case.field_reviews)
     total = next(r for r in case.field_reviews if r.field_name == "total_amount")
     assert total.submitted_value == "1680"

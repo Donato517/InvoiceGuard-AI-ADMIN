@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from app.schemas.finance_review import (
+    REVIEWABLE_STATUSES,
     STATUS_APPROVED,
     STATUS_RETURNED,
     STATUS_SUBMITTED,
@@ -151,6 +152,12 @@ def test_warnings_do_not_block_approval():
     assert approval_blockers(case, REVIEWER) == []
 
 
+def test_legacy_submitted_status_is_still_reviewable():
+    """舊資料的 pending_department_approval 仍視為待財務審核，但新送出一律寫 pending_accounting_review。"""
+    assert STATUS_SUBMITTED == "pending_accounting_review"
+    assert "pending_department_approval" in REVIEWABLE_STATUSES
+
+
 def test_approve_ready_case_returns_status_change():
     change = approve(_ready_case(), REVIEWER, NOW)
 
@@ -179,7 +186,7 @@ def test_approve_already_approved_rejected():
 
 
 def test_resubmit_after_return_goes_back_to_submitted_status():
-    """C 重送時沿用 pending_department_approval，狀態規則必須允許；退回後也可由申請人終止。"""
+    """重送寫入 pending_accounting_review（與 API 首次送出相同），狀態規則必須允許；退回後也可由申請人終止。"""
     assert STATUS_SUBMITTED in ALLOWED_TRANSITIONS[STATUS_RETURNED]
     assert STATUS_VOIDED in ALLOWED_TRANSITIONS[STATUS_RETURNED]
 

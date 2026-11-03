@@ -12,6 +12,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from app.services.company_profile_service import CompanyProfile, HardcodedCompanyProfileProvider
 from app.services.format21_service import (
     Format21Record,
@@ -19,6 +21,7 @@ from app.services.format21_service import (
     build_record_from_snapshot,
     format_record_line,
     is_valid_ban,
+    snapshot_notices,
     summarize_401,
     to_roc_year_month,
     validate_record,
@@ -217,6 +220,24 @@ def test_build_format21_file_not_approved_blocks_export():
 
     assert result.content is None
     assert [i.code for i in result.issues[pending["invoice_id"]]] == ["NOT_APPROVED"]
+
+
+@pytest.mark.parametrize("blank", [None, "", "  "])
+def test_blank_buyer_ban_exports_with_notice(blank):
+    """API 送出時買受人統編為選填；空白不擋產檔，申報檔仍寫本公司統編，另回傳黃色提醒。"""
+    no_buyer = dict(SNAPSHOTS[0], buyer_tax_id=blank)
+
+    result = build_format21_file([no_buyer], HardcodedCompanyProfileProvider(), "11510")
+    notices = snapshot_notices(no_buyer, PROFILE)
+
+    assert result.issues == {}
+    assert result.content is not None and PROFILE.ban in result.content
+    assert [n.code for n in notices] == ["BUYER_BAN_BLANK"]
+    assert PROFILE.ban in notices[0].message
+
+
+def test_filled_buyer_ban_has_no_notice():
+    assert snapshot_notices(SNAPSHOTS[0], PROFILE) == []
 
 
 def test_build_format21_file_other_buyer_ban_blocks_export():

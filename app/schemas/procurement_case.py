@@ -12,12 +12,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 # ---- 狀態 ----
-# 只留財務一層審核；C 送出與重送目前寫入 pending_department_approval，日後可能改為
-# pending_accounting_review，兩者在採購端都顯示為「財務審核中」。
+# 只留財務一層審核；API 首次送出與 2-5 重送都寫入 pending_accounting_review。
+# 舊資料可能仍是 pending_department_approval，保留相容，兩者在採購端都顯示為「財務審核中」。
 
 STATUS_DRAFT = "draft"
-STATUS_SUBMITTED = "pending_department_approval"
 STATUS_PENDING_REVIEW = "pending_accounting_review"
+STATUS_SUBMITTED = STATUS_PENDING_REVIEW
+STATUS_LEGACY_SUBMITTED = "pending_department_approval"
 STATUS_APPROVED = "approved"
 STATUS_RETURNED = "returned_to_applicant"
 STATUS_REJECTED = "rejected"
@@ -33,7 +34,7 @@ RESUBMIT_STATUS = STATUS_SUBMITTED
 STATUS_LABELS = {
     STATUS_DRAFT: "草稿",
     STATUS_SUBMITTED: "財務審核中",
-    STATUS_PENDING_REVIEW: "財務審核中",
+    STATUS_LEGACY_SUBMITTED: "財務審核中",
     STATUS_APPROVED: "已核准",
     STATUS_RETURNED: "待補正",
     STATUS_REJECTED: "已駁回",

@@ -82,6 +82,7 @@ from app.services.format21_service import (
     build_format21_file,
     check_snapshot,
     format_record_line,
+    snapshot_notices,
     summarize_401,
     validate_profile,
 )
@@ -926,6 +927,7 @@ def _build_batch_filing_context(
         if not _in_date_range(snapshot["invoice_date"], from_date, to_date):
             continue
         record, issues = check_snapshot(snapshot, profile, selected_period)
+        notices = snapshot_notices(snapshot, profile)
         exportable = not issues and not company_issues
         if exportable:
             passed_records.append(record)
@@ -940,6 +942,7 @@ def _build_batch_filing_context(
                 "tax": int(inv.get("tax_amount", 0)),
                 "checked": exportable,
                 "issues": [{"code": i.code, "message": i.message} for i in issues],
+                "notices": [{"code": n.code, "message": n.message} for n in notices],
             }
         )
 
@@ -966,12 +969,15 @@ def _build_batch_filing_context(
 
 
 def _single_filing_check(invoice: dict[str, Any], period: str) -> dict[str, Any]:
-    """步驟 6 單張檢核：問題清單與 81 字元預覽（有問題時不產生預覽）。"""
-    record, issues = check_snapshot(
-        _to_filing_snapshot(invoice), _FILING_PROFILE.get_profile(), period
-    )
+    """步驟 6 單張檢核：問題清單、需確認的提醒與 81 字元預覽（有問題時不產生預覽）。"""
+    snapshot = _to_filing_snapshot(invoice)
+    profile = _FILING_PROFILE.get_profile()
+    record, issues = check_snapshot(snapshot, profile, period)
     return {
         "issues": [{"code": i.code, "message": i.message} for i in issues],
+        "notices": [
+            {"code": n.code, "message": n.message} for n in snapshot_notices(snapshot, profile)
+        ],
         "preview_line": None if issues else format_record_line(record, serial=1),
     }
 
@@ -1721,7 +1727,7 @@ def _demo_review_input(invoice_id: Any) -> dict[str, Any]:
 _FINANCE_CASES: _IdKeyedDict[ReviewCase] = _IdKeyedDict()
 _FINANCE_HISTORY: _IdKeyedDict[list[StatusChange]] = _IdKeyedDict()
 _REVIEW_STATUS_TO_V15 = {
-    "pending": "pending_department_approval",
+    "pending": STATUS_SUBMITTED,
     "approved": STATUS_APPROVED,
     "returned": STATUS_RETURNED,
     "rejected": STATUS_REJECTED,

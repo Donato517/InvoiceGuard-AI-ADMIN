@@ -2,7 +2,7 @@
   @template pages/invoices/_flow_step_filing.html
   @description 步驟 6：產生申報檔（單張檢核預覽 + 批次產生申報檔）。
   @context invoice: dict           發票資料
-  @context single_filing: dict     F09 單張檢核 {issues: [{code, message}], preview_line: str | None}
+  @context single_filing: dict     F09 單張檢核 {issues: [{code, message}], notices: [{code, message}], preview_line: str | None}
   @context batch_filing: dict      批次申報資料
 #}
 <p class="muted small-text">單張發票只檢核與預覽；申報檔只能在下方批次產生，每期一檔。</p>
@@ -48,6 +48,14 @@
       </ul>
     </div>
   {% else %}
+    {% if single_filing.notices %}
+      <div class="alert alert--warning">
+        <p>可以列入申報檔，但請確認：</p>
+        <ul>
+          {% for notice in single_filing.notices %}<li>{{ notice.message }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
     <pre class="filing-line">{{ single_filing.preview_line }}</pre>
   {% endif %}
   <p class="muted small-text">預覽流水號固定為 0000001，申報所屬期使用下方批次區目前選的期別；實際流水號與期別以批次產生為準。</p>

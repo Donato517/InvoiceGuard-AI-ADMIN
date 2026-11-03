@@ -80,7 +80,10 @@
               <td class="num">${{ "{:,}".format(r.sales) }}</td>
               <td class="num">${{ "{:,}".format(r.tax) }}</td>
               <td>
-                {% if not r.issues %}
+                {% if not r.issues and r.notices %}
+                  <span class="filing-pill warn"
+                        title="{{ r.notices | map(attribute='message') | join('；') }}">⚠ 通過，請確認：{{ r.notices[0].message }}</span>
+                {% elif not r.issues %}
                   <span class="filing-pill ok">✓ 通過</span>
                 {% else %}
                   <span class="filing-pill bad"

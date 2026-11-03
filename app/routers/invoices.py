@@ -28,9 +28,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
 from app.core.templating import templates
-from app.db.repositories import case_repository
-from app.db.repositories.invoice_repository import try_get_db_session
-from app.integrations.supabase_storage import S3StorageClient
 from app.routers.e_admin import require_e_origin, session_evidence
 from app.routers.intake import api_message, get_intake_client
 from app.schemas.account_codes import ACCOUNT_CODES, EXPENSE_CATEGORIES
@@ -588,26 +585,7 @@ def _find_invoice(invoice_id: Any) -> dict[str, Any] | None:
 
 def _fetch_storage_file_bytes(invoice_id: Any) -> tuple[bytes, str] | None:
     """嘗試從 Supabase Storage 與資料庫讀取發票原始檔案內容。"""
-    try:
-        uuid_obj = UUID(str(invoice_id))
-    except (ValueError, TypeError, AttributeError):
-        return None
-    session = try_get_db_session()
-    if session is None:
-        return None
-    try:
-        file_info = case_repository.get_current_file(session, uuid_obj)
-        if file_info is None:
-            return None
-        _, location = file_info
-        client = S3StorageClient.from_settings(bucket=location.bucket_name)
-        content, _ = client.get(location.storage_path)
-        mime = location.mime_type or "image/jpeg"
-        return content, mime
-    except Exception:
-        return None
-    finally:
-        session.close()
+    return invoice_review_service.fetch_storage_file_bytes(invoice_id)
 
 
 def _create_draft_invoice(invoice_id: str, uploaded_by: str = "1") -> dict[str, Any]:
@@ -660,10 +638,6 @@ def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
             return v
     inv = _find_invoice(invoice_id)
     if inv is not None:
-        if not inv.get("file_bytes"):
-            fetched = _fetch_storage_file_bytes(invoice_id)
-            if fetched:
-                inv["file_bytes"], inv["file_media_type"] = fetched
         return inv
 
     # 若為有效 UUID 但尚未寫入資料庫（如伺服器重啟或剛進入流程的草稿），自動建立記憶體草稿，避免 404
@@ -1280,6 +1254,11 @@ def invoice_flow(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice)
+
+    if not invoice.get("file_bytes"):
+        fetched = _fetch_storage_file_bytes(invoice_id)
+        if fetched:
+            invoice["file_bytes"], invoice["file_media_type"] = fetched
 
     if step == 2:
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=3", status_code=303)
@@ -1949,18 +1928,9 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
     dept_name = invoice.get("department_name")
     sub_name = invoice.get("submitter_name")
     if not dept_name or not sub_name:
-        try:
-            sess = try_get_db_session()
-            if sess:
-                try:
-                    case_header = case_repository.get_case(sess, UUID(str(invoice["id"])))
-                    if case_header:
-                        dept_name = dept_name or case_header.department_name
-                        sub_name = sub_name or case_header.submitter_name
-                finally:
-                    sess.close()
-        except Exception:
-            pass
+        extra_dept, extra_sub = invoice_review_service.get_invoice_uploader_info(invoice.get("id"))
+        dept_name = dept_name or extra_dept
+        sub_name = sub_name or extra_sub
 
     return {
         "case": case,

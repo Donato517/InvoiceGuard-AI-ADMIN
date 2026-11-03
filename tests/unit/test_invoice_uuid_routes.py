@@ -23,9 +23,12 @@ def _uuid_invoice() -> dict:
 
 def test_flow_pages_accept_uuid_invoice_id(admin_client: TestClient) -> None:
     inv_router._INVOICE_STORE.append(_uuid_invoice())
-    for step in (1, 2, 3, 4, 5):
+    for step in (1, 3, 4, 5):
         resp = admin_client.get(f"/invoices/{UUID_ID}/flow?step={step}")
         assert resp.status_code == 200, step
+    # 步驟 2 已跳過並轉址至步驟 3
+    resp_step2 = admin_client.get(f"/invoices/{UUID_ID}/flow?step=2")
+    assert resp_step2.status_code == 303
     assert admin_client.get(f"/invoices/{UUID_ID}").status_code == 200
 
 

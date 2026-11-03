@@ -1013,3 +1013,11 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 正式抽樣（10 張，經本機 ADMIN→API→Document AI）：字軌＋號碼 9/10 正確（1 張漏），日期 8/10 有值（1 張靠期別推算），買方統編 9/10，賣方統編 8/10；金額自洽 9/10；其餘欄位僅抽 2 張對照原圖，沒有逐欄真值。API 對漏欄與不一致都有提醒。
 - 驗證：ADMIN pytest 2518 passed、9 skipped、1 failed（`test_document_ai_bundle_retains_legacy_contract`，此 venv 缺 Pillow，改動前即如此；`test_document_ai_bundle.py` 同因無法載入）；ruff、djlint、`check_project` 通過。未驗：tests/e2e、雲端部署。
 - 已知限制：ADMIN 切換部門不會同步 API Session 的部門；token 過期時回 401 錯誤頁而不是導向登入；`POST /intake/recognize`、`/review` 暫留；`tests/unit/test_document_ai_bundle.py` 與 shared integrations 測試需先安裝 Pillow。
+
+## 2026-11-03 Claude：財務審核核准與退回寫入資料庫
+
+- 問題：步驟 5 的核准、退回與課稅別更正只改記憶體（`_apply_change`／`_sync_invoice`），不寫 `invoices.status` 與 `invoice_status_history`，重啟即消失；審核畫面對資料庫案件也看不到真實的提交警示、AI 原值與修改軌跡。
+- 處理：新增 `app/db/repositories/finance_review_repository.py`（讀取與條件更新，不 commit）、`app/services/finance_review_db_service.py`（交易、衝突與不可用處理）；`app/routers/invoices.py` 對資料庫發票改走這兩層。核准條件、狀態轉換與退回項目仍由原本的 `finance_review_service` 純函式決定。
+- 設計取捨：invoices 沒有扣抵代號與會計科目欄位，不自行改 Schema（API 管理）；暫存於記憶體並在核准時寫入歷程原因。
+- 驗證：新增 `tests/unit/test_finance_review_db.py`（路由、服務交易、Repository SQL 順序與併發條件）；ADMIN pytest 2547 passed、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。未驗：SQL 在真實 PostgreSQL 的語法與約束（環境沒有 PostgreSQL 與解析器）、真實 DB 寫入、財務部帳號的瀏覽器操作。
+- 已知缺口：申請人端退回補正／重送／終止與申報檔、傳票仍是記憶體示範；寫入後的列表狀態標籤（`_row_to_invoice_dict` 對 returned／approved 的對應）未逐一檢查。

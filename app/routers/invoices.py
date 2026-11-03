@@ -43,6 +43,7 @@ from app.schemas.finance_review import (
     STATUS_VOIDED,
     TAX_TYPES,
     ReturnItem,
+    ReviewBlocker,
     ReviewCase,
     StatusChange,
 )
@@ -62,6 +63,7 @@ from app.schemas.procurement_case import (
     ReturnRequest,
     TerminatePlan,
 )
+from app.services import finance_review_db_service as finance_db
 from app.services import invoice_intake_mapping as intake_mapping
 from app.services import invoice_intake_service as intake_service
 from app.services import invoice_review_service
@@ -1737,9 +1739,47 @@ _TAX_TYPE_TO_CATEGORY = {"taxable": "應稅", "zero_rated": "零稅率", "tax_ex
 _RETURN_EXTRA_FIELDS = ["attachment", "invoice_date", "seller_tax_id", "buyer_tax_id", "其他"]
 
 
-def _finance_case(invoice: dict[str, Any]) -> ReviewCase:
-    """取得示範發票的審核資料；第一次讀取時由示範發票轉為 Schema v1.5 欄位。"""
+_CONFLICT_MESSAGE = (
+    "這張請款單的狀態剛被其他人改變（或已處理），這次沒有儲存任何變更，請重新整理確認。"
+)
+_DB_UNAVAILABLE_MESSAGE = "資料庫目前無法使用，這次沒有儲存任何變更，請稍後再試。"
+_NEED_REAL_LOGIN_MESSAGE = "請以正式帳號登入後再審核；目前身分無法寫入審核紀錄。"
+# 資料庫發票（UUID）的會計填寫暫存：invoices 沒有 deduction_code／account_code 欄位，財務先選好再按核准，
+# 核准時寫進審核歷程原因留存。只存在記憶體，重啟後需重選（核准會因缺扣抵代號被擋，不會寫入錯誤資料）。
+_ACCOUNTING_DRAFT: dict[str, dict[str, str | None]] = {}
+
+
+def _is_db_invoice(invoice: dict[str, Any]) -> bool:
+    """從資料庫讀到的發票（UUID 且不在記憶體清單）審核直接讀寫資料庫；整數 ID 或記憶體內的發票仍只在記憶體。"""
     invoice_id = str(invoice["id"])
+    return finance_db.is_uuid(invoice_id) and not any(
+        str(item["id"]) == invoice_id for item in _INVOICE_STORE
+    )
+
+
+def _db_error(request: Request, invoice: dict[str, Any], message: str) -> HTMLResponse:
+    return _review_error(request, invoice, FinanceReviewError([ReviewBlocker("DB", message)]))
+
+
+def _load_db_review(invoice_id: str) -> finance_db.LoadedReview:
+    """從資料庫讀審核資料並疊上暫存的扣抵代號；讀不到回 404，資料庫無法使用回 503。"""
+    try:
+        loaded = finance_db.load(invoice_id)
+    except finance_db.ReviewUnavailableError:
+        raise HTTPException(status_code=503, detail="資料庫目前無法使用") from None
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="找不到指定發票")
+    deduction = _ACCOUNTING_DRAFT.get(invoice_id, {}).get("deduction_code")
+    if deduction:
+        loaded = replace(loaded, case=replace(loaded.case, deduction_code=deduction))
+    return loaded
+
+
+def _finance_case(invoice: dict[str, Any]) -> ReviewCase:
+    """取得審核資料：資料庫發票直接讀資料庫；示範發票第一次讀取時由示範資料轉為 Schema v1.5 欄位。"""
+    invoice_id = str(invoice["id"])
+    if _is_db_invoice(invoice):
+        return _load_db_review(invoice_id).case
     if invoice_id not in _FINANCE_CASES:
         demo = _demo_review_input(invoice_id)
         number = str(invoice.get("invoice_number") or "").strip().upper()
@@ -1805,14 +1845,18 @@ def _reviewer_id(request: Request) -> str:
 
 def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str, Any]:
     """步驟 5 財務審核畫面所需資料。"""
-    case = _finance_case(invoice)
+    loaded = _load_db_review(str(invoice["id"])) if _is_db_invoice(invoice) else None
+    case = loaded.case if loaded else _finance_case(invoice)
     demo = _demo_review_input(invoice["id"])
     reviewable = case.status in REVIEWABLE_STATUSES
     field_options = [
         (r.field_name, r.item_id or "", field_label(r.field_name)) for r in case.field_reviews
     ]
     field_options += [(name, "", field_label(name)) for name in _RETURN_EXTRA_FIELDS]
-    account_code = str(invoice.get("account_code") or "").split(" ", 1)[0]
+    draft = _ACCOUNTING_DRAFT.get(str(invoice["id"]), {}) if loaded else {}
+    account_code = str(draft.get("account_code") or invoice.get("account_code") or "").split(
+        " ", 1
+    )[0]
     return {
         "case": case,
         "status_label": STATUS_LABELS.get(case.status, case.status),
@@ -1820,15 +1864,20 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
         "warnings": case.warnings,
         "trails": [
             {"trail": t, "label": field_label(t.field_name)}
-            for t in build_change_history(demo.get("changes", []))
+            for t in build_change_history(loaded.changes if loaded else demo.get("changes", []))
         ],
-        "history": [_history_entry(c) for c in _FINANCE_HISTORY.get(str(invoice["id"]), [])],
+        "history": [
+            _history_entry(c)
+            for c in (loaded.history if loaded else _FINANCE_HISTORY.get(str(invoice["id"]), []))
+        ],
         "tax_types": TAX_TYPES,
         "deduction_codes": DEDUCTION_CODES,
         "expense_categories": EXPENSE_CATEGORIES,
         "account_codes": ACCOUNT_CODES,
         "account_code": account_code,
-        "expense_category": invoice.get("expense_category") or account_category(account_code),
+        "expense_category": draft.get("expense_category")
+        or invoice.get("expense_category")
+        or account_category(account_code),
         "return_field_options": field_options,
     }
 
@@ -1892,16 +1941,46 @@ def finance_update_accounting(
     invoice = _finance_review_target(request, invoice_id)
     category = expense_category.strip()
     account = account_code.strip()
+    current = _finance_case(invoice)
     try:
         check_account_code(category, account)
-        case = update_accounting_fields(
-            _finance_case(invoice), tax_type or None, deduction_code or None
-        )
+        case = update_accounting_fields(current, tax_type or None, deduction_code or None)
     except FinanceReviewError as error:
         return _review_error(request, invoice, error)
+    if _is_db_invoice(invoice):
+        return _save_db_accounting(
+            request, invoice, current, tax_type, deduction_code, category, account
+        )
     invoice["expense_category"] = category or None
     invoice["account_code"] = f"{account} {ACCOUNT_CODES[account][0]}" if account else None
     _sync_invoice(invoice, case)
+    return _review_redirect(invoice_id)
+
+
+def _save_db_accounting(
+    request: Request,
+    invoice: dict[str, Any],
+    case: ReviewCase,
+    tax_type: str,
+    deduction_code: str,
+    category: str,
+    account: str,
+) -> Response:
+    """資料庫發票：課稅別寫入 invoices.tax_type；扣抵代號與會計科目暫存到核准（無對應欄位）。"""
+    invoice_id = str(invoice["id"])
+    try:
+        if tax_type and tax_type != case.tax_type:
+            finance_db.save_tax_type(invoice_id, tax_type, case.status)
+    except finance_db.ReviewConflictError:
+        return _db_error(request, invoice, _CONFLICT_MESSAGE)
+    except finance_db.ReviewUnavailableError:
+        return _db_error(request, invoice, _DB_UNAVAILABLE_MESSAGE)
+    _ACCOUNTING_DRAFT[invoice_id] = {
+        "deduction_code": deduction_code
+        or _ACCOUNTING_DRAFT.get(invoice_id, {}).get("deduction_code"),
+        "expense_category": category or None,
+        "account_code": f"{account} {ACCOUNT_CODES[account][0]}" if account else None,
+    }
     return _review_redirect(invoice_id)
 
 
@@ -1910,10 +1989,21 @@ def finance_approve(request: Request, invoice_id: str) -> Response:
     """步驟 5：核准；有任何未處理項目時列出原因並擋下。"""
     invoice = _finance_review_target(request, invoice_id)
     case = _finance_case(invoice)
+    db_backed = _is_db_invoice(invoice)
+    if db_backed and not finance_db.is_uuid(_reviewer_id(request)):
+        return _db_error(request, invoice, _NEED_REAL_LOGIN_MESSAGE)
     try:
         change = approve(case, _reviewer_id(request), datetime.now(UTC))
     except FinanceReviewError as error:
         return _review_error(request, invoice, error)
+    if db_backed:
+        draft = _ACCOUNTING_DRAFT.get(str(invoice["id"]), {})
+        note = finance_db.accounting_note(
+            deduction=DEDUCTION_CODES.get(case.deduction_code or ""),
+            expense_category=draft.get("expense_category"),
+            account=draft.get("account_code"),
+        )
+        return _commit_db_change(request, invoice, replace(change, reason=note), case)
     _apply_change(invoice, case, change)
     return _review_redirect(invoice_id)
 
@@ -1937,12 +2027,32 @@ def finance_return(
         field, _, item_id = raw_field.partition("|")
         items.append(ReturnItem(field, reason, item_id or None))
     case = _finance_case(invoice)
+    db_backed = _is_db_invoice(invoice)
+    if db_backed and not finance_db.is_uuid(_reviewer_id(request)):
+        return _db_error(request, invoice, _NEED_REAL_LOGIN_MESSAGE)
     try:
         change = return_to_applicant(case, _reviewer_id(request), items, datetime.now(UTC))
     except FinanceReviewError as error:
         return _review_error(request, invoice, error)
+    if db_backed:
+        return _commit_db_change(request, invoice, change, case)
     _apply_change(invoice, case, change)
     _take_return_snapshot(invoice)
+    return _review_redirect(invoice_id)
+
+
+def _commit_db_change(
+    request: Request, invoice: dict[str, Any], change: StatusChange, case: ReviewCase
+) -> Response:
+    """把核准或退回寫進資料庫（同一交易）；成功後清掉會計暫存並回審核頁，重新讀取就是資料庫的結果。"""
+    invoice_id = str(invoice["id"])
+    try:
+        finance_db.commit_change(change, case=case, tax_type=case.tax_type)
+    except finance_db.ReviewConflictError:
+        return _db_error(request, invoice, _CONFLICT_MESSAGE)
+    except finance_db.ReviewUnavailableError:
+        return _db_error(request, invoice, _DB_UNAVAILABLE_MESSAGE)
+    _ACCOUNTING_DRAFT.pop(invoice_id, None)
     return _review_redirect(invoice_id)
 
 

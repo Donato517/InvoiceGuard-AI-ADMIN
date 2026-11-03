@@ -447,6 +447,18 @@
   border-radius: var(--radius-sm);
 }
 
+.correction-original-uploader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.75rem 1rem;
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-sm, 6px);
+}
+
 .correction-original-empty {
   display: flex;
   flex-direction: column;

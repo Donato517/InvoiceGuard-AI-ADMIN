@@ -98,6 +98,29 @@ from app.services.procurement_case_service import (
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
+INVOICE_STATUS_CHOICES: list[tuple[str, str]] = [
+    ("processed", "已處理"),
+    ("approved_pending", "已審核待處理"),
+    ("pending_review", "待審核"),
+    ("returned", "待補正"),
+]
+INVOICE_STATUS_MAP: dict[str, str] = dict(INVOICE_STATUS_CHOICES)
+
+
+def _derive_invoice_status(inv: dict[str, Any]) -> str:
+    """推導發票的 4 種業務狀態代碼：processed (已處理)、approved_pending (已審核待處理)、pending_review (待審核)、returned (待補正)。"""
+    review_status = str(inv.get("review_status") or "")
+    stage = int(inv.get("stage") or 1)
+    is_completed = bool(inv.get("is_completed"))
+
+    if review_status == "returned":
+        return "returned"
+    if is_completed or (review_status == "approved" and stage >= 9):
+        return "processed"
+    if review_status == "approved" or stage >= 6:
+        return "approved_pending"
+    return "pending_review"
+
 
 def _is_finance_department(departments: tuple[Any, ...], selected_department_id: Any) -> bool:
     for dept in departments:
@@ -784,10 +807,29 @@ def _render_invoice_list_view(
     request.state.active_sidebar_route = active_route
     active_invoices = _get_active_invoices(request)
     base_invoices = [_ensure_invoice_14_fields(i) for i in active_invoices if section_filter(i)]
+    for i in base_invoices:
+        status_code = _derive_invoice_status(i)
+        i["display_status_code"] = status_code
+        i["display_status_label"] = INVOICE_STATUS_MAP.get(status_code, "待審核")
     invoices = list(base_invoices)
 
-    if status and status in INVOICE_STATUS_LABEL:
-        invoices = [i for i in invoices if i["status"] == status]
+    if status:
+        norm = status.strip()
+        code_lookup = {
+            "processed": "processed",
+            "已處理": "processed",
+            "approved_pending": "approved_pending",
+            "已審核待處理": "approved_pending",
+            "pending_review": "pending_review",
+            "待審核": "pending_review",
+            "returned": "returned",
+            "待補正": "returned",
+        }
+        if norm in code_lookup:
+            target = code_lookup[norm]
+            invoices = [i for i in invoices if i.get("display_status_code") == target]
+        elif norm in INVOICE_STATUS_LABEL:
+            invoices = [i for i in invoices if i["status"] == norm]
 
     if q.strip():
         search_term = q.strip().lower()
@@ -807,6 +849,14 @@ def _render_invoice_list_view(
 
     counts = {
         "total": len(base_invoices),
+        "processed": sum(1 for i in base_invoices if i.get("display_status_code") == "processed"),
+        "approved_pending": sum(
+            1 for i in base_invoices if i.get("display_status_code") == "approved_pending"
+        ),
+        "pending_review": sum(
+            1 for i in base_invoices if i.get("display_status_code") == "pending_review"
+        ),
+        "returned": sum(1 for i in base_invoices if i.get("display_status_code") == "returned"),
         "pending": pending_count,
         "passed": passed_count,
         "flagged": flagged_count,
@@ -821,6 +871,7 @@ def _render_invoice_list_view(
             "q": q,
             "counts": counts,
             "section_title": section_title,
+            "invoice_status_choices": INVOICE_STATUS_CHOICES,
             "max_flow_step": getattr(request.state, "invoice_max_step", 9),
         },
     )

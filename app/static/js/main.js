@@ -120,7 +120,41 @@ document.addEventListener('htmx:beforeRequest', (event) => {
   }
 })
 document.addEventListener('htmx:afterRequest', () => setBusy(null))
-window.addEventListener('pageshow', () => setBusy(null))
+window.addEventListener('pageshow', () => {
+  setBusy(null)
+  const uploadBtn =
+    document.getElementById('btn-flow-upload') ||
+    document.querySelector('button[form="flow-upload-form"]')
+  if (uploadBtn && uploadBtn.classList.contains('btn--loading')) {
+    uploadBtn.classList.remove('btn--loading')
+    uploadBtn.removeAttribute('aria-busy')
+    uploadBtn.disabled = false
+    uploadBtn.textContent = '上傳並開始辨識 →'
+  }
+})
+
+/**
+ * 發票流程步驟 1：送出辨識時，將「上傳並開始辨識 →」按鈕轉為載入旋轉圈狀態。
+ */
+document.addEventListener('submit', (event) => {
+  const form = event.target
+  if (form && form.id === 'flow-upload-form' && !event.defaultPrevented) {
+    const fileInput = document.getElementById('invoice-file')
+    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+      const uploadBtn =
+        document.getElementById('btn-flow-upload') ||
+        document.querySelector('button[form="flow-upload-form"]')
+      if (uploadBtn) {
+        uploadBtn.classList.add('btn--loading')
+        uploadBtn.setAttribute('aria-busy', 'true')
+        uploadBtn.innerHTML = '<span class="btn__spinner" aria-hidden="true"></span>辨識中…'
+        setTimeout(() => {
+          uploadBtn.disabled = true
+        }, 0)
+      }
+    }
+  }
+})
 
 /**
  * 對話框開關與拖曳上傳點擊觸發。

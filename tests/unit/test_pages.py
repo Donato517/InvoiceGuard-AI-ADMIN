@@ -183,6 +183,8 @@ def test_invoices_list_renders_for_admin(admin_client: TestClient) -> None:
     assert response.status_code == 200
     assert "發票審核" in response.text
     assert "AB12345678" in response.text
+    for status_label in ("已處理", "已審核待處理", "待審核", "待補正"):
+        assert status_label in response.text
 
 
 def test_invoice_detail_renders(admin_client: TestClient) -> None:

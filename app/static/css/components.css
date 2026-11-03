@@ -87,9 +87,30 @@
   width: 100%;
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn--loading {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.65;
+}
+
+.btn--loading {
+  pointer-events: none;
+}
+
+.btn__spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.75s linear infinite;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---- 表單與輸入控制項 ---- */
@@ -249,6 +270,12 @@ fieldset.form legend {
 .badge--active {
   color: var(--color-success-soft-text);
   background-color: var(--color-success-soft);
+}
+
+.badge--info,
+.badge--primary {
+  color: var(--color-primary-soft-text);
+  background-color: var(--color-primary-soft);
 }
 
 .badge--gray,
@@ -473,7 +500,8 @@ fieldset.form legend {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .busy-overlay__spinner {
+  .busy-overlay__spinner,
+  .btn__spinner {
     animation-duration: 2s;
   }
 }

@@ -22,21 +22,21 @@
     <a href="/invoices/new" class="btn btn--primary">＋ 新增發票</a>
   </div>
   <div class="stat-grid">
+    <div class="stat-card stat-card--success">
+      <div class="stat-card__label">已處理</div>
+      <div class="stat-card__value">{{ counts.processed }}</div>
+    </div>
     <div class="stat-card">
-      <div class="stat-card__label">發票總數</div>
-      <div class="stat-card__value">{{ counts.total }}</div>
+      <div class="stat-card__label">已審核待處理</div>
+      <div class="stat-card__value">{{ counts.approved_pending }}</div>
     </div>
     <div class="stat-card stat-card--warning">
-      <div class="stat-card__label">待處理發票</div>
-      <div class="stat-card__value">{{ counts.pending }}</div>
-    </div>
-    <div class="stat-card stat-card--success">
-      <div class="stat-card__label">已通過審核</div>
-      <div class="stat-card__value">{{ counts.passed }}</div>
+      <div class="stat-card__label">待審核</div>
+      <div class="stat-card__value">{{ counts.pending_review }}</div>
     </div>
     <div class="stat-card stat-card--danger">
-      <div class="stat-card__label">有風險 / 待複核</div>
-      <div class="stat-card__value">{{ counts.flagged }}</div>
+      <div class="stat-card__label">待補正</div>
+      <div class="stat-card__value">{{ counts.returned }}</div>
     </div>
   </div>
   <section class="card">
@@ -60,8 +60,8 @@
                aria-label="搜尋發票">
         <select name="status" aria-label="發票狀態篩選">
           <option value="">全部狀態</option>
-          {% for st, label in INVOICE_STATUS_LABEL.items() %}
-            <option value="{{ st }}" {% if st == status %}selected{% endif %}>{{ label }}</option>
+          {% for st, label in (invoice_status_choices | default([])) %}
+            <option value="{{ st }}" {% if st == status or label == status %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
         <noscript>
@@ -95,8 +95,18 @@
                 <td>{{ inv.net_amount | currency }}</td>
                 <td>{{ inv.tax_amount | currency }}</td>
                 <td>
-                  <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
-                  {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
+                  {% if inv.display_status_code == "processed" %}
+                    <span class="badge badge--passed">{{ inv.display_status_label }}</span>
+                  {% elif inv.display_status_code == "approved_pending" %}
+                    <span class="badge badge--info">{{ inv.display_status_label }}</span>
+                  {% elif inv.display_status_code == "pending_review" %}
+                    <span class="badge badge--pending">{{ inv.display_status_label }}</span>
+                  {% elif inv.display_status_code == "returned" %}
+                    <span class="badge badge--flagged">{{ inv.display_status_label }}</span>
+                  {% else %}
+                    <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                    {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
+                  {% endif %}
                 </td>
                 <td>
                   {% if max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.is_completed or inv.stage > 4) %}

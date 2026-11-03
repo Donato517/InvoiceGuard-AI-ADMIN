@@ -3,7 +3,53 @@
   @description 步驟 2：AI 辨識結果預覽（HTML 原型 flowStep 1），並排顯示上傳影像與 14 項辨識資料。
   @context invoice: dict            發票資料
   @context fields_14: list[dict]    14 項核對欄位
+  @context intake: dict             API 辨識結果（form、recognition）；空字典時為舊的預覽資料
 #}
+{% if intake %}
+  <p class="alert alert--info">以下是 Document AI OCR 與模型整理的辨識結果，可能有誤；請在下一步對照原圖逐欄核對與修正。</p>
+  {% if intake.recognition %}
+    <p class="muted small-text">辨識結果：{{ intake.recognition.result_status }}；影像保留到 {{ intake.recognition.expires_at.strftime("%Y-%m-%d %H:%M") }}，逾時需重新上傳。</p>
+    {% if intake.recognition.printed %}
+      <p class="muted small-text">票面原文（模型抄錄，未換算）：日期「{{ intake.recognition.printed.get("invoice_date") or "—" }}」、期別「{{ intake.recognition.printed.get("tax_period") or "—" }}」</p>
+    {% endif %}
+    {% if intake.recognition.warnings %}
+      <ul>
+        {% for w in intake.recognition.warnings %}<li>{{ w.message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+  <div class="{% if invoice.file_bytes %}two-cols{% endif %}">
+    {% if invoice.file_bytes %}
+      <div class="invoice-file-preview">
+        {% if invoice.file_media_type == "application/pdf" %}
+          <iframe class="invoice-file-preview__frame"
+                  title="發票檔案預覽"
+                  src="/invoices/{{ invoice.id }}/file"></iframe>
+        {% else %}
+          <img class="invoice-file-preview__img"
+               src="/invoices/{{ invoice.id }}/file"
+               alt="發票預覽：{{ invoice.file_name }}">
+        {% endif %}
+        <span class="muted small-text">上傳檔案：{{ invoice.file_name }}</span>
+      </div>
+    {% endif %}
+    <div>
+      {% set f = intake.form %}
+      <table class="table">
+        <tbody>
+          <tr><th scope="row">字軌號碼</th><td>{{ f.invoice_track }} {{ f.invoice_number }}</td></tr>
+          <tr><th scope="row">發票日期</th><td>{{ f.invoice_date }}</td></tr>
+          <tr><th scope="row">買受人</th><td>{{ f.buyer_name }}（{{ f.buyer_tax_id }}）</td></tr>
+          <tr><th scope="row">銷貨人</th><td>{{ f.seller_name }}（{{ f.seller_tax_id }}）</td></tr>
+          <tr><th scope="row">銷售額</th><td>{{ f.sales_amount }}</td></tr>
+          <tr><th scope="row">課稅別／稅額</th><td>{{ f.tax_type }} / {{ f.tax_amount }}</td></tr>
+          <tr><th scope="row">總計</th><td>{{ f.total_amount }} {{ f.total_amount_zh }}</td></tr>
+        </tbody>
+      </table>
+      <p class="muted small-text">品名明細共 {{ f.items | length }} 筆，請於下一步核對。空白代表 AI 沒有辨識到，需人工確認，不是已驗證的空值。</p>
+    </div>
+  </div>
+{% else %}
 <p class="alert alert--warning">以下為 AI OCR 辨識資料預覽（共 14 項）；請點擊下一步完成「採購核對修正」以儲存本次發票作業進度。</p>
 <div class="{% if invoice.file_bytes %}two-cols{% endif %}">
   {% if invoice.file_bytes %}
@@ -22,3 +68,4 @@
   {% endif %}
   <div>{% include "pages/invoices/_invoice_14_fields_table.html" %}</div>
 </div>
+{% endif %}

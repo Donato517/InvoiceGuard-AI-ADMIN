@@ -2,10 +2,12 @@
 功能說明：ADMIN 發票上傳流程（W2／W3）——上傳 → AI 辨識 → 核對（14 項欄位與多筆明細）→ 檢核 → 提交。
 路由：/intake
 注意事項：
-    - 雙重關閉，目前正式環境無法使用：
-      (1) 功能代碼 inv.intake 沒有註冊在 get_e_module() 的功能目錄，module.check 會拒絕（403）；
-          「誰能新增」由 E 組核定後註冊並授予 can_create，這裡不假設任何部門。
-      (2) 呼叫 API 的認證方案尚未核定，get_intake_client 預設拒絕（503）。
+    - 功能代碼 inv.intake 已註冊在 get_e_module() 的功能目錄（VIEW／CREATE）；
+      「誰能新增」仍由 E 組在 department_permissions 授予 can_create，這裡不假設任何部門。
+      app_functions 需有 function_code = inv.intake 的列，未授權的部門仍回 403。
+    - 呼叫 API 使用登入時換發的使用者自己的 Session Token（方案 A）；沒有 Token 時 401，請重新登入。
+    - 2026-11-03：GET /intake 改為轉入發票作業流程（/invoices/new）；POST /intake/recognize、/review 暫留，
+      待測試遷移後移除。辨識與核對的主要入口是 /invoices/{id}/flow。
     - 辨識、檢核與提交全部呼叫既有 API；本路由不寫入資料庫、不呼叫任何 AI、不複製檢核規則。
     - 操作者一律取自已驗證身分；表單中的使用者或部門欄位不採用。
     - 提交成功後的案件狀態由 API 決定（以 API 的 SUBMITTED_STATUS 為準，ADMIN 不寫死）；後續審核狀態轉換尚未實作。
@@ -18,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from app.constants import API_TOKEN_COOKIE_NAME
 from app.core.templating import templates
 from app.routers.e_admin import require_e_origin, session_evidence
 from app.schemas.case import CASE_STATUS_LABELS
@@ -36,17 +39,20 @@ from app.services import invoice_intake_service as intake_service
 from app.services.e_admin_service import EModule, get_e_module
 from app.services.invoice_intake_service import ApiIntakeClient
 
-INTAKE = "inv.intake"  # 刻意不在 get_e_module() 註冊：E 組核定前一律拒絕
+INTAKE = "inv.intake"  # 與 e_admin_service.INTAKE 相同；授權仍依部門的 can_create
 Module = Annotated[EModule, Depends(get_e_module)]
 NOT_CONFIRMED = "尚未確認是否已送出，請先到案件列表確認；若沒有這筆案件可再按一次「確認提交」，系統會防止重複建立。"
 
 
-def get_intake_client() -> ApiIntakeClient:
-    """FastAPI 相依：呼叫既有 API 的用戶端；尚未核定認證方案時回 503（測試以 dependency_overrides 注入）。"""
+def get_intake_client(request: Request) -> ApiIntakeClient:
+    """FastAPI 相依：以登入時向 API 換發的 Session Token 建立用戶端；沒有 Token 時回 401 要求重新登入。
+
+    測試以 dependency_overrides 注入替身。
+    """
     try:
-        return intake_service.build_intake_client()
+        return intake_service.build_intake_client(request.cookies.get(API_TOKEN_COOKIE_NAME))
     except IntakeNotConfiguredError:
-        raise HTTPException(status_code=503, detail="功能尚未啟用") from None
+        raise HTTPException(status_code=401, detail="請重新登入後再試") from None
 
 
 Client = Annotated[ApiIntakeClient, Depends(get_intake_client)]
@@ -123,7 +129,7 @@ def _upload_page(request: Request, message: str = "", status_code: int = 200) ->
     )
 
 
-def _api_message(error: IntakeApiError) -> str:
+def api_message(error: IntakeApiError) -> str:
     """給使用者的訊息：401／403 與 5xx 用固定文字，其餘沿用 API 的業務訊息（長度已限制）。"""
     if error.status in (401, 403):
         return "授權失敗，請重新登入或聯絡管理員"
@@ -142,10 +148,10 @@ def _original_view(content: bytes, content_type: str | None) -> tuple[str | None
     return None, "PDF 檔案無法在此頁內嵌顯示，請另開原始檔對照。"
 
 
-@router.get("", response_class=HTMLResponse)
-def intake_upload_page(request: Request) -> HTMLResponse:
-    """步驟 1：選擇發票檔案。"""
-    return _upload_page(request)
+@router.get("", response_class=Response)
+def intake_upload_page() -> RedirectResponse:
+    """合併入口：上傳與核對統一在發票作業流程（步驟 1～4）進行。"""
+    return RedirectResponse("/invoices/new", status_code=303)
 
 
 @router.post("/recognize", response_class=HTMLResponse, dependencies=[Depends(require_e_origin)])
@@ -168,7 +174,7 @@ async def intake_recognize(
     except IntakeNotConfiguredError:
         raise HTTPException(status_code=503, detail="功能尚未啟用") from None
     except IntakeApiError as error:
-        return _upload_page(request, _api_message(error), 502 if error.status >= 500 else 400)
+        return _upload_page(request, api_message(error), 502 if error.status >= 500 else 400)
     except IntakeTransportError as error:
         return _upload_page(request, error.public_message, 502)
     original, original_note = _original_view(content, file.content_type)
@@ -208,7 +214,7 @@ async def intake_review(request: Request, client: Client) -> Response:
         return _review(
             request,
             _safe_form(data),
-            banner=_api_message(error),
+            banner=api_message(error),
             errors=mapping.field_errors(error.details),
             status_code=422 if error.status == 422 else 502 if error.status >= 500 else 400,
         )

@@ -1,0 +1,31 @@
+{#
+  @template pages/intake/_check_summary.html
+  @description 整頁檢核摘要區（必填缺漏、業務警示、查重）；/intake 核對頁與發票作業流程步驟 3 共用。
+  @context checked, missing, warnings, duplicate: 同 pages/intake/review.html
+#}
+  {#- A 組警示顯示接點：整頁檢核摘要區（固定 id 與 data-*），三項結果皆來自 API 回應；未檢核時 data-state="unchecked" -#}
+  <section id="intake-check-results" class="card" data-state="{{ 'checked' if checked else 'unchecked' }}"
+           data-required-count="{{ missing | length }}" data-warning-count="{{ warnings | length }}"
+           data-duplicate="{{ 'unknown' if duplicate is none else ('yes' if duplicate else 'no') }}" aria-live="polite">
+    <h3>檢核結果</h3>
+    {% if not checked %}
+      <p class="muted" data-check-summary="none">尚未檢核。按「檢核」會呼叫 API 的必填、業務警示與查重；檢核不會建立案件。</p>
+    {% else %}
+      <div id="intake-check-required" data-check-group="required" data-severity="blocking">
+        {% if missing %}<p class="alert alert--danger" role="alert">必填缺漏 {{ missing | length }} 項（提交會被拒絕）：請見欄位旁的紅字。</p>
+        {% else %}<p class="muted">必填欄位已齊全。必填完成不代表資料合法。</p>{% endif %}
+      </div>
+      <div id="intake-check-warnings" data-check-group="warnings" data-severity="warning">
+        {% if warnings %}<p class="alert alert--warning">業務警示 {{ warnings | length }} 項（提醒，不阻擋提交）：請見欄位旁的黃字。</p>
+        {% else %}<p class="muted">沒有業務警示。</p>{% endif %}
+      </div>
+      <div id="intake-check-duplicate" data-check-group="duplicate" data-severity="{{ 'blocking' if duplicate else 'info' }}">
+        {% if duplicate is none %}<p class="alert alert--warning">資訊不足，未執行查重（需要字軌、號碼、日期與賣方統編）。</p>
+        {% elif duplicate %}<p class="alert alert--danger" role="alert">系統內已有相同字軌、號碼與賣方統編的發票，送出時會被拒絕。</p>
+        {% else %}<p class="muted">查重：沒有發現相同發票。</p>{% endif %}
+      </div>
+      {% if not missing and not warnings and duplicate is not none and not duplicate %}
+        <p class="alert alert--info" data-check-summary="clean">檢核完成：沒有必填缺漏，也沒有業務提醒。檢核通過只代表程式沒發現問題，仍需人工確認。</p>
+      {% endif %}
+    {% endif %}
+  </section>

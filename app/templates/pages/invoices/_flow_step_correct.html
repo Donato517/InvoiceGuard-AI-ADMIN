@@ -5,6 +5,13 @@
   @context invoice: dict  發票資料
   @context procurement_return: dict | None  退回補正資料（2-5）；不在退回補正時為 None
 #}
+{% if intake %}
+  {% with form=intake.form, errors=intake.errors, warnings=intake.warnings, missing=intake.missing, duplicate=intake.duplicate, checked=intake.checked, rows=intake.rows, tax_type_options=intake.tax_type_options, max_items=intake.max_items, review_action=intake.review_action %}
+    {% if intake.banner %}<p class="alert alert--danger" role="alert">{{ intake.banner }}</p>{% endif %}
+    {% include "pages/intake/_check_summary.html" %}
+    {% include "pages/intake/_review_form.html" %}
+  {% endwith %}
+{% else %}
 {% if procurement_return %}
   {% include "pages/invoices/_procurement_return.html" %}
 {% endif %}
@@ -227,3 +234,4 @@
     </form>
   </section>
 </div>
+{% endif %}

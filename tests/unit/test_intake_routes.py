@@ -191,11 +191,13 @@ def review_data(action: str = "check", **overrides: Any) -> dict[str, Any]:
 # ---- 權限：雙重關閉 ----
 
 
-def test_unregistered_capability_is_denied_even_for_a_fully_permitted_user() -> None:
+def test_intake_capability_is_registered_with_view_and_create_only() -> None:
     from app.services.e_admin_service import get_e_module as real
 
-    with pytest.raises(DeniedError):
-        capability(intake_router.INTAKE, real().registry)  # 正式功能目錄沒有 inv.intake
+    definition = capability(intake_router.INTAKE, real().registry)
+
+    assert definition.route == "/intake"
+    assert definition.actions == frozenset({Action.VIEW, Action.CREATE})
 
 
 def test_without_function_permission_everything_is_403(web: TestClient, module: FakeModule) -> None:
@@ -230,19 +232,18 @@ def test_unauthenticated_is_rejected(module: FakeModule, api: FakeApi) -> None:
     assert api.requests == []
 
 
-def test_credentials_not_configured_means_503_and_no_request(module: FakeModule) -> None:
+def test_no_api_token_means_401_and_no_request(module: FakeModule) -> None:
     from app.main import app
 
     app.dependency_overrides[get_e_module] = lambda: module  # 不覆寫用戶端＝正式預設
     try:
         client = TestClient(app, follow_redirects=False)
         client.cookies.set(SESSION_COOKIE_NAME, "synthetic-session")
-        assert client.get("/intake").status_code == 200  # 頁面可開，但任何動作都不行
         files = {"file": ("a.jpg", b"\xff\xd8", "image/jpeg")}
-        assert client.post("/intake/recognize", headers=ORIGIN, files=files).status_code == 503
+        assert client.post("/intake/recognize", headers=ORIGIN, files=files).status_code == 401
         assert (
             client.post("/intake/review", headers=ORIGIN, data=review_data("submit")).status_code
-            == 503
+            == 401
         )
     finally:
         app.dependency_overrides.clear()
@@ -268,7 +269,7 @@ def test_posts_require_same_origin(web: TestClient, api: FakeApi) -> None:
 def test_upload_page(web: TestClient) -> None:
     response = web.get("/intake")
 
-    assert response.status_code == 200 and "開始辨識" in response.text
+    assert response.status_code == 303 and response.headers["location"] == "/invoices/new"
 
 
 def test_recognize_renders_the_review_form(web: TestClient, api: FakeApi) -> None:

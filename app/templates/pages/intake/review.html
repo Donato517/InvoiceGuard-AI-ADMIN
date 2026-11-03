@@ -26,55 +26,13 @@
     @media (max-width: 900px) { .intake-layout { grid-template-columns: 1fr; } }
   </style>
 {% endblock head %}
-{% macro note(key) %}
-  {#- A 組警示顯示接點：每個欄位一個 [data-check-field] 容器；blocking＝格式錯誤與必填缺漏，warning＝業務警示（不阻擋提交） -#}
-  <div class="field-notes" data-check-field="{{ key }}">
-    {% if errors.get(key) %}<p class="field-error" role="alert" data-check-kind="error" data-severity="blocking">{{ errors.get(key) }}</p>{% endif %}
-    {% if missing.get(key) %}<p class="field-error" role="alert" data-check-kind="required" data-severity="blocking">{{ missing.get(key) }}</p>{% endif %}
-    {% for message in warnings.get(key, []) %}<p class="field-warning" data-check-kind="warning" data-severity="warning">{{ message }}</p>{% endfor %}
-  </div>
-{% endmacro %}
-{% macro field(name, label, value, required=false, key=none) %}
-  {% set k = key or name %}
-  <div class="invoice14-field">
-    <label for="f-{{ k }}">{{ label }}{% if required %} <span class="muted">*必填</span>{% endif %}</label>
-    <input id="f-{{ k }}" name="{{ name }}" value="{{ value }}"
-           {% if errors.get(k) or missing.get(k) %}aria-invalid="true"{% endif %}>
-    {{ note(k) }}
-  </div>
-{% endmacro %}
 {% block content %}
   <div class="page-heading">
     <h2>核對發票資料</h2>
     <p class="muted small-text">AI 辨識結果可能有誤，請逐欄對照原始發票確認；送出後會建立案件，初始狀態由 API 決定，送出後會顯示。</p>
   </div>
   {% if banner %}<p class="alert alert--danger" role="alert">{{ banner }}</p>{% endif %}
-  {#- A 組警示顯示接點：整頁檢核摘要區（固定 id 與 data-*），三項結果皆來自 API 回應；未檢核時 data-state="unchecked" -#}
-  <section id="intake-check-results" class="card" data-state="{{ 'checked' if checked else 'unchecked' }}"
-           data-required-count="{{ missing | length }}" data-warning-count="{{ warnings | length }}"
-           data-duplicate="{{ 'unknown' if duplicate is none else ('yes' if duplicate else 'no') }}" aria-live="polite">
-    <h3>檢核結果</h3>
-    {% if not checked %}
-      <p class="muted" data-check-summary="none">尚未檢核。按「檢核」會呼叫 API 的必填、業務警示與查重；檢核不會建立案件。</p>
-    {% else %}
-      <div id="intake-check-required" data-check-group="required" data-severity="blocking">
-        {% if missing %}<p class="alert alert--danger" role="alert">必填缺漏 {{ missing | length }} 項（提交會被拒絕）：請見欄位旁的紅字。</p>
-        {% else %}<p class="muted">必填欄位已齊全。必填完成不代表資料合法。</p>{% endif %}
-      </div>
-      <div id="intake-check-warnings" data-check-group="warnings" data-severity="warning">
-        {% if warnings %}<p class="alert alert--warning">業務警示 {{ warnings | length }} 項（提醒，不阻擋提交）：請見欄位旁的黃字。</p>
-        {% else %}<p class="muted">沒有業務警示。</p>{% endif %}
-      </div>
-      <div id="intake-check-duplicate" data-check-group="duplicate" data-severity="{{ 'blocking' if duplicate else 'info' }}">
-        {% if duplicate is none %}<p class="alert alert--warning">資訊不足，未執行查重（需要字軌、號碼、日期與賣方統編）。</p>
-        {% elif duplicate %}<p class="alert alert--danger" role="alert">系統內已有相同字軌、號碼與賣方統編的發票，送出時會被拒絕。</p>
-        {% else %}<p class="muted">查重：沒有發現相同發票。</p>{% endif %}
-      </div>
-      {% if not missing and not warnings and duplicate is not none and not duplicate %}
-        <p class="alert alert--info" data-check-summary="clean">檢核完成：沒有必填缺漏，也沒有業務提醒。檢核通過只代表程式沒發現問題，仍需人工確認。</p>
-      {% endif %}
-    {% endif %}
-  </section>
+  {% include "pages/intake/_check_summary.html" %}
   {% if recognition %}
     <section class="card">
       <h3>AI 辨識提醒</h3>
@@ -90,90 +48,7 @@
     <img id="intake-original-img" alt="原始發票影像" {% if original %}src="{{ original }}"{% endif %} hidden>
     <p id="intake-original-note" class="muted small-text">{{ original_note or "此頁已無法顯示原始影像（可能已重新整理）；請對照手邊的原始發票，或重新上傳。" }}</p>
   </section>
-  <form method="post" action="/intake/review" class="form">
-    <input type="hidden" name="recognition_id" value="{{ form.recognition_id }}">
-    <section class="card">
-      <h3>核對欄位（14 項）</h3>
-      <div class="invoice14-grid">
-        {% for row in rows %}
-          {% if row.per_item %}
-            {% if row.index == 6 %}
-              <div class="invoice14-field"><span>{{ row.index }}～9</span> 品名／數量／單價／金額：請見下方「品名明細」</div>
-            {% endif %}
-          {% elif not row.editable %}
-            <div class="invoice14-field"><span>{{ row.index }}</span> {{ row.label }}：<span class="muted">{{ row.note }}</span></div>
-          {% elif row.index == 2 %}
-            {{ field("invoice_track", "2 發票字軌（2 碼英文）", form.invoice_track, true) }}
-            {{ field("invoice_number", "2 發票號碼（8 碼數字）", form.invoice_number, true) }}
-          {% elif row.index == 3 %}
-            {{ field("invoice_date", "3 發票日期（YYYY-MM-DD）", form.invoice_date, true) }}
-          {% elif row.index == 4 %}
-            {{ field("buyer_name", "4 買受人名稱", form.buyer_name) }}
-          {% elif row.index == 5 %}
-            {{ field("buyer_tax_id", "5 買受人統編", form.buyer_tax_id) }}
-          {% elif row.index == 10 %}
-            {{ field("sales_amount", "10 銷售額合計", form.sales_amount, true) }}
-          {% elif row.index == 11 %}
-            <div class="invoice14-field">
-              <label for="f-tax_type">11 課稅別 <span class="muted">*必填</span></label>
-              <select id="f-tax_type" name="tax_type">
-                <option value="">請選擇</option>
-                {% for code, label in tax_type_options %}
-                  <option value="{{ code }}" {% if form.tax_type == code %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-              {{ note("tax_type") }}
-            </div>
-            {{ field("tax_amount", "11 稅額", form.tax_amount, true) }}
-          {% elif row.index == 12 %}
-            {{ field("total_amount", "12 總計", form.total_amount, true) }}
-            {{ field("total_amount_zh", "12 總計國字大寫", form.total_amount_zh) }}
-          {% elif row.index == 14 %}
-            {{ field("seller_name", "14 銷貨人名稱", form.seller_name) }}
-            {{ field("seller_tax_id", "14 銷貨人統編", form.seller_tax_id, true) }}
-          {% endif %}
-        {% endfor %}
-      </div>
-      {{ note("items") }}
-    </section>
-    <section class="card">
-      <h3>品名明細（第 6～9 項，最多 {{ max_items }} 筆）</h3>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">#</th><th scope="col">品名／用途</th><th scope="col">數量</th>
-              <th scope="col">單價</th><th scope="col">金額</th><th scope="col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for item in form.items %}
-              {% set n = loop.index0 %}
-              <tr>
-                <td>{{ loop.index }}
-                  <input type="hidden" name="item_source_line_no" value="{{ item.source_line_no if item.source_line_no is not none else '' }}">
-                  {% if item.source_line_no is none %}<span class="muted small-text">新增</span>{% endif %}
-                </td>
-                <td><input name="item_item_name" value="{{ item.item_name }}" aria-label="第 {{ loop.index }} 筆品名">{{ note("items." ~ n ~ ".item_name") }}</td>
-                <td><input name="item_quantity" value="{{ item.quantity }}" aria-label="第 {{ loop.index }} 筆數量">{{ note("items." ~ n ~ ".quantity") }}</td>
-                <td><input name="item_unit_price" value="{{ item.unit_price }}" aria-label="第 {{ loop.index }} 筆單價">{{ note("items." ~ n ~ ".unit_price") }}</td>
-                <td><input name="item_line_amount" value="{{ item.line_amount }}" aria-label="第 {{ loop.index }} 筆金額">{{ note("items." ~ n ~ ".line_amount") }}</td>
-                <td><button type="submit" name="action" value="remove_item:{{ n }}" class="btn btn--secondary btn--small">刪除</button></td>
-              </tr>
-            {% else %}
-              <tr><td colspan="6">沒有明細；至少需要一筆才能送出。</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <p><button type="submit" name="action" value="add_item" class="btn btn--secondary btn--small" {% if form.items | length >= max_items %}disabled{% endif %}>新增明細</button></p>
-    </section>
-    <p>
-      <button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>
-      <button type="submit" name="action" value="submit" class="btn btn--primary">確認提交</button>
-      <a href="/intake">重新上傳</a>
-    </p>
-  </form>
+  {% include "pages/intake/_review_form.html" %}
   </div>
   <script src="{{ static_url('js/intake-original.js') }}" defer></script>
 {% endblock content %}

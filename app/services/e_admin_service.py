@@ -44,6 +44,7 @@ DEPARTMENTS = "sys.departments"
 FEATURES = "sys.features"
 GRANTS = "sys.department-permissions"
 INVOICES = "inv.upload"
+INTAKE = "inv.intake"
 KNOWLEDGE = "rag.manager"
 
 
@@ -351,6 +352,14 @@ def get_e_module() -> EModule:
             "發票作業",
             "/invoices",
             frozenset(Action),
+            system_only=False,
+        ),
+        Capability(
+            INTAKE,
+            "新增發票",
+            "發票作業",
+            "/intake",
+            frozenset({Action.VIEW, Action.CREATE}),
             system_only=False,
         ),
         Capability(

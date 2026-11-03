@@ -48,7 +48,9 @@
     {% else %}
       <a href="/invoices" class="btn btn--secondary">← 返回列表</a>
     {% endif %}
-    {% if step == 1 %}
+    {% if intake and step >= 3 %}
+      {#- API 辨識的發票：步驟 3 由表單自己的「檢核／確認提交」按鈕送出；步驟 4 之後的審核由案件資料決定 -#}
+    {% elif step == 1 %}
       {% if is_first_four_readonly %}
         <a href="/invoices/{{ invoice.id }}/flow?step=2" class="btn btn--primary">下一步 →</a>
       {% else %}

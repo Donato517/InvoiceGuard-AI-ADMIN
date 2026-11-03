@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 """測試目標：/intake 經「真實」權限鏈（DepartmentLoginAdapter、EModule、require_permission）——
-功能代碼 inv.intake 沒有註冊在正式功能目錄，即使部門被授予所有功能的全部操作，也一律拒絕（403）。
+功能代碼 inv.intake 已註冊在正式功能目錄：未被授予 can_create 的部門一律 403，被授予者轉入發票作業流程 /invoices/new；
+呼叫 API 的認證方案未核定，辨識仍為 503（不在此測）。
 
 沿用 test_department_login 的資料庫替身（只替身 SQL 結果）；合成資料，不連 DB；
 不代表正式權限資料已驗證。
@@ -39,10 +40,9 @@ def grant_everything(rows: dict[str, Any]) -> None:
         )
 
 
-def test_fully_permitted_department_still_cannot_open_intake(
+def test_department_without_intake_grant_is_denied(
     browser: TestClient, state: dict[str, Any]
 ) -> None:
-    grant_everything(state)
     login(browser)
 
     assert browser.get("/intake").status_code == 403
@@ -53,5 +53,30 @@ def test_fully_permitted_department_still_cannot_open_intake(
     )
 
 
+def test_department_with_intake_grant_is_sent_to_the_invoice_flow(
+    browser: TestClient, state: dict[str, Any]
+) -> None:
+    grant_everything(state)
+    login(browser)
+
+    response = browser.get("/intake")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/invoices/new"
+
+
 def test_unauthenticated_is_rejected(browser: TestClient) -> None:
     assert browser.get("/intake").status_code in (303, 401)
+
+
+def test_login_stores_the_api_token_in_its_own_httponly_cookie(
+    browser: TestClient, monkeypatch: Any
+) -> None:
+    from app.constants import API_TOKEN_COOKIE_NAME
+    from app.services import invoice_intake_service
+
+    monkeypatch.setattr(invoice_intake_service, "obtain_api_token", lambda email, pw: "synthetic")
+
+    login(browser)
+
+    assert browser.cookies.get(API_TOKEN_COOKIE_NAME) == "synthetic"

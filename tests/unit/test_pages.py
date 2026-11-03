@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from test_intake_routes import FakeApi
 
 from app.constants import SESSION_COOKIE_NAME
 from app.core import deps
@@ -14,6 +16,8 @@ from app.core.security import create_session_token
 from app.db.session import get_db
 from app.main import app
 from app.services import system_service
+
+_ORIGIN = {"Origin": "http://testserver"}  # 流程頁的上傳／核對 POST 需同源
 
 
 def test_health_returns_ok(client: TestClient) -> None:
@@ -229,61 +233,51 @@ def test_invoice_export(admin_client: TestClient) -> None:
     assert "借方金額" in res_voucher.text
 
 
-def test_new_invoice_only_saved_after_correction(admin_client: TestClient) -> None:
+def test_new_invoice_is_not_saved_to_list_until_api_submit(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_intake_routes import RECOGNITION, SUBMITTED, review_data
+
+    from app.routers import invoices as invoices_router
     from app.routers.invoices import _INVOICE_STORE
 
+    api = FakeApi()
+    api.routes = {
+        "/api/v1/invoices/recognize": httpx.Response(200, json=RECOGNITION),
+        "/api/v1/invoices": httpx.Response(201, json=SUBMITTED),
+    }
+    monkeypatch.setattr(invoices_router, "get_intake_client", lambda request: api.client())
     initial_ids = {int(i["id"]) for i in _INVOICE_STORE}
 
-    # 1. 建立草稿並僅上傳檔案（尚未完成步驟 3 採購核對修正）
     new_res = admin_client.get("/invoices/new")
     assert new_res.status_code == 303
     assert new_res.headers["location"] == "/invoices/6/flow?step=1"
 
     upload_res = admin_client.post(
         "/invoices/6/flow/upload",
+        headers=_ORIGIN,
         files={"file": ("invoice.png", b"fake-png-bytes", "image/png")},
     )
     assert upload_res.status_code == 303
     assert upload_res.headers["location"] == "/invoices/6/flow?step=2"
+    assert admin_client.get("/invoices/6/file").status_code == 200
 
-    # 若未完成採購核對修正即返回發票清單，該筆草稿不應被儲存或顯示於清單
-    list_res = admin_client.get("/invoices")
-    assert list_res.status_code == 200
-    assert "AB12345683" not in list_res.text
+    # 舊的示範核對（flow/correct）不可用來儲存 API 辨識的草稿，否則會把示範預設值寫進發票清單
+    assert (
+        admin_client.post(
+            "/invoices/6/flow/correct",
+            data={"invoice_number": "CD87654321", "invoice_date": "113/08/20", "net_amount": "1"},
+        ).status_code
+        == 400
+    )
     assert {int(i["id"]) for i in _INVOICE_STORE} == initial_ids
 
-    # 2. 重新上傳、經過 AI OCR 辨識並完成採購核對修正後，進度才會正式儲存且清除暫存圖檔
-    admin_client.get("/invoices/new")
-    admin_client.post(
-        "/invoices/6/flow/upload",
-        files={"file": ("invoice.png", b"fake-png-bytes", "image/png")},
+    submit_res = admin_client.post(
+        "/invoices/6/flow/review", headers=_ORIGIN, data=review_data("submit")
     )
-    admin_client.post("/invoices/6/flow/advance", data={"from_step": 2})
-    correct_res = admin_client.post(
-        "/invoices/6/flow/correct",
-        data={
-            "invoice_number": "CD87654321",
-            "invoice_date": "113/08/20",
-            "seller_tax_id": "24681357",
-            "buyer_tax_id": "12345678",
-            "item_description": "伺服器機櫃耗材",
-            "net_amount": "10000",
-        },
-    )
-    assert correct_res.status_code == 303
-    assert correct_res.headers["location"] == "/invoices/6/flow?step=4"
-
-    # 圖檔已清除，不再留存
-    file_res = admin_client.get("/invoices/6/file")
-    assert file_res.status_code == 404
-
-    # 發票清單已顯示該筆發票，且下次可從步驟 4 繼續辦理
-    saved_list_res = admin_client.get("/invoices")
-    assert saved_list_res.status_code == 200
-    assert "CD87654321" in saved_list_res.text
-    assert "/invoices/6/flow?step=4" in saved_list_res.text
-
-    _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
+    assert submit_res.status_code == 303
+    assert admin_client.get("/invoices/6/file").status_code == 404  # 提交後清除暫存圖檔
+    assert {int(i["id"]) for i in _INVOICE_STORE} == initial_ids  # 案件在 API／DB，不寫示範清單
 
 
 def test_batch_filing_page_and_export(admin_client: TestClient) -> None:

@@ -481,6 +481,50 @@ def test_item_field_return_keeps_the_line_item_id() -> None:
     assert (params["field_scope"], params["item_id"]) == ("item", item_id)
 
 
+class TableDb:
+    """記錄查詢；to_regclass 查詢回傳資料表是否存在，其他查詢回傳設定的列。"""
+
+    def __init__(
+        self, exists: bool, rows: list[dict[str, Any]] | None = None, error: Exception | None = None
+    ) -> None:
+        self.exists = exists
+        self.rows = rows or []
+        self.error = error
+        self.calls: list[str] = []
+
+    def execute(self, statement: Any, params: dict[str, Any]) -> Any:
+        self.calls.append(str(statement))
+        if "to_regclass" in str(statement):
+            return SimpleNamespace(scalar_one=lambda: self.exists)
+        if self.error:
+            raise self.error
+        return SimpleNamespace(mappings=lambda: iter(self.rows))
+
+
+@pytest.mark.parametrize(
+    "reader", [repo.list_carryovers, repo.list_return_items, repo.list_snapshots]
+)
+def test_new_table_reads_return_empty_before_the_migration_and_never_query_the_missing_table(
+    reader: Any,
+) -> None:
+    db = TableDb(exists=False)  # API 的 Migration 還沒套用
+
+    assert reader(db, INVOICE_ID) == []
+    assert len(db.calls) == 1 and "to_regclass" in db.calls[0]  # 只確認存在，不查詢不存在的表
+
+
+def test_new_table_reads_return_rows_when_the_tables_exist() -> None:
+    db = TableDb(exists=True, rows=[{"submission_round": 1}])
+
+    assert repo.list_return_items(db, INVOICE_ID) == [{"submission_round": 1}]
+    assert "invoice_return_items" in db.calls[1]
+
+
+def test_new_table_reads_do_not_hide_database_errors() -> None:
+    with pytest.raises(RuntimeError):
+        repo.list_snapshots(TableDb(exists=True, error=RuntimeError("boom")), INVOICE_ID)
+
+
 def test_repository_never_commits_or_rolls_back() -> None:
     text = Path(repo.__file__).read_text(encoding="utf-8")
 

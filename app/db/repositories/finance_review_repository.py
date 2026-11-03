@@ -124,19 +124,35 @@ def list_field_reviews(db: Session, invoice_id: str) -> list[dict[str, Any]]:
     ]
 
 
+TABLE_EXISTS = text("SELECT to_regclass(:name) IS NOT NULL")
+
+
+def _optional_rows(
+    db: Session, table: str, statement: Any, invoice_id: str
+) -> list[dict[str, Any]]:
+    """讀取重送新增資料表的列；資料表尚未建立（API 的 Migration 還沒套用）時回空清單。
+
+    先以 to_regclass 確認資料表存在再查詢，不開啟 savepoint 或交易、也不吞掉查詢錯誤：
+    審核頁因此在 Migration 之前仍可檢視與核准（只是沒有重送資訊），其他資料庫錯誤照常拋出。
+    """
+    if not db.execute(TABLE_EXISTS, {"name": f"public.{table}"}).scalar_one():
+        return []
+    return [dict(r) for r in db.execute(statement, {"invoice_id": invoice_id}).mappings()]
+
+
 def list_carryovers(db: Session, invoice_id: str) -> list[dict[str, Any]]:
     """讀取承接前輪確認效力的欄位（含原確認者、確認時間與來源輪次）；只讀，不推定任何欄位已通過。"""
-    return [dict(r) for r in db.execute(LIST_CARRYOVERS, {"invoice_id": invoice_id}).mappings()]
+    return _optional_rows(db, "invoice_field_review_carryovers", LIST_CARRYOVERS, invoice_id)
 
 
 def list_return_items(db: Session, invoice_id: str) -> list[dict[str, Any]]:
     """讀取各輪的結構化退件項目與申請人回覆（原因與回覆分開保存，只讀）。"""
-    return [dict(r) for r in db.execute(LIST_RETURN_ITEMS, {"invoice_id": invoice_id}).mappings()]
+    return _optional_rows(db, "invoice_return_items", LIST_RETURN_ITEMS, invoice_id)
 
 
 def list_snapshots(db: Session, invoice_id: str) -> list[dict[str, Any]]:
     """讀取各輪正式提交的完整快照（表頭與明細），供畫面比對修正前後；只讀。"""
-    return [dict(r) for r in db.execute(LIST_SNAPSHOTS, {"invoice_id": invoice_id}).mappings()]
+    return _optional_rows(db, "invoice_submission_snapshots", LIST_SNAPSHOTS, invoice_id)
 
 
 def return_item_kind(field: str) -> str:

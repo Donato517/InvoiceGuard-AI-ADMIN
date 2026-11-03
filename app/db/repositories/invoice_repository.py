@@ -5,8 +5,6 @@
     - 查詢排除無效或非使用者上傳之發票。
 """
 
-from datetime import date
-from decimal import Decimal
 from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
@@ -105,38 +103,6 @@ SELECT_INVOICE_ITEMS = text("""
     FROM public.invoice_items
     WHERE invoice_id::text = :invoice_id
     ORDER BY line_no
-""")
-
-UPSERT_INVOICE = text("""
-    INSERT INTO public.invoices (
-        invoice_id, invoice_track, invoice_number, invoice_date, tax_period,
-        seller_tax_id, seller_name, buyer_tax_id, buyer_name, sales_amount,
-        tax_amount, total_amount, total_amount_zh, tax_type, submission_round,
-        status, validation_results, submitted_by, department_id, submitted_at
-    ) VALUES (
-        CAST(:invoice_id AS uuid), :invoice_track, :invoice_number, :invoice_date, :tax_period,
-        :seller_tax_id, :seller_name, :buyer_tax_id, :buyer_name, :sales_amount,
-        :tax_amount, :total_amount, :total_amount_zh, :tax_type, :submission_round,
-        :status, CAST(:validation_results AS jsonb), CAST(:submitted_by AS uuid),
-        CAST(:department_id AS uuid), now()
-    )
-    ON CONFLICT (invoice_id) DO UPDATE SET
-        invoice_track = EXCLUDED.invoice_track,
-        invoice_number = EXCLUDED.invoice_number,
-        invoice_date = EXCLUDED.invoice_date,
-        tax_period = EXCLUDED.tax_period,
-        seller_tax_id = EXCLUDED.seller_tax_id,
-        seller_name = EXCLUDED.seller_name,
-        buyer_tax_id = EXCLUDED.buyer_tax_id,
-        buyer_name = EXCLUDED.buyer_name,
-        sales_amount = EXCLUDED.sales_amount,
-        tax_amount = EXCLUDED.tax_amount,
-        total_amount = EXCLUDED.total_amount,
-        total_amount_zh = EXCLUDED.total_amount_zh,
-        tax_type = EXCLUDED.tax_type,
-        status = EXCLUDED.status,
-        validation_results = EXCLUDED.validation_results,
-        submitted_at = now()
 """)
 
 
@@ -293,59 +259,3 @@ def get_invoice_by_id(db: Session, invoice_id: Any) -> dict[str, Any] | None:
     items_rows = db.execute(SELECT_INVOICE_ITEMS, {"invoice_id": str(invoice_id)}).mappings().all()
     items = [dict(it) for it in items_rows]
     return _row_to_invoice_dict(dict(row), items)
-
-
-def save_invoice(db: Session, invoice: dict[str, Any], invoice_id: Any) -> None:
-    """將核對修正後之發票儲存或更新至 public.invoices。"""
-    inv_no_full = str(invoice.get("invoice_number") or "").strip()
-    track = inv_no_full[:2] if len(inv_no_full) >= 2 and inv_no_full[:2].isalpha() else ""
-    num = inv_no_full[2:] if track else inv_no_full
-    inv_date = None
-    raw_d = str(invoice.get("invoice_date") or "").strip()
-    if "/" in raw_d:
-        parts = raw_d.split("/")
-        if len(parts) == 3:
-            try:
-                y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                inv_date = date(y, int(parts[1]), int(parts[2]))
-            except Exception:
-                inv_date = None
-
-    uuid_id = to_uuid_str(invoice_id)
-    user_uuid = to_uuid_str(invoice.get("uploaded_by", "1"))
-    dept_uuid = to_uuid_str(invoice.get("department_id", "1"))
-
-    tax_period = invoice.get("tax_period")
-    if not tax_period:
-        if inv_date:
-            even_m = inv_date.month if inv_date.month % 2 == 0 else inv_date.month + 1
-            tax_period = f"{inv_date.year - 1911:03d}{even_m:02d}"
-        else:
-            today = date.today()
-            even_m = today.month if today.month % 2 == 0 else today.month + 1
-            tax_period = f"{today.year - 1911:03d}{even_m:02d}"
-
-    db.execute(
-        UPSERT_INVOICE,
-        {
-            "invoice_id": uuid_id,
-            "invoice_track": track,
-            "invoice_number": num,
-            "invoice_date": inv_date,
-            "tax_period": tax_period,
-            "seller_tax_id": invoice.get("seller_tax_id"),
-            "seller_name": invoice.get("seller_name"),
-            "buyer_tax_id": invoice.get("buyer_tax_id"),
-            "buyer_name": invoice.get("buyer_name"),
-            "sales_amount": Decimal(str(invoice.get("net_amount", 0))),
-            "tax_amount": Decimal(str(invoice.get("tax_amount", 0))),
-            "total_amount": Decimal(str(invoice.get("total_amount", 0))),
-            "total_amount_zh": invoice.get("total_chinese", ""),
-            "tax_type": _TAX_TYPE_TO_DB.get(str(invoice.get("tax_category") or "應稅"), "taxable"),
-            "submission_round": 0,
-            "status": "draft",
-            "validation_results": "{}",
-            "submitted_by": user_uuid,
-            "department_id": dept_uuid,
-        },
-    )

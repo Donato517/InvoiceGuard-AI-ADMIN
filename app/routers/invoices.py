@@ -74,7 +74,9 @@ from app.services.finance_review_service import (
     account_category,
     approve,
     build_change_history,
+    build_return_rounds,
     build_review_case,
+    build_round_diffs,
     check_account_code,
     field_label,
     return_to_applicant,
@@ -1852,6 +1854,8 @@ _REVIEW_STATUS_TO_V15 = {
 }
 _TAX_TYPE_TO_CATEGORY = {"taxable": "應稅", "zero_rated": "零稅率", "tax_exempt": "免稅"}
 _RETURN_EXTRA_FIELDS = ["attachment", "invoice_date", "seller_tax_id", "buyer_tax_id", "其他"]
+# 財務可一併授權申請人修改的相依表頭欄位（銷售額、稅額、總計）
+_RETURN_DEPENDENT_FIELDS = ("sales_amount", "tax_amount", "total_amount")
 
 
 _CONFLICT_MESSAGE = (
@@ -1971,6 +1975,13 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
     field_options = [
         (r.field_name, r.item_id or "", field_label(r.field_name)) for r in case.field_reviews
     ]
+    # 已承接前輪確認的欄位本輪沒有覆核列，仍需能被財務再次退回
+    listed = {(name, item) for name, item, _ in field_options}
+    field_options += [
+        (str(c["field_name"]), str(c["item_id"] or ""), field_label(str(c["field_name"])))
+        for c in (loaded.carryovers if loaded else [])
+        if (str(c["field_name"]), str(c["item_id"] or "")) not in listed
+    ]
     field_options += [(name, "", field_label(name)) for name in _RETURN_EXTRA_FIELDS]
     draft = _ACCOUNTING_DRAFT.get(str(invoice["id"]), {}) if loaded else {}
     account_code = str(draft.get("account_code") or invoice.get("account_code") or "").split(
@@ -2007,6 +2018,19 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
         or invoice.get("expense_category")
         or account_category(account_code),
         "return_field_options": field_options,
+        "return_rounds": build_return_rounds(loaded.return_items if loaded else []),  # type: ignore[arg-type]
+        "round_diffs": build_round_diffs(loaded.snapshots if loaded else []),  # type: ignore[arg-type]
+        "return_dependent_fields": [(n, field_label(n)) for n in _RETURN_DEPENDENT_FIELDS],
+        "carried_fields": [
+            {
+                "label": field_label(str(c["field_name"])),
+                "source_round": c["source_round"],
+                "checked_by": c["checked_by"],
+                "checked_at": c["checked_at"],
+            }
+            for c in (loaded.carryovers if loaded else [])
+            if int(c["submission_round"]) == case.submission_round  # type: ignore[call-overload]
+        ],
     }
 
 
@@ -2143,18 +2167,27 @@ def finance_return(
     invoice_id: str,
     return_field: Annotated[list[str] | None, Form()] = None,
     return_reason: Annotated[list[str] | None, Form()] = None,
+    return_allowed: Annotated[list[str] | None, Form()] = None,
 ) -> Response:
     """步驟 5：逐項退回申請人補正；空白列略過。
 
     欄位選項值為「欄位名稱|item_id」，明細欄位才有 item_id。
+    return_allowed 的值為「列序號:相依欄位名稱」（例如 0:total_amount），表示財務一併授權申請人修改的相依表頭欄位。
     """
     invoice = _finance_review_target(request, invoice_id)
+    allowed: dict[int, list[str]] = {}
+    for raw in return_allowed or []:
+        index, _, name = raw.partition(":")
+        if index.isdigit() and name in _RETURN_DEPENDENT_FIELDS:
+            allowed.setdefault(int(index), []).append(name)
     items = []
-    for raw_field, reason in zip(return_field or [], return_reason or [], strict=False):
+    for row, (raw_field, reason) in enumerate(
+        zip(return_field or [], return_reason or [], strict=False)
+    ):
         if not raw_field.strip() and not reason.strip():
             continue
         field, _, item_id = raw_field.partition("|")
-        items.append(ReturnItem(field, reason, item_id or None))
+        items.append(ReturnItem(field, reason, item_id or None, tuple(allowed.get(row, ()))))
     case = _finance_case(invoice)
     db_backed = _is_db_invoice(invoice)
     if db_backed and not finance_db.is_uuid(_reviewer_id(request)):

@@ -140,11 +140,13 @@ class ReturnItem:
         field: 要補正的欄位或附件。
         reason: 要申請人補什麼。
         item_id: 明細欄位所屬明細；表頭或附件為 None。
+        allowed: 財務額外授權申請人一併修改的相依表頭欄位（例如銷售額、稅額、總計）；預設沒有。
     """
 
     field: str
     reason: str
     item_id: str | None = None
+    allowed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

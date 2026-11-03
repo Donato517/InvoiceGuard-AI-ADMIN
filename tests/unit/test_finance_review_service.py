@@ -298,3 +298,99 @@ def test_deduction_code_is_independent_of_account():
     case = update_accounting_fields(_case(), tax_type=None, deduction_code="4")
 
     assert case.deduction_code == "4"
+
+
+def test_return_keeps_authorized_dependent_fields_without_duplicates() -> None:
+    from app.schemas.finance_review import ReturnItem
+    from app.services.finance_review_service import return_to_applicant
+
+    change = return_to_applicant(
+        _case(),
+        "finance",
+        [
+            ReturnItem(
+                " tax_amount ", " 稅額錯 ", None, ("total_amount", "total_amount", "sales_amount")
+            )
+        ],
+        NOW,
+    )
+
+    assert change.return_items == (
+        ReturnItem("tax_amount", "稅額錯", None, ("total_amount", "sales_amount")),
+    )
+
+
+def test_round_diffs_show_only_fields_that_changed_between_snapshots() -> None:
+    from app.services.finance_review_service import build_round_diffs
+
+    item = {
+        "item_id": "i1",
+        "line_no": 1,
+        "item_name": "品項",
+        "quantity": "1",
+        "unit_price": "10",
+        "line_amount": "10",
+    }
+    first = {
+        "submission_round": 1,
+        "submission_kind": "first",
+        "items": [item],
+        "header": {
+            "tax_amount": "40",
+            "total_amount": "1040",
+            "tax_period": "202610",
+            "seller_name": "甲",
+        },
+    }
+    second = {
+        "submission_round": 2,
+        "submission_kind": "resubmit_corrected",
+        "items": [dict(item, line_amount="12")],
+        "header": {
+            "tax_amount": "50",
+            "total_amount": "1040",
+            "tax_period": "202612",
+            "seller_name": "甲",
+        },
+    }
+    appeal = {**second, "submission_round": 3, "submission_kind": "resubmit_appeal"}
+
+    diffs = build_round_diffs([first, second, appeal])
+
+    assert diffs[0]["round"] == 2
+    assert diffs[0]["rows"] == [("稅額", "40", "50"), ("金額（第 1 列）", "10", "12")]
+    assert diffs[1] == {"round": 3, "kind": "resubmit_appeal", "rows": []}
+
+
+def test_return_rounds_keep_the_original_reason_apart_from_the_response() -> None:
+    from app.services.finance_review_service import build_return_rounds
+
+    rows = [
+        {
+            "submission_round": 1,
+            "item_kind": "field",
+            "field_name": "tax_amount",
+            "reason": "稅額錯",
+            "response_action": "appealed",
+            "response_note": "原票如此",
+            "response_round": 2,
+        },
+        {
+            "submission_round": 1,
+            "item_kind": "image",
+            "field_name": None,
+            "reason": "模糊",
+            "response_action": None,
+            "response_note": None,
+            "response_round": None,
+        },
+    ]
+
+    rounds = build_return_rounds(rows)
+
+    assert rounds[0]["items"][0] == {
+        "label": "稅額",
+        "reason": "稅額錯",
+        "response": "申覆（第 2 輪）：原票如此",
+    }
+    assert rounds[0]["items"][1] == {"label": "圖片／附件", "reason": "模糊", "response": None}

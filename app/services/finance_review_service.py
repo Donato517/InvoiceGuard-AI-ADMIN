@@ -332,7 +332,8 @@ def return_to_applicant(
 ) -> StatusChange:
     """退回申請人補正，須逐項列出要補什麼。
 
-    沿用 Schema v1.5 的退回機制：項目若對應本輪 invoice_field_reviews 的欄位，
+    退回項目同時結構化寫入 invoice_return_items（欄位、原因、授權相依欄位），由 repository 與狀態同交易寫入；
+    以下沿用 Schema v1.5 的機制：項目若對應本輪 invoice_field_reviews 的欄位，
     原因寫入該列 review_comment 並改回未確認，申請人由 v_invoice_return_fields 看到；
     沒有對應列的項目（未修改過的欄位、附件）才寫入 invoice_status_history.reason。
 
@@ -349,7 +350,10 @@ def return_to_applicant(
         FinanceReviewError: 不在審核狀態、沒有退回項目或原因空白。
     """
     _require_reviewable(case)
-    cleaned = tuple(ReturnItem(i.field.strip(), i.reason.strip(), i.item_id) for i in items)
+    cleaned = tuple(
+        ReturnItem(i.field.strip(), i.reason.strip(), i.item_id, tuple(dict.fromkeys(i.allowed)))
+        for i in items
+    )
     if not cleaned or any(not i.field or not i.reason for i in cleaned):
         raise FinanceReviewError(
             [ReviewBlocker("RETURN_ITEMS_REQUIRED", "退回時須逐項填寫欄位與補正原因")]
@@ -381,3 +385,67 @@ def return_to_applicant(
         return_items=cleaned,
         field_review_updates=tuple(updates),
     )
+
+
+# ---- 重送後的對照顯示（唯讀，不影響核准）----
+
+_RESPONSE_LABELS = {"corrected": "已補正", "appealed": "申覆"}
+
+
+def build_return_rounds(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """各輪的退件項目與申請人回覆：財務的原始退件原因與申請人回覆分開呈現，依輪次由舊到新。
+
+    Args:
+        rows: invoice_return_items 的列（已依輪次排序）。
+
+    Returns:
+        每輪一筆 {round, items: [{label, reason, response}]}；response 為 None 代表尚未回覆。
+    """
+    rounds: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        kind = str(row.get("item_kind"))
+        label = {"image": "圖片／附件", "other": "其他"}.get(kind) or field_label(
+            str(row.get("field_name"))
+        )
+        action = row.get("response_action")
+        response = None
+        if action:
+            note = (row.get("response_note") or "").strip()
+            response = (
+                f"{_RESPONSE_LABELS.get(str(action), action)}（第 {row.get('response_round')} 輪）"
+            )
+            response += f"：{note}" if note else ""
+        rounds.setdefault(int(row["submission_round"]), []).append(
+            {"label": label, "reason": str(row.get("reason") or ""), "response": response}
+        )
+    return [{"round": r, "items": items} for r, items in sorted(rounds.items())]
+
+
+def build_round_diffs(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """相鄰兩輪正式提交快照之間實際不同的欄位（修正前 → 修正後），表頭與明細都比對。
+
+    Args:
+        snapshots: invoice_submission_snapshots 的列（已依輪次排序；header／items 為 JSON）。
+
+    Returns:
+        每個有差異的輪次一筆 {round, kind, rows: [(欄位中文名, 修正前, 修正後)]}；兩輪完全相同（純申覆）時 rows 為空。
+    """
+    diffs = []
+    for before, after in zip(snapshots, snapshots[1:], strict=False):
+        rows: list[tuple[str, Any, Any]] = []
+        old_header, new_header = before["header"], after["header"]
+        for name, new in new_header.items():
+            if name != "tax_period" and old_header.get(name) != new:
+                rows.append((field_label(name), old_header.get(name), new))
+        old_items = {i["item_id"]: i for i in before["items"]}
+        for item in after["items"]:
+            prev = old_items.get(item["item_id"], {})
+            for name, new in item.items():
+                if name not in ("item_id", "line_no") and prev.get(name) != new:
+                    rows.append(
+                        (f"{field_label(name)}（第 {item['line_no']} 列）", prev.get(name), new)
+                    )
+        diffs.append(
+            {"round": after["submission_round"], "kind": after["submission_kind"], "rows": rows}
+        )
+    return diffs

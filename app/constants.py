@@ -13,6 +13,9 @@ SITE_NAME = SITE_NAMES["ADMIN"]
 # 存放已簽署登入資料的 cookie（httpOnly）；與前台的 ig_session 分開
 SESSION_COOKIE_NAME = "ig_admin_session"
 
+# 呼叫發票 API 用的 Session Token（httpOnly）；登入時向 API 換發，只在 ADMIN 伺服器端讀取，不給前端 JS
+API_TOKEN_COOKIE_NAME = "ig_admin_api_token"
+
 # 管理站內建首頁，不依賴部門矩陣的可選勾選。
 WELCOME_CODE = "welcome"
 WELCOME_PATH = "/welcome"

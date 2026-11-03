@@ -290,3 +290,53 @@ def test_credentials_never_appear_in_error_text() -> None:
         rec.client().submit({"secret_field": "value"})
 
     assert "synthetic-test-credential" not in str(caught.value) + repr(caught.value.__dict__)
+
+
+def test_login_for_token_returns_the_session_token_and_posts_credentials() -> None:
+    from app.integrations.api_intake_client import login_for_token
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"session_token": "synthetic-token"})
+
+    token = login_for_token(
+        "https://api.example.test", "a@example.test", "pw", transport=httpx.MockTransport(handler)
+    )
+
+    assert token == "synthetic-token"
+    assert seen[0].url.path == "/api/v1/auth/login"
+    assert json.loads(seen[0].content) == {"email": "a@example.test", "password": "pw"}
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [httpx.Response(401, json={}), httpx.Response(200, json={}), httpx.Response(200, text="x")],
+)
+def test_login_for_token_returns_none_on_failure(outcome: httpx.Response) -> None:
+    from app.integrations.api_intake_client import login_for_token
+
+    token = login_for_token(
+        "https://api.example.test",
+        "a@example.test",
+        "pw",
+        transport=httpx.MockTransport(lambda r: outcome),
+    )
+
+    assert token is None
+
+
+def test_login_for_token_refuses_plain_http_to_a_remote_host() -> None:
+    from app.integrations.api_intake_client import login_for_token
+
+    assert login_for_token("http://api.example.test", "a@example.test", "pw") is None
+
+
+def test_bearer_credentials_never_show_the_token() -> None:
+    from app.integrations.api_intake_client import BearerCredentials
+
+    credentials = BearerCredentials("secret-value")
+
+    assert "secret-value" not in repr(credentials)
+    assert credentials.headers(None) == {"Authorization": "Bearer secret-value"}  # type: ignore[arg-type]

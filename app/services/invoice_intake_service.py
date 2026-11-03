@@ -3,15 +3,21 @@
 相依模組：app.integrations.api_intake_client、app.services.invoice_intake_mapping、app.db.repositories.case_repository
 注意事項：
     - 不複製 AI 辨識或發票檢核：全部呼叫既有 API；也不寫入資料庫（唯一的 DB 存取是唯讀查證 invoice_id）。
-    - 認證方案尚未核定：呼叫端注入的 ApiIntakeClient 預設使用 UnconfiguredCredentials，會拒絕所有請求。
+    - 認證（2026-11-03 核定方案 A）：ADMIN 登入成功時用同一組帳密向 API 登入換發 Session Token，
+      存在 httpOnly cookie；之後以該使用者自己的 Token 呼叫 API。沒有 Token 時 build_intake_client 拒絕。
     - 檢核結果只是提醒，不阻擋提交（提交與否由 API 決定）；提交逾時的處理見 confirm_submitted。
 """
 
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.core.config import settings
 from app.db.repositories import case_repository as repo
-from app.integrations.api_intake_client import ApiIntakeClient
+from app.integrations.api_intake_client import (
+    ApiIntakeClient,
+    BearerCredentials,
+    login_for_token,
+)
 from app.schemas.intake import (
     IntakeFileError,
     IntakeForm,
@@ -25,9 +31,20 @@ from app.services.case_service import SessionFactory
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024  # 與 API 的上限相同；超過時不送往 API
 
 
-def build_intake_client() -> ApiIntakeClient:
-    """建立呼叫既有 API 的用戶端。認證方案與 API 位址核定前一律拒絕（IntakeNotConfiguredError）。"""
-    raise IntakeNotConfiguredError
+def obtain_api_token(email: str, password: str) -> str | None:
+    """ADMIN 登入成功後，用同一組帳密向 API 換發 Session Token；失敗回 None（不影響 ADMIN 登入）。"""
+    return login_for_token(settings.intake_api_base_url, email, password)
+
+
+def build_intake_client(api_token: str | None) -> ApiIntakeClient:
+    """建立呼叫既有 API 的用戶端，授權使用該使用者自己的 API Session Token。
+
+    Raises:
+        IntakeNotConfiguredError: 沒有 Token（尚未向 API 登入或已過期）；不使用共用帳號或預設憑證。
+    """
+    if not api_token:
+        raise IntakeNotConfiguredError
+    return ApiIntakeClient(settings.intake_api_base_url, BearerCredentials(api_token))
 
 
 @dataclass(frozen=True)

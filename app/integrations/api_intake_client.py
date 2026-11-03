@@ -48,6 +48,50 @@ class UnconfiguredCredentials:
         raise IntakeNotConfiguredError
 
 
+class BearerCredentials:
+    """以登入時向 API 換發的 Session Token 作為 Authorization: Bearer；Token 來自已驗證使用者自己的登入。"""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def __repr__(self) -> str:
+        return "BearerCredentials(<redacted>)"
+
+    def headers(self, request: OutboundRequest) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"}
+
+
+def login_for_token(
+    base_url: str,
+    email: str,
+    password: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> str | None:
+    """用同一組 Email／密碼向 API 登入並取得 Session Token；任何失敗回 None（不洩漏原因，不寫日誌）。
+
+    只在 ADMIN 登入驗證成功後呼叫一次；密碼不保存、不寫日誌。
+    """
+    try:
+        with httpx.Client(
+            base_url=_validated_base_url(base_url),
+            transport=transport,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"email": email, "password": password},
+                headers={"Accept": "application/json"},
+            )
+        if response.status_code != 200 or len(response.content) > MAX_RESPONSE_BYTES:
+            return None
+        token = response.json().get("session_token")
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return token if isinstance(token, str) and token else None
+
+
 def _validated_base_url(base_url: str) -> str:
     parts = urlsplit(base_url.strip())
     secure = parts.scheme == "https" or (

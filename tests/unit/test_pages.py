@@ -394,6 +394,45 @@ def test_batch_filing_exports_valid_invoice_with_f09(admin_client: TestClient) -
         _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
 
 
+def test_batch_filing_marks_blank_buyer_as_notice(admin_client: TestClient) -> None:
+    """買受人統編空白：清單標黃色提醒但可勾選，產檔照常（申報檔寫本公司統編）。"""
+    from app.routers.invoices import _INVOICE_STORE
+
+    initial_ids = {int(i["id"]) for i in _INVOICE_STORE}
+    _INVOICE_STORE.append(
+        {
+            "id": 902,
+            "invoice_number": "EC08904070",
+            "invoice_date": "115/09/15",
+            "seller_tax_id": "27601907",
+            "buyer_tax_id": "",
+            "net_amount": 6000,
+            "tax_amount": 300,
+            "tax_category": "應稅",
+            "deduction_code": "1 - 進貨及費用",
+            "review_status": "approved",
+            "status": "passed",
+            "stage": 9,
+            "is_completed": True,
+        }
+    )
+    try:
+        page = admin_client.get(
+            "/invoices/filing",
+            params={"period": "11510", "from_date": "2026-09-01", "to_date": "2026-10-31"},
+        )
+        assert page.status_code == 200
+        assert 'class="filing-pill warn"' in page.text
+        assert "買受人統編空白，已依本公司統編 04595252 申報" in page.text
+
+        export = admin_client.post(
+            "/invoices/filing/export", data={"period": "11510", "invoice_ids": [902]}
+        )
+        assert export.status_code == 200
+    finally:
+        _INVOICE_STORE[:] = [i for i in _INVOICE_STORE if int(i["id"]) in initial_ids]
+
+
 def test_batch_filing_rejects_bad_period(admin_client: TestClient) -> None:
     response = admin_client.post(
         "/invoices/filing/export", data={"period": "113", "invoice_ids": [1]}

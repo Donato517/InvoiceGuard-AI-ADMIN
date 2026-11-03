@@ -9,6 +9,8 @@
     - 任一筆檢核失敗即整批不產生申報檔，避免匯入金額與 401 對不上。
     - 欄位位置依「營業稅電子資料申報繳稅作業要點」第 20 點整理，正式使用前
       須與附件五逐欄核對，並以財政部申報軟體實測匯入。
+    - 買受人統編空白時不擋（API 送出時為選填），申報檔一律寫本公司統編；
+      由 snapshot_notices() 回傳提醒，畫面標黃色請使用者確認（2026-11-03 使用者決定）。
     - 字軌只檢查格式（2 碼英文字母）。2026-11-02 使用者決定：三聯式字軌的取得與配發有異議，
       先取消「必須符合字軌對照表」的檢核，並移除對照表 invoice_tracks.csv；恢復時見 git 歷史。
 """
@@ -234,12 +236,33 @@ def validate_snapshot(snapshot: dict, profile: CompanyProfile) -> list[Format21I
     issues = []
     if snapshot.get("status") != EXPORTABLE_STATUS:
         issues.append(Format21Issue("status", "NOT_APPROVED", "請款單未核准，不可匯出"))
-    buyer_tax_id = str(snapshot.get("buyer_tax_id") or "")
+    buyer_tax_id = str(snapshot.get("buyer_tax_id") or "").strip()
     if buyer_tax_id and buyer_tax_id != profile.ban:
         issues.append(
             Format21Issue("buyer_tax_id", "BUYER_BAN_MISMATCH", "發票買受人統編不是本公司統編")
         )
     return issues
+
+
+def snapshot_notices(snapshot: dict, profile: CompanyProfile) -> list[Format21Issue]:
+    """不擋產檔、但需使用者確認的提醒，供清單標黃色與單張預覽顯示。
+
+    Args:
+        snapshot: 請款單資料（Schema v1.5 invoices 欄位）。
+        profile: 公司基本資料。
+
+    Returns:
+        提醒清單；空清單代表沒有需要確認的事項。
+    """
+    if str(snapshot.get("buyer_tax_id") or "").strip():
+        return []
+    return [
+        Format21Issue(
+            "buyer_tax_id",
+            "BUYER_BAN_BLANK",
+            f"買受人統編空白，已依本公司統編 {profile.ban} 申報，請確認發票確實開給本公司",
+        )
+    ]
 
 
 # ---- 轉檔與彙總 ----

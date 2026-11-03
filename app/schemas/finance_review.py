@@ -13,11 +13,12 @@ from typing import Any
 
 # ---- 狀態 ----
 # 2026-10-30 團隊決定只留財務一層審核，不使用單位核准與會計核准兩層。
-# C 的 API 目前送出（含退回後重送）寫入 pending_department_approval，日後可能改為
-# pending_accounting_review；兩個狀態都保留，皆視為「待財務審核」，C 修改前後都能運作。
+# API 首次送出已改寫 pending_accounting_review（API PR #14），2-5 退回後重送也寫入同一狀態。
+# 舊資料可能仍是 pending_department_approval，保留相容：兩者皆視為「待財務審核」，但不再產生舊值。
 
-STATUS_SUBMITTED = "pending_department_approval"
 STATUS_PENDING_REVIEW = "pending_accounting_review"
+STATUS_SUBMITTED = STATUS_PENDING_REVIEW
+STATUS_LEGACY_SUBMITTED = "pending_department_approval"
 STATUS_APPROVED = "approved"
 STATUS_RETURNED = "returned_to_applicant"
 # 2026-11-02 使用者決定取消財務「駁回」，改由申請人在退回補正時自行終止（voided）；
@@ -25,11 +26,11 @@ STATUS_RETURNED = "returned_to_applicant"
 STATUS_REJECTED = "rejected"
 STATUS_VOIDED = "voided"
 
-REVIEWABLE_STATUSES = frozenset({STATUS_SUBMITTED, STATUS_PENDING_REVIEW})
+REVIEWABLE_STATUSES = frozenset({STATUS_SUBMITTED, STATUS_LEGACY_SUBMITTED})
 
 STATUS_LABELS = {
     STATUS_SUBMITTED: "待財務審核",
-    STATUS_PENDING_REVIEW: "待財務審核",
+    STATUS_LEGACY_SUBMITTED: "待財務審核",
     STATUS_APPROVED: "已核准",
     STATUS_RETURNED: "退回補正",
     STATUS_REJECTED: "已駁回",

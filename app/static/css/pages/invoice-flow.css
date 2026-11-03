@@ -411,6 +411,12 @@
   background: #fde7e5;
 }
 
+/* 通過但需使用者確認（例如買受人統編空白） */
+.filing-pill.warn {
+  color: #8a5300;
+  background: #fff3d6;
+}
+
 .filing-pill.pending {
   color: #60738c;
   background: #edf2f8;

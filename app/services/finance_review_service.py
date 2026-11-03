@@ -6,7 +6,7 @@
     - 只留財務一層審核：待財務審核 → 已核准／退回補正；退回後由申請人重送回待財務審核，
       或由申請人終止（procurement_case_service，2026-11-02 起取代財務駁回）。
     - 2026-11-02 使用者決定：核准前不再逐欄確認「AI 原值 → 送出值」，修改軌跡改在「修改歷程」彈窗查看。
-      「待財務審核」包含 C 送出時寫入的 pending_department_approval 與 pending_accounting_review。
+      「待財務審核」為 pending_accounting_review（API 送出與重送），以及舊資料的 pending_department_approval。
     - 本模組不存取資料庫；資料表欄位對應集中在 build_review_case()。
       回傳的 StatusChange 須由 repository 以「狀態仍等於 expected_status」為條件更新，
       並與 invoice_status_history 在同一交易寫入，避免兩位財務同時處理同一張單。

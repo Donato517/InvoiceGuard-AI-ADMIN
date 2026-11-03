@@ -197,6 +197,10 @@ def test_invoice_flow_steps_render(admin_client: TestClient) -> None:
         response = admin_client.get(f"/invoices/1/flow?step={step}")
         assert response.status_code == 200
         assert "發票作業流程" in response.text
+        if step == 5:
+            assert "上傳部門：" in response.text
+            assert "上傳者：" in response.text
+            assert "上傳者編號：" not in response.text
 
 
 def test_invoice_review_and_flow_advance(admin_client: TestClient) -> None:

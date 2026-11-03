@@ -51,9 +51,15 @@
       </div>
     {% endif %}
     {% if step == 5 %}
-      <div class="correction-original-uploader" style="margin-top: 1rem; padding: 0.75rem 1rem; background: var(--color-surface, #fff); border: 1px solid var(--color-border, #e2e8f0); border-radius: var(--radius-sm, 6px); font-size: 0.875rem;">
-        <span class="muted">上傳者編號：</span>
-        <code>{{ (finance_review and finance_review.case and finance_review.case.submitted_by) or invoice.uploaded_by or "—" }}</code>
+      <div class="correction-original-uploader" style="margin-top: 1rem; padding: 0.75rem 1rem; background: var(--color-surface, #fff); border: 1px solid var(--color-border, #e2e8f0); border-radius: var(--radius-sm, 6px); font-size: 0.875rem; display: flex; gap: 1.5rem; flex-wrap: wrap;">
+        <div>
+          <span class="muted">上傳部門：</span>
+          <strong>{{ (finance_review and finance_review.department_name) or invoice.department_name or "—" }}</strong>
+        </div>
+        <div>
+          <span class="muted">上傳者：</span>
+          <strong>{{ (finance_review and finance_review.submitter_name) or invoice.submitter_name or invoice.uploaded_by or "—" }}</strong>
+        </div>
       </div>
     {% endif %}
   </div>

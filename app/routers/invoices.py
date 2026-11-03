@@ -234,6 +234,8 @@ def _ensure_invoice_14_fields(invoice: dict[str, Any]) -> dict[str, Any]:
     invoice.setdefault("remarks", "")
     invoice.setdefault("seller_name", "")
     invoice.setdefault("seller_tax_id", "")
+    invoice.setdefault("submitter_name", "")
+    invoice.setdefault("department_name", "")
     return invoice
 
 
@@ -642,6 +644,8 @@ def _create_draft_invoice(invoice_id: str, uploaded_by: str = "1") -> dict[str, 
             "tax_type": "1 - 應稅",
             "import_confirmed_at": None,
             "filing_preview": None,
+            "department_name": "",
+            "submitter_name": "",
         }
     )
 
@@ -1942,11 +1946,29 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
     account_code = str(draft.get("account_code") or invoice.get("account_code") or "").split(
         " ", 1
     )[0]
+    dept_name = invoice.get("department_name")
+    sub_name = invoice.get("submitter_name")
+    if not dept_name or not sub_name:
+        try:
+            sess = try_get_db_session()
+            if sess:
+                try:
+                    case_header = case_repository.get_case(sess, UUID(str(invoice["id"])))
+                    if case_header:
+                        dept_name = dept_name or case_header.department_name
+                        sub_name = sub_name or case_header.submitter_name
+                finally:
+                    sess.close()
+        except Exception:
+            pass
+
     return {
         "case": case,
         "status_label": STATUS_LABELS.get(case.status, case.status),
         "reviewable": reviewable,
         "warnings": case.warnings,
+        "department_name": dept_name or "採購部",
+        "submitter_name": sub_name or invoice.get("uploaded_by") or "—",
         "trails": [
             {"trail": t, "label": field_label(t.field_name)}
             for t in build_change_history(loaded.changes if loaded else demo.get("changes", []))

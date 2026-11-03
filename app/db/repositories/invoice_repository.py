@@ -34,10 +34,14 @@ SELECT_INVOICES = text("""
            i.total_amount_zh,
            i.validation_results,
            i.submitted_by::text AS submitted_by,
+           p.display_name AS submitter_name,
            i.department_id::text AS department_id,
+           d.department_name,
            f.original_filename,
            f.mime_type
     FROM public.invoices i
+    LEFT JOIN public.user_profiles p ON p.user_id = i.submitted_by
+    LEFT JOIN public.departments d ON d.department_id = i.department_id
     LEFT JOIN LATERAL (
         SELECT original_filename, mime_type
         FROM public.invoice_files
@@ -78,10 +82,14 @@ SELECT_INVOICE_BY_ID = text("""
            i.total_amount_zh,
            i.validation_results,
            i.submitted_by::text AS submitted_by,
+           p.display_name AS submitter_name,
            i.department_id::text AS department_id,
+           d.department_name,
            f.original_filename,
            f.mime_type
     FROM public.invoices i
+    LEFT JOIN public.user_profiles p ON p.user_id = i.submitted_by
+    LEFT JOIN public.departments d ON d.department_id = i.department_id
     LEFT JOIN LATERAL (
         SELECT original_filename, mime_type
         FROM public.invoice_files
@@ -194,6 +202,9 @@ def _row_to_invoice_dict(
     return {
         "id": row["invoice_id"],
         "uploaded_by": row.get("submitted_by") or "1",
+        "submitter_name": row.get("submitter_name") or "",
+        "department_id": row.get("department_id") or "",
+        "department_name": row.get("department_name") or "",
         "format_identification": row.get("format_identification") or "",
         "invoice_number": invoice_number,
         "invoice_date": _format_date(row.get("invoice_date")),

@@ -478,6 +478,31 @@ def test_chat_page_lists_knowledge_bases_for_it(pages: Pages) -> None:
     assert "依資訊部已指派的全部知識庫" not in response.text
 
 
+def test_chat_page_preselects_login_department_and_its_assigned_knowledge(
+    pages: Pages, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """打開問答頁時預選登入者目前的部門（測試替身為財務部），並勾選該部門指派的知識庫。"""
+    pages.is_it = True
+    kbs = (
+        replace(KB_ROW, approval_status="approved"),
+        KnowledgeBase(SECOND_KB, "會計法規", "approved", file_count=1),
+    )
+    rows = (
+        DepartmentAccess(KB, FINANCE, use_for_qa=True),
+        DepartmentAccess(SECOND_KB, IT, use_for_qa=True),
+    )
+    monkeypatch.setattr(
+        rag_admin_service, "load_overview", lambda: rag_admin_service.KnowledgeOverview(kbs, rows)
+    )
+
+    html = pages.client.get("/knowledge/chat").text
+
+    assert re.search(rf'<option value="{FINANCE}"\s+selected>財務部</option>', html)
+    choices = html[html.index('id="chat-choices"') :]
+    checked = re.findall(r'value="([0-9a-f-]{36})"\s+checked', choices)
+    assert checked == [KB], choices[:1500]
+
+
 def test_switching_department_keeps_typed_question_and_shows_no_answer_overlay(
     pages: Pages,
 ) -> None:

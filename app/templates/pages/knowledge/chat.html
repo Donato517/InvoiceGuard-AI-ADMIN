@@ -4,6 +4,7 @@
                問答不保存，重新整理即清空。
   @route GET /knowledge/chat；提問 POST /knowledge/chat/ask（HTMX，附加到對話區）
   @context departments: list[dict]   [{id, name}] 啟用中的部門
+  @context selected_department_id: str | None  預選的部門（登入者目前的部門），知識庫預先勾選該部門的指派
   @context groups: list[dict]        可勾選的知識庫分組，欄位見 _chat_choices.html
   @context error: str | None         部門錯誤訊息
 #}
@@ -54,7 +55,10 @@
               hx-target="#chat-choices"
               hx-swap="outerHTML">
         <option value="">不選部門</option>
-        {% for department in departments %}<option value="{{ department.id }}">{{ department.name }}</option>{% endfor %}
+        {% for department in departments %}
+          <option value="{{ department.id }}"
+                  {% if department.id == selected_department_id %}selected{% endif %}>{{ department.name }}</option>
+        {% endfor %}
       </select>
       {% include "pages/knowledge/_chat_choices.html" %}
     </aside>

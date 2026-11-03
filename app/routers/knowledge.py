@@ -1023,12 +1023,31 @@ def _chat_overview() -> rag_service.KnowledgeOverview:
 
 @router.get("/chat", response_class=HTMLResponse)
 def chat_page(request: Request) -> HTMLResponse:
-    """資訊部問答頁：切換部門與知識庫，再以清除對話自行比較；沒有一般部門聊天入口。"""
-    _chat_actor(request)
+    """資訊部問答頁：切換部門與知識庫，再以清除對話自行比較；沒有一般部門聊天入口。
+
+    打開時預選登入者目前的部門，並勾選該部門指派（use_for_qa）的知識庫，可直接提問。
+    """
+    actor = _chat_actor(request)
+    departments = _departments()
+    overview = _chat_overview()
+    dept_id = (
+        actor.department_id
+        if actor.department_id in {d.department_id for d in departments}
+        else None
+    )
+    assigned = [
+        row.knowledge_base_id
+        for row in overview.access_rows
+        if dept_id and row.department_id == dept_id and row.use_for_qa
+    ]
     return templates.TemplateResponse(
         request,
         "pages/knowledge/chat.html",
-        {"departments": _department_views(_departments()), **_chat_choices(_chat_overview())},
+        {
+            "departments": _department_views(departments),
+            "selected_department_id": dept_id,
+            **_chat_choices(overview, dept_id, assigned),
+        },
     )
 
 

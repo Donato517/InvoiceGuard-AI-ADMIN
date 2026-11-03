@@ -871,3 +871,20 @@
   color: var(--color-text-muted);
   background-color: var(--color-surface-muted, #f4f6fa);
 }
+
+/* 品名明細表頭欄寬（原為樣板內的行內樣式，djlint H021 不允許） */
+.table th.col-w-index {
+  width: 2.5rem;
+}
+
+.table th.col-w-qty {
+  width: 5.5rem;
+}
+
+.table th.col-w-money {
+  width: 6.5rem;
+}
+
+.table th.col-w-action {
+  width: 4rem;
+}

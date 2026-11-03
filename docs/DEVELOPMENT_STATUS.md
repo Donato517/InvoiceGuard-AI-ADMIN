@@ -193,6 +193,12 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
 - 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
 
+2026-11-03 財務審核（步驟 5）核准與退回改為寫入資料庫（**本機改動、尚未 Commit；僅離線替身測試，SQL 未在真實 PostgreSQL 執行或解析驗證**）：
+- 範圍：只針對從資料庫讀到的發票（UUID 且不在記憶體清單）。整數 ID 的離線示範發票與記憶體內的發票仍走原本只改記憶體的路徑（`test_finance_review_pages` 驗證）。
+- 讀取：`finance_review_db_service.load` 讀 `invoices`（含 `validation_results` 提交警示）、`invoice_field_reviews`、`invoice_changes`、`invoice_status_history`；審核畫面的警示、修改軌跡與審核歷程改顯示真實資料，不再顯示空白的示範資料。
+- 寫入：核准／退回在同一交易更新 `invoices.status`（條件 `status = expected_status`，避免兩位財務同時處理）、`reviewed_by`／`reviewed_at`，寫入 `invoice_status_history`，退回時更新對應 `invoice_field_reviews.review_comment` 並維持未確認。條件不成立回「狀態剛被其他人改變」，不寫任何資料；資料庫不可用回明確訊息，不假裝成功。財務更正的課稅別寫入 `invoices.tax_type`。
+- 限制：(1) `invoices` 沒有 `deduction_code`、`account_code` 欄位（Schema 由 API 管理），財務選的扣抵代號、費用大項、會計科目只暫存在記憶體（`_ACCOUNTING_DRAFT`），核准時以文字寫進 `invoice_status_history.reason` 留存，重啟後需重選；(2) 審核者必須用正式帳號登入（UUID），其他身分不寫入；(3) 申請人端的退回補正、重送與終止（`procurement_*`）、申報檔與傳票步驟仍是記憶體示範，不在本次範圍；(4) 本機 ADMIN 連正式 DB，審核動作會寫入正式資料。
+
 2026-11-03 發票作業流程與 `/intake` 合併、ADMIN→API 認證定案（方案 A；**本機改動、尚未 Commit；僅離線替身測試，未對真實 API／Document AI 驗證**）：
 - 認證：ADMIN 登入成功後以同一組帳密向 API `POST /api/v1/auth/login` 換發 Session Token，存 httpOnly cookie `ig_admin_api_token`（`app/routers/auth.py`、`invoice_intake_service.obtain_api_token`）；換發失敗不影響 ADMIN 登入，之後的辨識／檢核／提交回 401 要求重新登入。呼叫端用該使用者自己的 Token（`BearerCredentials`），位址由 `settings.intake_api_base_url`（本機 `http://127.0.0.1:8000`，雲端正式 API）。已知限制：ADMIN「切換部門」不會同步 API Session 的選取部門；ADMIN 與 API 的 Session 到期時間各自計算。
 - 合併：`/invoices/{id}/flow` 步驟 1～4 改接 API——步驟 1 上傳即呼叫 `recognize`（Document AI OCR → Groq），步驟 2 顯示辨識結果與提醒，步驟 3 用共用核對表單（`pages/intake/_review_form.html`）送 `POST /invoices/{id}/flow/review`（新增／刪除明細、檢核、確認提交），步驟 4 顯示提交結果並連到 `/cases/{id}`。API 辨識的草稿不再寫入示範發票清單，也不套用 `_ensure_invoice_14_fields` 的示範預設值顯示；提交後清除暫存影像。既有清單內發票（退回補正的重新上傳附件）仍只更新附件、不辨識；步驟 5 以後仍是示範資料。

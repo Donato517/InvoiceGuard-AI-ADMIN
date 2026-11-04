@@ -235,31 +235,39 @@ def apply_status_change(
         "tax_type": tax_type,
         "record_reviewer": record_reviewer,
     }
-    if db.execute(UPDATE_STATUS, params).first() is None:
-        return False
-    db.execute(
-        INSERT_HISTORY,
-        {
-            "invoice_id": change.invoice_id,
-            "old_status": change.old_status,
-            "new_status": change.new_status,
-            "reason": change.reason,
-            "changed_by": change.changed_by,
-            "changed_at": change.changed_at,
-        },
-    )
-    if change.return_items:
-        insert_return_items(db, change, submission_round=submission_round)
-    for review in change.field_review_updates:
+    stage = "update_status"  # 失敗時標在例外上，供日誌指出是哪一步（不含任何資料）
+    try:
+        if db.execute(UPDATE_STATUS, params).first() is None:
+            return False
+        stage = "insert_history"
         db.execute(
-            UPDATE_FIELD_REVIEW,
+            INSERT_HISTORY,
             {
                 "invoice_id": change.invoice_id,
-                "submission_round": submission_round,
-                "field_scope": review.field_scope,
-                "field_name": review.field_name,
-                "item_id": review.item_id,
-                "comment": review.review_comment,
+                "old_status": change.old_status,
+                "new_status": change.new_status,
+                "reason": change.reason,
+                "changed_by": change.changed_by,
+                "changed_at": change.changed_at,
             },
         )
+        if change.return_items:
+            stage = "insert_return_items"
+            insert_return_items(db, change, submission_round=submission_round)
+        stage = "update_field_review"
+        for review in change.field_review_updates:
+            db.execute(
+                UPDATE_FIELD_REVIEW,
+                {
+                    "invoice_id": change.invoice_id,
+                    "submission_round": submission_round,
+                    "field_scope": review.field_scope,
+                    "field_name": review.field_name,
+                    "item_id": review.item_id,
+                    "comment": review.review_comment,
+                },
+            )
+    except SQLAlchemyError as exc:
+        exc.ig_stage = stage  # type: ignore[attr-defined]
+        raise
     return True

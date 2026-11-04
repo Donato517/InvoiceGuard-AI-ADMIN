@@ -1884,6 +1884,8 @@ _CONFLICT_MESSAGE = (
     "這張請款單的狀態剛被其他人改變（或已處理），這次沒有儲存任何變更，請重新整理確認。"
 )
 _DB_UNAVAILABLE_MESSAGE = "資料庫目前無法使用，這次沒有儲存任何變更，請稍後再試。"
+_SCHEMA_MISSING_MESSAGE = "資料庫結構尚未更新（缺少退件相關資料表或欄位），這次沒有儲存任何變更。請通知資料庫負責人確認 API 的 Migration 是否已套用。"
+_PERMISSION_DENIED_MESSAGE = "資料庫帳號沒有寫入這項資料的權限，這次沒有儲存任何變更。請通知資料庫負責人確認 ADMIN 角色的權限與 RLS。"
 _NEED_REAL_LOGIN_MESSAGE = "請以正式帳號登入後再審核；目前身分無法寫入審核紀錄。"
 # 資料庫發票（UUID）的會計填寫暫存：invoices 沒有 deduction_code／account_code 欄位，財務先選好再按核准，
 # 核准時寫進審核歷程原因留存。只存在記憶體，重啟後需重選（核准會因缺扣抵代號被擋，不會寫入錯誤資料）。
@@ -1900,6 +1902,15 @@ def _is_db_invoice(invoice: dict[str, Any]) -> bool:
     if any(str(item["id"]) == invoice_id for item in _INVOICE_STORE):
         return False
     return _find_invoice(invoice_id) is not None
+
+
+def _unavailable_message(error: "finance_db.ReviewUnavailableError") -> str:
+    """依失敗分類回傳給財務看的說明；有追蹤碼時附上，方便對照伺服器日誌。"""
+    message = {
+        "schema_missing": _SCHEMA_MISSING_MESSAGE,
+        "permission_denied": _PERMISSION_DENIED_MESSAGE,
+    }.get(error.reason, _DB_UNAVAILABLE_MESSAGE)
+    return f"{message}（追蹤碼 {error.trace_id}）" if error.trace_id else message
 
 
 def _db_error(request: Request, invoice: dict[str, Any], message: str) -> HTMLResponse:
@@ -2148,8 +2159,8 @@ def _save_db_accounting(
             finance_db.save_tax_type(invoice_id, tax_type, case.status)
     except finance_db.ReviewConflictError:
         return _db_error(request, invoice, _CONFLICT_MESSAGE)
-    except finance_db.ReviewUnavailableError:
-        return _db_error(request, invoice, _DB_UNAVAILABLE_MESSAGE)
+    except finance_db.ReviewUnavailableError as error:
+        return _db_error(request, invoice, _unavailable_message(error))
     _ACCOUNTING_DRAFT[invoice_id] = {
         "deduction_code": deduction_code
         or _ACCOUNTING_DRAFT.get(invoice_id, {}).get("deduction_code"),
@@ -2235,8 +2246,8 @@ def _commit_db_change(
         finance_db.commit_change(change, case=case, tax_type=case.tax_type)
     except finance_db.ReviewConflictError:
         return _db_error(request, invoice, _CONFLICT_MESSAGE)
-    except finance_db.ReviewUnavailableError:
-        return _db_error(request, invoice, _DB_UNAVAILABLE_MESSAGE)
+    except finance_db.ReviewUnavailableError as error:
+        return _db_error(request, invoice, _unavailable_message(error))
     _ACCOUNTING_DRAFT.pop(invoice_id, None)
     return _review_redirect(invoice_id)
 
@@ -2551,8 +2562,8 @@ def _terminate_db_invoice(
         finance_db.commit_change(change, case=loaded.case, tax_type=None, record_reviewer=False)
     except finance_db.ReviewConflictError:
         return _procurement_error_page(request, invoice, [_CONFLICT_MESSAGE], loaded.case)
-    except finance_db.ReviewUnavailableError:
-        return _procurement_error_page(request, invoice, [_DB_UNAVAILABLE_MESSAGE], loaded.case)
+    except finance_db.ReviewUnavailableError as error:
+        return _procurement_error_page(request, invoice, [_unavailable_message(error)], loaded.case)
     return RedirectResponse("/invoices", status_code=303)
 
 

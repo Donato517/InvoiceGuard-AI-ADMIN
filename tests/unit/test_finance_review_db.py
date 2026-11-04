@@ -256,6 +256,29 @@ def test_database_unavailable_is_reported_and_nothing_is_recorded(
     assert response.status_code == 400 and "資料庫目前無法使用" in response.text
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("schema_missing", "資料庫結構尚未更新"),
+        ("permission_denied", "沒有寫入這項資料的權限"),
+        ("unavailable", "資料庫目前無法使用"),
+    ],
+)
+def test_unavailable_reasons_show_distinct_messages_with_trace_id(
+    client: TestClient, fake: FakeDb, reason: str, expected: str
+) -> None:
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
+    fake.commit_error = svc.ReviewUnavailableError(reason, "ab12cd34")
+
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
+
+    assert response.status_code == 400
+    assert expected in response.text and "追蹤碼 ab12cd34" in response.text
+    assert "這次沒有儲存任何變更" in response.text
+
+
 def test_memory_demo_invoices_still_use_the_memory_path(client: TestClient, fake: FakeDb) -> None:
     response = client.post("/invoices/3/finance-review/approve")
 

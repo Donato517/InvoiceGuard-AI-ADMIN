@@ -11,10 +11,11 @@
     - 本機 ADMIN 連的是正式 DB，寫入即正式資料寫入；單元測試以替身 Session 驗證，不連線。
 """
 
+import logging
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
@@ -31,7 +32,45 @@ class ReviewConflictError(Exception):
 
 
 class ReviewUnavailableError(Exception):
-    """資料庫未設定、無法連線或寫入失敗；沒有寫入任何資料。"""
+    """資料庫未設定、無法連線或寫入失敗；沒有寫入任何資料。
+
+    Attributes:
+        reason: 失敗分類（只由 SQLSTATE 判斷，不含任何資料）：schema_missing 資料表或欄位不存在
+            （通常是 API 的 Migration 尚未套用）、permission_denied 權限或 RLS 拒絕、unavailable 其他。
+        trace_id: 與伺服器日誌對照用的短碼；沒有日誌的情況為空字串。
+    """
+
+    def __init__(self, reason: str = "unavailable", trace_id: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.trace_id = trace_id
+
+
+logger = logging.getLogger(__name__)
+# SQLSTATE → 分類：42P01 資料表不存在、42703 欄位不存在、42501 權限不足（含 RLS 拒絕寫入）
+_REASONS = {"42P01": "schema_missing", "42703": "schema_missing", "42501": "permission_denied"}
+
+
+def _unavailable(stage: str, exc: Exception, invoice_id: str) -> ReviewUnavailableError:
+    """記錄資料庫錯誤的類型與位置後，回傳給畫面用的通用錯誤；日誌不含 SQL 參數、連線字串或發票內容。
+
+    只記錄：追蹤碼、操作階段、例外類別、SQLSTATE、資料表與約束名稱（結構名稱）、案件 UUID。
+    """
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    diag = getattr(orig, "diag", None)
+    trace_id = uuid4().hex[:8]
+    logger.error(
+        "finance_review_db_failure trace=%s stage=%s error=%s sqlstate=%s table=%s constraint=%s invoice=%s",
+        trace_id,
+        getattr(exc, "ig_stage", None) or stage,
+        type(orig).__name__ if orig is not None else type(exc).__name__,
+        sqlstate,
+        getattr(diag, "table_name", None),
+        getattr(diag, "constraint_name", None),
+        invoice_id,
+    )
+    return ReviewUnavailableError(_REASONS.get(str(sqlstate), "unavailable"), trace_id)
 
 
 @dataclass(frozen=True)
@@ -86,8 +125,8 @@ def load(
         carryovers = repo.list_carryovers(db, invoice_id)
         return_items = repo.list_return_items(db, invoice_id)
         snapshots = repo.list_snapshots(db, invoice_id)
-    except repo.SQLAlchemyError:
-        raise ReviewUnavailableError from None
+    except repo.SQLAlchemyError as exc:
+        raise _unavailable("load", exc, invoice_id) from None
     finally:
         _close(db)
     return LoadedReview(
@@ -151,9 +190,9 @@ def commit_change(
         db.commit()
     except ReviewConflictError:
         raise
-    except repo.SQLAlchemyError:
+    except repo.SQLAlchemyError as exc:
         db.rollback()
-        raise ReviewUnavailableError from None
+        raise _unavailable("commit_change", exc, change.invoice_id) from None
     finally:
         _close(db)
 
@@ -184,9 +223,9 @@ def save_tax_type(
         db.commit()
     except ReviewConflictError:
         raise
-    except repo.SQLAlchemyError:
+    except repo.SQLAlchemyError as exc:
         db.rollback()
-        raise ReviewUnavailableError from None
+        raise _unavailable("save_tax_type", exc, invoice_id) from None
     finally:
         _close(db)
 

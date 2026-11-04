@@ -103,6 +103,10 @@ def test_step3_shows_returned_items(client: TestClient) -> None:
     assert "儲存補正內容" in html
     assert "returned_to_applicant" not in html
     assert "total_amount</strong>" not in html
+    # 待補正頁面（步驟 3）側欄應高亮「🗂️ 發票管理」（/invoices），而非「📤 發票上傳」（/invoices/upload）
+    assert 'href="/invoices"' in html
+    assert 'class="app-sidebar__link app-sidebar__link--active">\n          <span class="app-sidebar__emoji" aria-hidden="true">🗂️</span>\n          <span>發票管理</span>' in html
+    assert 'class="app-sidebar__link app-sidebar__link--active">\n          <span class="app-sidebar__emoji" aria-hidden="true">📤</span>\n          <span>發票上傳</span>' not in html
 
 
 def test_invoice_list_marks_returned_first(client: TestClient) -> None:

@@ -781,6 +781,10 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         list_page = browser.get("/invoices")
         assert list_page.status_code == 200
         assert "發票管理" in list_page.text
+        assert "已審核" in list_page.text
+        assert "待審核" in list_page.text
+        assert "待補正" in list_page.text
+        assert "已審核待處理" not in list_page.text
         assert "/invoices/1/flow?step=4" in list_page.text
         assert "/invoices/1/flow?step=9" not in list_page.text
         assert "前四步核對已完成／待財務接續" in list_page.text

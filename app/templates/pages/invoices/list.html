@@ -21,23 +21,38 @@
     </div>
     <a href="/invoices/new" class="btn btn--primary">＋ 新增發票</a>
   </div>
-  <div class="stat-grid">
-    <div class="stat-card stat-card--success">
-      <div class="stat-card__label">已處理</div>
-      <div class="stat-card__value">{{ counts.processed }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-card__label">已審核待處理</div>
-      <div class="stat-card__value">{{ counts.approved_pending }}</div>
-    </div>
-    <div class="stat-card stat-card--warning">
-      <div class="stat-card__label">待審核</div>
-      <div class="stat-card__value">{{ counts.pending_review }}</div>
-    </div>
-    <div class="stat-card stat-card--danger">
-      <div class="stat-card__label">待補正</div>
-      <div class="stat-card__value">{{ counts.returned }}</div>
-    </div>
+  <div class="stat-grid {% if not is_finance %}stat-grid--three{% endif %}">
+    {% if is_finance %}
+      <div class="stat-card stat-card--success">
+        <div class="stat-card__label">已處理</div>
+        <div class="stat-card__value">{{ counts.processed }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card__label">已審核待處理</div>
+        <div class="stat-card__value">{{ counts.approved_pending }}</div>
+      </div>
+      <div class="stat-card stat-card--warning">
+        <div class="stat-card__label">待審核</div>
+        <div class="stat-card__value">{{ counts.pending_review }}</div>
+      </div>
+      <div class="stat-card stat-card--danger">
+        <div class="stat-card__label">待補正</div>
+        <div class="stat-card__value">{{ counts.returned }}</div>
+      </div>
+    {% else %}
+      <div class="stat-card stat-card--success">
+        <div class="stat-card__label">已審核</div>
+        <div class="stat-card__value">{{ counts.approved }}</div>
+      </div>
+      <div class="stat-card stat-card--warning">
+        <div class="stat-card__label">待審核</div>
+        <div class="stat-card__value">{{ counts.pending_review }}</div>
+      </div>
+      <div class="stat-card stat-card--danger">
+        <div class="stat-card__label">待補正</div>
+        <div class="stat-card__value">{{ counts.returned }}</div>
+      </div>
+    {% endif %}
   </div>
   <section class="card">
     <div class="toolbar">
@@ -95,17 +110,30 @@
                 <td>{{ inv.net_amount | currency }}</td>
                 <td>{{ inv.tax_amount | currency }}</td>
                 <td>
-                  {% if inv.display_status_code == "processed" %}
-                    <span class="badge badge--passed">{{ inv.display_status_label }}</span>
-                  {% elif inv.display_status_code == "approved_pending" %}
-                    <span class="badge badge--info">{{ inv.display_status_label }}</span>
-                  {% elif inv.display_status_code == "pending_review" %}
-                    <span class="badge badge--pending">{{ inv.display_status_label }}</span>
-                  {% elif inv.display_status_code == "returned" %}
-                    <span class="badge badge--flagged">{{ inv.display_status_label }}</span>
+                  {% if is_finance %}
+                    {% if inv.display_status_code == "processed" %}
+                      <span class="badge badge--passed">{{ inv.display_status_label }}</span>
+                    {% elif inv.display_status_code == "approved_pending" %}
+                      <span class="badge badge--info">{{ inv.display_status_label }}</span>
+                    {% elif inv.display_status_code == "pending_review" %}
+                      <span class="badge badge--pending">{{ inv.display_status_label }}</span>
+                    {% elif inv.display_status_code == "returned" %}
+                      <span class="badge badge--flagged">{{ inv.display_status_label }}</span>
+                    {% else %}
+                      <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                      {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
+                    {% endif %}
                   {% else %}
-                    <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
-                    {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
+                    {% if inv.display_status_code in ("processed", "approved_pending") %}
+                      <span class="badge badge--passed">已審核</span>
+                    {% elif inv.display_status_code == "pending_review" %}
+                      <span class="badge badge--pending">待審核</span>
+                    {% elif inv.display_status_code == "returned" %}
+                      <span class="badge badge--flagged">待補正</span>
+                    {% else %}
+                      <span class="badge badge--{{ inv.status }}">{{ INVOICE_STATUS_LABEL.get(inv.status, inv.status) }}</span>
+                      {% if inv.review_status == "returned" %}<span class="badge badge--flagged">待補正</span>{% endif %}
+                    {% endif %}
                   {% endif %}
                 </td>
                 <td>

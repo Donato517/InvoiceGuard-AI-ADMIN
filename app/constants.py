@@ -24,7 +24,8 @@ WELCOME_PATH = "/welcome"
 MENU_ITEMS: list[tuple[str, str]] = [
     ("歡迎頁", WELCOME_PATH),
     ("儀表板", "/dashboard"),
-    ("發票上傳", "/invoices"),
+    ("發票上傳", "/invoices/upload"),
+    ("發票管理", "/invoices"),
     ("知識庫管理", "/knowledge"),
     ("帳號管理", "/accounts"),
     ("部門管理", "/department"),

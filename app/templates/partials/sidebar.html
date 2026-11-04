@@ -5,7 +5,11 @@
 {% set menu_icons = {
   "/welcome": "🏠",
   "/dashboard": "📊",
-  "/invoices": "🧾",
+  "/invoices/upload": "📤",
+  "/invoices": "🗂️",
+  "/invoices/review": "🔍",
+  "/invoices/filing": "📑",
+  "/invoices/voucher": "🧾",
   "/knowledge": "📚",
   "/accounts": "👤",
   "/department": "🏢",
@@ -48,13 +52,16 @@
     {% else %}
       {% set navigation = [("歡迎頁", "/welcome"), ("帳號管理", "/accounts"), ("部門管理", "/department"), ("功能管理", "/functions")] if request.state.e_local_setup is defined and request.state.e_local_setup else MENU_ITEMS %}
       {% for label, path in navigation %}
-        {% if path == "/invoices" %}
-          <div class="app-sidebar__caption">發票與知識庫作業</div>
+        {% if path == "/invoices" or path == "/invoices/upload" %}
+          {% if path == "/invoices/upload" or (path == "/invoices" and not loop.previtem or loop.previtem[1] != "/invoices/upload") %}
+            <div class="app-sidebar__caption">發票與知識庫作業</div>
+          {% endif %}
         {% elif path == "/accounts" %}
           <div class="app-sidebar__caption">系統與權限設定</div>
         {% endif %}
+        {% set is_active = (request.state.active_sidebar_route == path) if (request.state.active_sidebar_route is defined and request.state.active_sidebar_route) else (request.url.path == path or (path != '/department' and request.url.path.startswith(path + '/'))) %}
         <a href="{{ path }}"
-           class="app-sidebar__link {% if request.url.path == path or (path != '/department' and request.url.path.startswith(path + '/')) %}app-sidebar__link--active{% endif %}">
+           class="app-sidebar__link {% if is_active %}app-sidebar__link--active{% endif %}">
           <span class="app-sidebar__emoji" aria-hidden="true">{{ menu_icons.get(path, "•") }}</span>
           <span>{{ label }}</span>
         </a>

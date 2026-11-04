@@ -100,13 +100,19 @@ from app.services.procurement_case_service import (
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
-INVOICE_STATUS_CHOICES: list[tuple[str, str]] = [
+INVOICE_STATUS_CHOICES_FINANCE: list[tuple[str, str]] = [
     ("processed", "已處理"),
     ("approved_pending", "已審核待處理"),
     ("pending_review", "待審核"),
     ("returned", "待補正"),
 ]
-INVOICE_STATUS_MAP: dict[str, str] = dict(INVOICE_STATUS_CHOICES)
+INVOICE_STATUS_CHOICES_NON_FINANCE: list[tuple[str, str]] = [
+    ("approved", "已審核"),
+    ("pending_review", "待審核"),
+    ("returned", "待補正"),
+]
+INVOICE_STATUS_CHOICES: list[tuple[str, str]] = INVOICE_STATUS_CHOICES_FINANCE
+INVOICE_STATUS_MAP: dict[str, str] = dict(INVOICE_STATUS_CHOICES_FINANCE)
 
 
 def _derive_invoice_status(inv: dict[str, Any]) -> str:
@@ -818,18 +824,20 @@ def _render_invoice_list_view(
     if status:
         norm = status.strip()
         code_lookup = {
-            "processed": "processed",
-            "已處理": "processed",
-            "approved_pending": "approved_pending",
-            "已審核待處理": "approved_pending",
-            "pending_review": "pending_review",
-            "待審核": "pending_review",
-            "returned": "returned",
-            "待補正": "returned",
+            "processed": ["processed"],
+            "已處理": ["processed"],
+            "approved_pending": ["approved_pending"],
+            "已審核待處理": ["approved_pending"],
+            "approved": ["processed", "approved_pending"],
+            "已審核": ["processed", "approved_pending"],
+            "pending_review": ["pending_review"],
+            "待審核": ["pending_review"],
+            "returned": ["returned"],
+            "待補正": ["returned"],
         }
         if norm in code_lookup:
-            target = code_lookup[norm]
-            invoices = [i for i in invoices if i.get("display_status_code") == target]
+            targets = code_lookup[norm]
+            invoices = [i for i in invoices if i.get("display_status_code") in targets]
         elif norm in INVOICE_STATUS_LABEL:
             invoices = [i for i in invoices if i["status"] == norm]
 
@@ -855,6 +863,11 @@ def _render_invoice_list_view(
         "approved_pending": sum(
             1 for i in base_invoices if i.get("display_status_code") == "approved_pending"
         ),
+        "approved": sum(
+            1
+            for i in base_invoices
+            if i.get("display_status_code") in ("processed", "approved_pending")
+        ),
         "pending_review": sum(
             1 for i in base_invoices if i.get("display_status_code") == "pending_review"
         ),
@@ -873,8 +886,11 @@ def _render_invoice_list_view(
             "q": q,
             "counts": counts,
             "section_title": section_title,
-            "invoice_status_choices": INVOICE_STATUS_CHOICES,
+            "invoice_status_choices": (
+                INVOICE_STATUS_CHOICES_FINANCE if is_finance else INVOICE_STATUS_CHOICES_NON_FINANCE
+            ),
             "max_flow_step": getattr(request.state, "invoice_max_step", 9),
+            "is_finance": is_finance,
         },
     )
 
@@ -1229,7 +1245,13 @@ def _render_flow_page(
     fields_14 = _build_14_fields_rows(invoice)
     invoice_id = str(invoice["id"])
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
-    if max_flow_step < 9 or step <= 3:
+    if (
+        invoice.get("review_status") == "returned"
+        or invoice.get("status") in ("returned", "returned_to_applicant", "returned_to_accounting")
+        or _returned_case(invoice) is not None
+    ):
+        request.state.active_sidebar_route = "/invoices"
+    elif max_flow_step < 9 or step <= 3:
         request.state.active_sidebar_route = "/invoices/upload"
     elif step <= 5:
         request.state.active_sidebar_route = "/invoices/review"

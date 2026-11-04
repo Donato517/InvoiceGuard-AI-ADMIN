@@ -131,6 +131,37 @@ window.addEventListener('pageshow', () => {
     uploadBtn.disabled = false
     uploadBtn.textContent = '上傳並開始辨識 →'
   }
+  const loginBtn = document.querySelector('.e-login__submit')
+  if (loginBtn && loginBtn.classList.contains('btn--loading')) {
+    loginBtn.classList.remove('btn--loading')
+    loginBtn.removeAttribute('aria-busy')
+    loginBtn.disabled = false
+    loginBtn.textContent = '登入系統'
+  }
+})
+
+/**
+ * 登入表單：送出時將登入按鈕轉為載入旋轉圈狀態。
+ */
+document.addEventListener('submit', (event) => {
+  const form = event.target
+  if (
+    form &&
+    (form.classList.contains('e-login__form') || form.getAttribute('action') === '/login') &&
+    !event.defaultPrevented
+  ) {
+    const loginBtn =
+      form.querySelector('.e-login__submit') ||
+      form.querySelector('button[type="submit"]')
+    if (loginBtn) {
+      loginBtn.classList.add('btn--loading')
+      loginBtn.setAttribute('aria-busy', 'true')
+      loginBtn.innerHTML = '<span class="btn__spinner" aria-hidden="true"></span>登入中…'
+      setTimeout(() => {
+        loginBtn.disabled = true
+      }, 0)
+    }
+  }
 })
 
 /**

@@ -34,3 +34,5 @@ Thumbs.db
 
 # 供應商隔離試作的本機資料及測試輸出
 artifacts/supplier-demo/
+saved_invoices/
+

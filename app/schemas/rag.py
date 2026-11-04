@@ -55,13 +55,15 @@ ERROR_UNSUPPORTED_FORMAT = "rag_unsupported_format"
 ERROR_TEXT_DECODE = "rag_text_decode_failed"
 ERROR_STORAGE_READ = "rag_storage_read_failed"
 ERROR_PDF_PAGE_LIMIT = "rag_pdf_page_limit"
+ERROR_DOCX_INVALID = "rag_docx_invalid"
 ERROR_LABELS = {
     ERROR_EMPTY_TEXT: "擷取不到文字（可能是掃描檔或空白文件）",
     ERROR_VERSION_MISMATCH: "文件內容已更新，本次索引結果已放棄",
-    ERROR_UNSUPPORTED_FORMAT: "目前不支援此格式（DOCX 尚未實作）",
+    ERROR_UNSUPPORTED_FORMAT: "目前不支援此格式（支援 PDF、DOCX、TXT、MD）",
+    ERROR_DOCX_INVALID: "DOCX 無法讀取（檔案損壞、不是 Word 文件或內容過大）",
     ERROR_TEXT_DECODE: "文字檔不是 UTF-8 編碼",
     ERROR_STORAGE_READ: "讀取原始檔案失敗",
-    ERROR_PDF_PAGE_LIMIT: "PDF 超過 15 頁，目前尚未支援長文件",
+    ERROR_PDF_PAGE_LIMIT: "PDF 超過 45 頁，請拆成多份檔案上傳",
     "document_ai_invalid_input": "PDF 無法辨識（檔案損壞或格式不符）",
     "document_ai_timeout": "PDF 辨識逾時，可稍後重新索引",
     "document_ai_quota_exceeded": "PDF 辨識額度不足，可稍後重新索引",

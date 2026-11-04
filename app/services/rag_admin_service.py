@@ -68,8 +68,8 @@ MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 # 名稱長度上限（與畫面 maxlength 相同）
 MAX_NAME_LENGTH = 160
 # 一次索引的總時間預算，從 index_document 開始計算（含 DB 交易與讀檔）；
-# Vercel 函式與本機 START 閘道都在 60 秒切斷，索引沿用較短的預算
-INDEX_TOTAL_BUDGET_SECONDS = 25.0
+# Vercel 函式與本機 START 閘道都在 60 秒切斷。長 PDF 兩階段辨識約 40 秒，其餘留給向量與寫入
+INDEX_TOTAL_BUDGET_SECONDS = 50.0
 # 寫入段落與向量的交易保留時間（正式 DB 在雲端，來回較慢）
 INDEX_WRITE_MARGIN_SECONDS = 4.0
 # 補舊檔雜湊的時間上限：ADMIN 函式 60 秒內還要完成本次上傳

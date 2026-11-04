@@ -3,9 +3,11 @@
 功能說明：RAG 索引規則——文字擷取（可注入）、中文切段、以 VertexEmbeddingClient 取得向量、寫入前版本核對與重試規則。
 相依模組：app.schemas.rag、app.integrations.vertex_embedding、app.integrations.document_ai
 注意事項：
-    - 依 docs/RAG_DEVELOPMENT.md：TXT／MD 由程式解碼；PDF 使用既有 DocumentAIClient（掃描檔也能辨識），
-      單次最多 15 頁，超過標為失敗（rag_pdf_page_limit）；DOCX 尚未實作，標為失敗
-      （rag_unsupported_format）。擷取不到文字一律失敗，不可標為 ready。
+    - 依 docs/RAG_DEVELOPMENT.md：TXT／MD 由程式解碼；DOCX 以標準函式庫 zipfile＋XML 讀取段落與表格
+      （不需新套件；Word 自動編號不在 document.xml，不會帶出）；PDF 使用既有 DocumentAIClient
+      （掃描檔也能辨識）。Document AI 單次最多 15 頁，長文件分批：先辨識第 1～15 頁，剛好 15 頁時
+      同時送出 16～30、31～45 與第 46 頁探測，合併後再標示項次；超過 45 頁標為 rag_pdf_page_limit。
+      擷取不到文字一律失敗，不可標為 ready。
     - PDF 左側印的項次依座標併回內文（restore_item_numbers），改了這段規則要重新建立索引才生效。
     - 向量直接使用共用模組 VertexEmbeddingClient.embed_texts()（task="document"），用戶端由呼叫端注入；
       測試以 RAG_DEVELOPMENT.md 的 FakeEmbedding 替身代替，不呼叫 Google。
@@ -14,18 +16,30 @@
     - ADMIN 每次請求上限 60 秒：一次索引沿用較短預算；一次只處理一份文件，向量分批呼叫並共用時間預算。
 """
 
+import io
 import re
 import time
+import zipfile
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from pathlib import PurePosixPath
 from statistics import median
 from typing import Protocol
+from xml.etree import ElementTree
 
-from app.integrations.document_ai import DocumentAIError, OcrLine, OcrPage, OcrResult
+from app.integrations.document_ai import (
+    DocumentAIError,
+    OcrLine,
+    OcrPage,
+    OcrResult,
+    ProcessOptions,
+    TextSegment,
+)
 from app.integrations.vertex_embedding import EmbeddingError, VertexEmbeddingClient
 from app.schemas.rag import (
+    ERROR_DOCX_INVALID,
     ERROR_EMPTY_TEXT,
     ERROR_PDF_PAGE_LIMIT,
     ERROR_TEXT_DECODE,
@@ -81,8 +95,22 @@ RETRYABLE_CODES = frozenset(
 PLAIN_TEXT_SUFFIXES = frozenset({".txt", ".md", ".markdown"})
 PLAIN_TEXT_MIME_TYPES = frozenset({"text/plain", "text/markdown", "text/x-markdown"})
 PDF_MIME_TYPE = "application/pdf"
-# PDF 辨識的時間上限（實測 15 頁約 14 秒；索引預算 25 秒，其餘留給向量與寫入）
-PDF_TIMEOUT_SECONDS = 15.0
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# DOCX 解壓後的 document.xml 上限（防止壓縮炸彈）；一般規章遠小於此
+DOCX_MAX_XML_BYTES = 20 * 1024 * 1024
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+# PDF 每批辨識的時間上限（實測 15 頁約 14～19 秒）；長文件兩階段約 40 秒，總預算見 rag_admin_service
+PDF_TIMEOUT_SECONDS = 20.0
+# Document AI 單次頁數上限與本系統支援的最多頁數（兩階段可在 60 秒內完成）
+PDF_BATCH_PAGES = 15
+PDF_MAX_PAGES = 45
+# 第一批之後同時送出的頁碼；最後一批只有第 46 頁，用來確認文件沒有超過上限
+_PDF_FIRST_BATCH = tuple(range(1, PDF_BATCH_PAGES + 1))
+_PDF_REST_BATCHES = (
+    tuple(range(16, 31)),
+    tuple(range(31, PDF_MAX_PAGES + 1)),
+    (PDF_MAX_PAGES + 1,),
+)
 # Document AI 超過單次頁數上限時 detail 內含的字樣
 _PAGE_LIMIT_DETAIL = "PAGE_LIMIT_EXCEEDED"
 
@@ -161,10 +189,77 @@ class PdfProcessor(Protocol):
     """DocumentAIClient.process 的最小介面，測試以替身注入。"""
 
     def process(
-        self, content: bytes, mime_type: str, *, timeout_seconds: float | None = None
+        self,
+        content: bytes,
+        mime_type: str,
+        *,
+        timeout_seconds: float | None = None,
+        options: ProcessOptions | None = None,
     ) -> OcrResult:
-        """辨識文件並回傳文字與頁面。"""
+        """辨識文件並回傳文字與頁面；options.pages 指定頁碼（從 1 起算）。"""
         ...
+
+
+def _is_docx(filename: str, mime_type: str | None) -> bool:
+    media = (mime_type or "").split(";", 1)[0].strip().lower()
+    return media == DOCX_MIME_TYPE or PurePosixPath(filename).suffix.lower() == ".docx"
+
+
+def _run_text(element: ElementTree.Element) -> str:
+    """段落或儲存格內的文字：w:t 為文字、w:tab 為定位、w:br／w:cr 為分行；刪除的修訂（w:delText）不取。"""
+    parts = []
+    for node in element.iter():
+        if node.tag == f"{_W}t":
+            parts.append(node.text or "")
+        elif node.tag == f"{_W}tab":
+            parts.append("\t")
+        elif node.tag in (f"{_W}br", f"{_W}cr"):
+            parts.append("\n")
+    return "".join(parts)
+
+
+def _block_lines(element: ElementTree.Element) -> list[str]:
+    """依文件順序取出段落與表格；表格每列一行、儲存格以定位分隔；內容控制項（w:sdt）展開。"""
+    lines: list[str] = []
+    for child in element:
+        if child.tag == f"{_W}p":
+            lines.append(_run_text(child))
+        elif child.tag == f"{_W}tbl":
+            for row in child.iter(f"{_W}tr"):
+                cells = [
+                    " ".join(_run_text(p) for p in cell.iter(f"{_W}p")).strip()
+                    for cell in row.iter(f"{_W}tc")
+                ]
+                lines.append("\t".join(cells))
+        elif child.tag in (f"{_W}sdt", f"{_W}sdtContent"):
+            lines.extend(_block_lines(child))
+    return lines
+
+
+def extract_docx_text(content: bytes) -> str:
+    """讀取 DOCX 本文（word/document.xml）的段落與表格文字。
+
+    Args:
+        content: DOCX 檔案內容。
+
+    Returns:
+        依文件順序以換行連接的文字。
+
+    Raises:
+        TextExtractionError: 不是有效的 DOCX、缺少本文或解壓後過大（rag_docx_invalid）。
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            info = archive.getinfo("word/document.xml")
+            if info.file_size > DOCX_MAX_XML_BYTES:
+                raise TextExtractionError(ERROR_DOCX_INVALID)
+            root = ElementTree.fromstring(archive.read(info))
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, RuntimeError):
+        raise TextExtractionError(ERROR_DOCX_INVALID) from None
+    body = root.find(f"{_W}body")
+    if body is None:
+        raise TextExtractionError(ERROR_DOCX_INVALID)
+    return "\n".join(_block_lines(body))
 
 
 def _is_pdf(filename: str, mime_type: str | None) -> bool:
@@ -259,6 +354,41 @@ def _drop_unreliable_items(text: str) -> str:
     return "\n".join(lines)
 
 
+def merge_ocr_results(results: list[OcrResult]) -> OcrResult:
+    """把分批辨識的結果接成一份：文字依序相接，後面各批的行位置加上前面文字的長度。
+
+    項次標示依文字位置運作，合併後才能跨批接續同一條的項次。
+
+    Args:
+        results: 依頁碼順序的各批結果。
+
+    Returns:
+        合併後的結果；只有一批時原樣回傳。
+    """
+    if len(results) == 1:
+        return results[0]
+    text = ""
+    pages: list[OcrPage] = []
+    for result in results:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        offset = len(text)
+        for page in result.pages:
+            lines = tuple(
+                replace(
+                    line,
+                    text_segments=tuple(
+                        TextSegment(segment.start + offset, segment.end + offset)
+                        for segment in line.text_segments
+                    ),
+                )
+                for line in page.lines
+            )
+            pages.append(replace(page, lines=lines))
+        text += result.text or ""
+    return OcrResult(text, tuple(pages), {})
+
+
 def restore_item_numbers(result: OcrResult) -> str:
     """把法規 PDF 左側印的項次併回內文，在每項第一行標示「第N條第M項」。
 
@@ -279,8 +409,15 @@ def restore_item_numbers(result: OcrResult) -> str:
     return _drop_unreliable_items(text)
 
 
+def _pdf_error_code(error: DocumentAIError) -> str:
+    """Document AI 頁數超過單次上限時改為 rag_pdf_page_limit，其餘沿用 document_ai_* 代碼。"""
+    if error.code == "document_ai_invalid_input" and _PAGE_LIMIT_DETAIL in error.detail:
+        return ERROR_PDF_PAGE_LIMIT
+    return error.code
+
+
 class DocumentTextExtractor:
-    """依格式擷取文字：TXT／MD 交給 PlainTextExtractor，PDF 交給 Document AI，其他格式失敗。
+    """依格式擷取文字：TXT／MD 交給 PlainTextExtractor，DOCX 以 zipfile 讀取，PDF 交給 Document AI，其他格式失敗。
 
     Document AI 用戶端以工廠延後建立，只有遇到 PDF 才建立；同一個擷取器只建立一次，
     由呼叫端在工作結束後呼叫 close()。
@@ -309,22 +446,62 @@ class DocumentTextExtractor:
             擷取出的文字（可能為空白，由切段判斷為 rag_empty_text）。
 
         Raises:
-            TextExtractionError: 不支援的格式、不是 UTF-8、PDF 超過 15 頁或 Document AI 錯誤
+            TextExtractionError: 不支援的格式、不是 UTF-8、DOCX 無效、PDF 超過 45 頁或 Document AI 錯誤
                 （代碼為 document_ai_*，不含文件內容）。
         """
+        if _is_docx(filename, mime_type):
+            return ExtractedText((ExtractedPage(1, extract_docx_text(content)),))
         if not _is_pdf(filename, mime_type):
             return self._plain.extract(content, filename=filename, mime_type=mime_type)
         try:
             if self._client is None:
                 self._client = self._factory()
-            result = self._client.process(
-                content, PDF_MIME_TYPE, timeout_seconds=self._timeout_seconds
-            )
+            first = self._process(content, _PDF_FIRST_BATCH)
         except DocumentAIError as error:
-            if error.code == "document_ai_invalid_input" and _PAGE_LIMIT_DETAIL in error.detail:
-                raise TextExtractionError(ERROR_PDF_PAGE_LIMIT) from None
-            raise TextExtractionError(error.code) from None
-        return ExtractedText((ExtractedPage(1, restore_item_numbers(result)),))
+            raise TextExtractionError(_pdf_error_code(error)) from None
+        results = [first]
+        if len(first.pages) >= PDF_BATCH_PAGES:
+            results += self._process_rest(content)
+        merged = merge_ocr_results(results)
+        return ExtractedText((ExtractedPage(1, restore_item_numbers(merged)),))
+
+    def _process(self, content: bytes, pages: tuple[int, ...]) -> OcrResult:
+        assert self._client is not None
+        return self._client.process(
+            content,
+            PDF_MIME_TYPE,
+            timeout_seconds=self._timeout_seconds,
+            options=ProcessOptions(pages=pages),
+        )
+
+    def _process_rest(self, content: bytes) -> list[OcrResult]:
+        """第 1～15 頁剛好 15 頁時，同時辨識其餘各批；前一批未滿就代表已到文件結尾。
+
+        頁碼超出文件結尾時，Document AI 可能回傳空頁或 document_ai_invalid_input，兩者都視為結尾。
+        第 46 頁有內容代表超過 45 頁，整份標為 rag_pdf_page_limit。
+        """
+        with ThreadPoolExecutor(max_workers=len(_PDF_REST_BATCHES)) as pool:
+            futures = [pool.submit(self._process, content, pages) for pages in _PDF_REST_BATCHES]
+            outcomes: list[OcrResult | DocumentAIError] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result())
+                except DocumentAIError as error:
+                    outcomes.append(error)
+        results: list[OcrResult] = []
+        for pages, outcome in zip(_PDF_REST_BATCHES, outcomes, strict=True):
+            if isinstance(outcome, DocumentAIError):
+                if outcome.code == "document_ai_invalid_input":
+                    break
+                raise TextExtractionError(_pdf_error_code(outcome))
+            if pages[0] > PDF_MAX_PAGES:
+                if outcome.pages:
+                    raise TextExtractionError(ERROR_PDF_PAGE_LIMIT)
+                break
+            results.append(outcome)
+            if len(outcome.pages) < len(pages):
+                break
+        return results
 
     def close(self) -> None:
         """關閉已建立的 Document AI 用戶端。"""

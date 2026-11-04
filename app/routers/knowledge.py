@@ -41,7 +41,7 @@ from app.schemas.rag import (
     RagRuleError,
 )
 from app.services import rag_admin_service as rag_service
-from app.services import rag_qa_service
+from app.services import rag_eval_service, rag_qa_service
 from app.services.e_admin_service import KNOWLEDGE, EModule, get_e_module
 from app.services.rag_admin_service import RagUnavailableError, UploadItem
 from app.services.rag_selection_service import can_manage_knowledge_base
@@ -1098,6 +1098,33 @@ def chat_ask(
         "pages/knowledge/_chat_message.html",
         {"question": question.strip(), "answer": answer},
         status_code=400 if answer.failed else 200,
+    )
+
+
+@router.get("/eval", response_class=HTMLResponse)
+def eval_page(request: Request) -> HTMLResponse:
+    """資訊部題庫回歸測試：列出固定題目，逐題或依序全部執行；每次執行都會消耗 token。"""
+    _chat_actor(request)
+    return templates.TemplateResponse(
+        request, "pages/knowledge/eval.html", {"cases": rag_eval_service.CASES}
+    )
+
+
+@router.post("/eval/run", response_class=HTMLResponse)
+def eval_run(request: Request, case_id: Annotated[str, Form()] = "") -> HTMLResponse:
+    """執行一題並回傳該題的結果列；一次一題，避開 60 秒限制。"""
+    actor = _chat_actor(request)
+    try:
+        result = rag_eval_service.run_case(case_id, actor)
+    except RagRuleError as error:
+        return HTMLResponse(
+            f'<td colspan="3" class="alert alert--danger">{escape(error.message)}</td>',
+            status_code=400,
+        )
+    except RagUnavailableError as error:
+        raise _unavailable(error) from None
+    return templates.TemplateResponse(
+        request, "pages/knowledge/_eval_result.html", {"result": result}
     )
 
 

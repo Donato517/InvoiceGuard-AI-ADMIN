@@ -68,7 +68,7 @@
                  type="file"
                  accept=".pdf,.docx,.txt,.md"
                  required>
-          <span class="muted">一次上傳一份。支援 PDF、DOCX、TXT、Markdown，4 MB 以下；PDF 目前最多 15 頁，DOCX 可上傳但尚無法索引。</span>
+          <span class="muted">一次上傳一份。支援 PDF、DOCX、TXT、Markdown，4 MB 以下；PDF 最多 45 頁（超過請拆成多份）；DOCX 可直接索引（Word 自動編號不會帶出）。</span>
         </div>
       </div>
       <p class="muted small-text">新上傳一律待審查；由資訊部確認內容並建立索引後核准。</p>
@@ -82,7 +82,7 @@
               class="btn btn--secondary upload-form__pending"
               data-close-dialog>取消</button>
       <button type="submit" class="btn btn--primary upload-form__pending">上傳文件</button>
-      <a href="" class="btn btn--primary upload-form__done">完成</a>
+      <a href="" class="btn btn--primary upload-form__done" data-busy="正在更新清單…">完成</a>
     </div>
   </form>
 </dialog>

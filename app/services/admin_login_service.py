@@ -44,6 +44,7 @@ CATALOG_CODES = {
     "rag.manager": "rag_manager",
 }
 COMPANY_CATALOG_CODES = {
+    "suppliers",
     "sys.accounts",
     "sys.departments",
     "sys.features",

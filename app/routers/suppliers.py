@@ -17,9 +17,6 @@ from app.schemas.supplier import (
     SupplierInput,
 )
 from app.services.supplier_service import (
-    DEMO_ACTIONS,
-    FUNCTION_SELECTIONS,
-    SUPPLIER_FUNCTIONS,
     SupplierError,
     SupplierStorageError,
 )
@@ -35,7 +32,6 @@ DEFAULTS = {
     "credit_rating": "unassessed",
 }
 MESSAGES = {
-    "functions-saved": "已儲存此供應商的模擬功能設定；尚未套用實際操作權限",
     "created": "已新增模擬供應商",
     "saved": "已儲存模擬資料",
     "enabled": "已啟用模擬供應商",
@@ -63,15 +59,6 @@ FIELD_LABELS = {
 
 def render(request: Request, page: str, status: int = 200, **context: object) -> HTMLResponse:
     """沿用樣板環境，提供有限的顯示選項。"""
-    if page == "detail":
-        try:
-            context["function_settings"] = request.app.state.suppliers.get_function_settings(
-                context["supplier"]["supplier_id"]
-            )
-        except SupplierStorageError as error:
-            raise HTTPException(503, "本機功能設定暫時無法讀取") from error
-        context["supplier_functions"] = SUPPLIER_FUNCTIONS
-        context["function_actions"] = DEMO_ACTIONS
     return request.app.state.templates.TemplateResponse(
         request,
         "pages/suppliers/" + page + ".html",
@@ -133,28 +120,8 @@ async def supplier_department_functions_save(request: Request) -> HTMLResponse |
 async def supplier_function_settings_save(
     request: Request, supplier_id: str
 ) -> HTMLResponse | RedirectResponse:
-    """保存此供應商的功能列表，拒絕未知操作、重複欄位及舊版本。"""
-    supplier = get_supplier(request, supplier_id)
-    form = await checked_form(request)
-    original = await request.form()
-    if set(form) - {"csrf", "functions_updated_at", *FUNCTION_SELECTIONS} or any(
-        len(original.getlist(key)) != 1 for key in original
-    ):
-        raise HTTPException(400, "功能設定包含未知或重複欄位")
-    try:
-        selections = frozenset(key for key in FUNCTION_SELECTIONS if key in form)
-        if any(form[key] != "1" for key in selections):
-            raise SupplierError("無效的功能勾選值")
-        request.app.state.suppliers.save_function_settings(
-            supplier_id, selections, str(form.get("functions_updated_at", ""))
-        )
-    except SupplierError as error:
-        return render(request, "detail", 400, supplier=supplier, message="", error=str(error))
-    except SupplierStorageError:
-        raise HTTPException(503, "本機模擬設定暫時無法儲存，請稍後再試") from None
-    return RedirectResponse(
-        f"/suppliers/{supplier_id}?result=functions-saved#supplier-functions", 303
-    )
+    """舊供應商功能列表已移除，不接受舊畫面提交。"""
+    raise HTTPException(410, "供應商功能列表已移除，未變更任何設定")
 
 
 @router.get("/{supplier_id}", response_class=HTMLResponse)

@@ -234,76 +234,21 @@ def test_old_database_upgrades_without_loss(tmp_path: Path) -> None:
     assert len(service.list()) == 1
 
 
-def function_form(client: TestClient, supplier_id: str) -> dict:
-    """讀取供應商詳情的功能表單 token 與獨立版本。"""
-    html = client.get("/suppliers/" + supplier_id).text
-    return {
-        "csrf": re.search(r'name="csrf"\s+value="([^"]+)"', html).group(1),
-        "functions_updated_at": re.search(
-            r'name="functions_updated_at"\s+value="([^"]*)"', html
-        ).group(1),
-    }
-
-
-def test_supplier_function_list_is_on_detail_and_isolated(client: TestClient) -> None:
-    """功能列表在每筆詳情；儲存只影響該供應商的模擬勾選，不改主檔。"""
-    service = client.app.state.suppliers
-    before = service.list()
-    first, second = before
-    sid = first["supplier_id"]
-    html = client.get("/suppliers/" + sid).text
-    assert "供應商功能列表" in html
-    assert "徵信／評估紀錄" in html
-    assert "部門功能設定" not in html
-    url = f"/suppliers/{sid}/function-settings"
-    response = client.post(url, data={**function_form(client, sid), "basic.create": "1"})
-    assert response.status_code == 200
-    assert "已儲存此供應商的模擬功能設定" in response.text
-    assert service.get_function_settings(sid)["selections"] == {"basic.create"}
-    assert "basic.view" in service.get_function_settings(second["supplier_id"])["selections"]
-    assert service.list() == before
-    assert client.get("/suppliers/" + sid + "/edit").status_code == 200
-
-
-def test_supplier_functions_revoke_stale_guard_and_restart(client: TestClient) -> None:
-    """空選項可保存；舊畫面不能覆蓋；重建 Service 不重設。"""
-    from app.db.repositories.supplier_demo_repository import SupplierDemoRepository
-    from app.services.supplier_service import SupplierService
-
-    service = client.app.state.suppliers
-    sid = service.list()[0]["supplier_id"]
-    url = f"/suppliers/{sid}/function-settings"
-    stale = function_form(client, sid)
-    assert client.post(url, data={**stale, "basic.disable": "1"}).status_code == 200
-    assert client.post(url, data=stale).status_code == 400
-    assert service.get_function_settings(sid)["selections"] == {"basic.disable"}
-    assert client.post(url, data=function_form(client, sid)).status_code == 200
-    restarted = SupplierService(SupplierDemoRepository(service.repository.path))
-    restarted.initialize()
-    assert not restarted.get_function_settings(sid)["selections"]
-
-
-@pytest.mark.parametrize("invalid", ["assessment.view", "contact.create", "unknown.edit"])
-def test_supplier_functions_reject_unavailable_operations(client: TestClient, invalid: str) -> None:
-    """未開發及不適用操作不能經偽造表單保存。"""
-    service = client.app.state.suppliers
-    sid = service.list()[0]["supplier_id"]
-    before = service.get_function_settings(sid)
-    response = client.post(
-        f"/suppliers/{sid}/function-settings", data={**function_form(client, sid), invalid: "1"}
-    )
-    assert response.status_code == 400
-    assert service.get_function_settings(sid) == before
-
-
-def test_supplier_functions_security_and_removed_department_page(client: TestClient) -> None:
-    """沿用 token／同源；誤加部門頁不再呈現或接受寫入。"""
+def test_supplier_function_list_removed(client: TestClient) -> None:
+    """詳情不再顯示功能列表或載入勾選腳本，基本修改與停用仍保留。"""
     sid = client.app.state.suppliers.list()[0]["supplier_id"]
-    url = f"/suppliers/{sid}/function-settings"
-    form = function_form(client, sid)
-    assert client.post(url, data={**form, "csrf": "bad"}).status_code == 403
-    assert (
-        client.post(url, data=form, headers={"Origin": "https://other.example"}).status_code == 403
-    )
-    assert client.get("/suppliers/department-functions", follow_redirects=False).status_code == 303
-    assert client.post("/suppliers/department-functions", data=form).status_code == 410
+    response = client.get("/suppliers/" + sid)
+    assert response.status_code == 200
+    assert "供應商功能列表" not in response.text
+    assert "supplier-demo-permissions.js" not in response.text
+    assert "修改資料" in response.text
+    assert "確認停用" in response.text
+
+
+def test_removed_function_settings_reject_stale_form(client: TestClient) -> None:
+    """舊頁提交已退場，不能繼續修改本機設定。"""
+    before = client.app.state.suppliers.list()
+    sid = before[0]["supplier_id"]
+    response = client.post(f"/suppliers/{sid}/function-settings", data={"basic.view": "1"})
+    assert response.status_code == 410
+    assert client.app.state.suppliers.list() == before

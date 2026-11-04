@@ -1,0 +1,7 @@
+{# @template pages/supplier_management/saved.html；獨立寫入權限之結果，不顯示主檔。 #}
+{% extends "layouts/supplier_management.html" %}
+{% block content %}
+  <h2>供應商操作結果</h2>
+  <p role="status">{{ message }}</p>
+  <a class="btn btn--secondary" href="/welcome">返回歡迎頁</a>
+{% endblock %}

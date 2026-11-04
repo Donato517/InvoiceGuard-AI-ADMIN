@@ -31,7 +31,7 @@
           <span>本人資訊</span>
         </a>
         {% for item in e_menu %}
-          {% if item.code != "sys.department-permissions" %}
+          {% if item.code not in ["sys.department-permissions", "suppliers"] %}
             {% include "partials/sidebar_entry.html" %}
           {% endif %}
           {% if item.code == "sys.accounts" %}

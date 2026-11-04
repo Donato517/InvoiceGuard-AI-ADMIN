@@ -54,6 +54,9 @@ REGISTRY = (
         frozenset({Action.VIEW, Action.EDIT}),
         system_only=False,
     ),
+    Capability(
+        "suppliers", "供應商管理", "採購管理", "/suppliers", frozenset(Action), system_only=False
+    ),
 )
 
 

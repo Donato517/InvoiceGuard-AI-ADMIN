@@ -40,6 +40,20 @@
       ],
       "app_scope": "admin",
       "is_active": false
+    },
+    {
+      "function_code": "suppliers",
+      "function_name": "供應商管理",
+      "category": "採購管理",
+      "route": "/suppliers",
+      "actions": [
+        "create",
+        "delete",
+        "edit",
+        "view"
+      ],
+      "app_scope": "admin",
+      "is_active": false
     }
   ],
   "pending_domains": [

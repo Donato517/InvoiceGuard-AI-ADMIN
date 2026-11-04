@@ -1,0 +1,95 @@
+{# @template pages/suppliers/form.html
+   @description 共用新增與修改表單，錯誤保留輸入。
+   @route GET /suppliers/new、/{id}/edit
+#}
+{% extends "layouts/supplier_management.html" %}
+{% block title %}{{ '修改' if supplier else '新增' }}供應商{% endblock %}
+{% block content %}
+  <h2>{{ '修改' if supplier else '新增' }}供應商</h2>
+  {% if errors %}<div class="alert alert--danger" role="alert"><strong>尚未儲存，請修正：</strong><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+  <p class="muted">＊為必填。台灣供應商統編必填，只檢查八碼格式；不代表已完成稅籍查證。</p>
+  <form method="post"
+        action="{{ '/suppliers/' ~ supplier.supplier_id if supplier else '/suppliers' }}"
+        class="form">
+    <input type="hidden"
+           name="updated_at"
+           value="{{ values.get('updated_at', '') }}">
+    <section class="card">
+      <h3>基本與聯絡資料</h3>
+      <div class="supplier-demo-grid">
+        {% for name,label,limit,required in [('supplier_name','供應商名稱',120,true),('country_code','國家／地區代碼（兩碼，例如 TW）',2,true),('tax_id','統編／稅籍編號',40,false),('contact_name','聯絡人',80,false),('phone','電話',40,false),('email','Email',200,false),('address','地址',300,false)] %}
+          <div class="form-field"><label for="{{ name }}">{{ label }}{{ '＊' if required else '' }}</label><input id="{{ name }}"
+       name="{{ name }}"
+       value="{{ values.get(name, '') }}"
+       maxlength="{{ limit }}"
+       {% if required %}required{% endif %}
+       {% if name == 'email' %}type="email"{% else %}type="text"{% endif %}></div>
+        {% endfor %}
+        <div class="form-field">
+          <label for="aliases">別名（一行一個，最多 10 個）</label><textarea id="aliases"
+          name="aliases"
+          rows="3"
+          maxlength="600">{{ values.get('aliases', '') }}</textarea>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <h3>徵信與交貨條件</h3>
+      <div class="supplier-demo-grid">
+        <div class="form-field">
+          <label for="credit_rating">供應商徵信等級</label>
+          <select id="credit_rating" name="credit_rating">
+            {% for code,title in ratings.items() %}<option value="{{ code }}"
+        {% if values.get('credit_rating', 'unassessed') == code %}selected{% endif %}>{{ title }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="delivery_terms">交貨條件</label>
+          <textarea id="delivery_terms"
+                    name="delivery_terms"
+                    rows="3"
+                    maxlength="300"
+                    placeholder="例如：送達指定地點，含安裝及驗收">{{ values.get('delivery_terms', '') }}</textarea>
+        </div>
+      </div>
+      <p class="muted">等級由人工選擇，尚未串接外部徵信查核，不自動限制交易。交貨條件與付款條件分別記錄。</p>
+    </section>
+    <section class="card">
+      <h3>預設付款條件</h3>
+      <div class="supplier-demo-grid">
+        {% for name,label,options in [('payment_terms','付款條件類型',terms),('payment_basis','付款起算基準',bases),('payment_method','付款方式',methods)] %}
+          <div class="form-field"><label for="{{ name }}">{{ label }}＊</label><select name="{{ name }}" id="{{ name }}" required>{% for code,title in options.items() %}<option value="{{ code }}"
+        {% if values.get(name) == code %}selected{% endif %}>{{ title }}</option>{% endfor %}</select></div>
+        {% endfor %}
+        <div class="form-field">
+          <label for="payment_days">付款天數＊</label><input name="payment_days"
+       id="payment_days"
+       type="number"
+       min="0"
+       max="3650"
+       step="1"
+       required
+       value="{{ values.get('payment_days', '') }}">
+        </div>
+        <div class="form-field">
+          <label for="currency">幣別（三碼，例如 TWD）＊</label><input id="currency"
+       name="currency"
+       maxlength="3"
+       required
+       value="{{ values.get('currency', '') }}">
+        </div>
+      </div>
+      <p class="muted">現付天數須為 0。預付／分期請選「依合約」，並在備註說明約定；本版不產生付款排程。</p>
+      <div class="form-field">
+        <label for="notes">備註</label><textarea id="notes"
+          name="notes"
+          rows="4"
+          maxlength="1500">{{ values.get('notes', '') }}</textarea>
+      </div>
+    </section>
+    <div class="supplier-demo-actions">
+      <button class="btn btn--primary" type="submit">儲存資料</button><a class="btn btn--secondary"
+   href="{{ '/suppliers/' ~ supplier.supplier_id if supplier else '/suppliers' }}">取消</a>
+    </div>
+  </form>
+{% endblock %}

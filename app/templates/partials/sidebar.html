@@ -31,7 +31,7 @@
         <span>歡迎頁</span>
       </a>
       {% for item in request.state.e_configuration_menu %}
-        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code not in ["sys.department-permissions", "suppliers"] %}{% include "partials/sidebar_entry.html" %}{% endif %}
         {% if item.code == "sys.accounts" %}
           {% include "partials/sidebar_logout.html" %}
           {% set logout_entry.rendered = true %}
@@ -43,7 +43,7 @@
         <span>歡迎頁</span>
       </a>
       {% for item in request.state.e_welcome_menu %}
-        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
+        {% if item.code not in ["sys.department-permissions", "suppliers"] %}{% include "partials/sidebar_entry.html" %}{% endif %}
         {% if item.code == "sys.accounts" %}
           {% include "partials/sidebar_logout.html" %}
           {% set logout_entry.rendered = true %}

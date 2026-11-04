@@ -1,3 +1,5 @@
+> 2026-11-04 正式供應商入口 `/suppliers` 已接入 ADMIN 與既有部門四操作。正式 DB migration 與部門勾選需依 [啟用步驟](docs/SUPPLIER_MANAGEMENT.md) 另外完成；8092 為原獨立模擬站，資料不自動搬移。
+
 > 2026-10-28 最新版本：登入已改為「驗帳密 → 讀目前部門功能／操作 → 網站 Session → 歡迎頁」。配置入口已恢復登入檢查（LOCAL_SETUP_ENABLED=False）；沒有初始管理員、個別管理職務、交接或新增 DB 表。登入唯一寫入為既有 last_login_at。以 [登入說明](docs/E-LOGIN-ACCESS.md) 為準，以下較早政策及測試為歷史記錄。
 
 # InvoiceGuard-AI-ADMIN

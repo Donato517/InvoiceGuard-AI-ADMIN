@@ -1065,3 +1065,10 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 先前將原預覽理解成部門權限設定有誤。已移除部門選單與模板，改在供應商詳情基本資料後加入六列功能列表。
 供應商UUID對應獨立本機勾選設定；未開發操作不可勾選，舊表單版本不可覆蓋新設定。原資料不重設、部門舊表不刪除。
 27個離線測試、Ruff、模板lint、分層檢查與桌機／手機互動均通過，14筆主檔雜湊保留一致。實際權限仍未接線，所有修改只在供應商工作區。
+
+
+## 2026-11-04 正式供應商入口、DB 與部門四操作整合
+
+問題：獨立 SQLite 模擬站未接正式 ADMIN；曾誤加供應商功能勾選表。
+處理：移除勾選表，新增正式 supplier_management router/service 與 suppliers_repository；固定 suppliers capability 與 company scope，沿用既有 Session／部門許可／交易鎖，側欄置於登出前。新增欄位／唯一索引由 API migration 管理。無模擬資料自動匯入、無自動部門授權。
+驗證：ADMIN 全套 2718 passed、32 skipped、1 個既有 Starlette/httpx warning；供應商專項 18 passed。API migration 離線輸出 2 passed、隔離 PG 1 skipped（未配置隔離 DB）。正式 DB 套用及真實端到端未執行。

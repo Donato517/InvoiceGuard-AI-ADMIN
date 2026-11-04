@@ -344,7 +344,9 @@ def get_e_module() -> EModule:
     from app.services.admin_login_service import DepartmentLoginAdapter
 
     routes = {DEPARTMENTS: "/department", FEATURES: "/functions", GRANTS: "/department"}
-    registry = tuple(replace(item, route=routes[item.code]) for item in REGISTRY) + (
+    registry = tuple(
+        replace(item, route=routes.get(item.code, item.route)) for item in REGISTRY
+    ) + (
         Capability("sys.accounts", "帳號管理", "系統管理", "/accounts", frozenset(Action)),
         Capability(
             INVOICES,

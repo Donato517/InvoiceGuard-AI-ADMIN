@@ -65,7 +65,7 @@
               {% for action, label in actions %}
                 <td>
                   <div class="e-permission-choice">
-                    <label><input type="checkbox" name="grant" value="{{ row.function.function_id }}:{{ action.value }}" aria-label="{{ row.function.function_name }}：{{ label }}" {% if action in grants.get(row.function.function_id, []) %}checked{% endif %}> {{ label }}</label>
+                    <label><input type="checkbox" name="grant" value="{{ row.function.function_id }}:{{ action.value }}" aria-label="{{ row.function.function_name }}：{{ '停用／啟用' if row.function.function_code == 'suppliers' and action.value == 'delete' else label }}" {% if action in grants.get(row.function.function_id, []) %}checked{% endif %}> {{ '停用／啟用' if row.function.function_code == 'suppliers' and action.value == 'delete' else label }}</label>
                     <small class="e-permission-choice__note">{% if action not in supported_actions(row.function.function_code) %}待接線{% endif %}</small>
                   </div>
                 </td>

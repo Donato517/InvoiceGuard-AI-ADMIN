@@ -112,3 +112,8 @@ users ──1:N──> invoices ──1:N──> invoice_items
 ## 06_E repository 與版本接點（2026-10-27）
 
 新增 `repositories/e_repository.py`：固定參數化 SQL 存取 v1.3 部門及功能，scope 在 SQL 過濾；未改共用 ORM／Schema。交易由 `services/e_sql_uow.py` 控制，需 G／DB 真實 JournalPort 同交易完成版本、audit 及政策再驗證，沒有 journal 即不啟用。正式 `/login` 不再呼叫舊 auth_service；舊 users／int guard 仍保留供其他組待移轉。詳見 [E 交接](../../docs/E-TEAM-HANDOFF.md)。
+
+
+## 正式供應商主檔
+
+`public.suppliers` 由 API migration `5e8b11d0a941` 定義，ADMIN 透過 `suppliers_repository` 固定參數 SQL 存取，沒有 ADMIN migration 或舊 users ORM 依賴。欄位與啟用限制見 [正式供應商](../../docs/SUPPLIER_MANAGEMENT.md)。

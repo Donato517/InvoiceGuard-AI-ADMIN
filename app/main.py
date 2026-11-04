@@ -31,6 +31,7 @@ from app.routers import (
     invoices,
     knowledge,
     robots,
+    supplier_management,
     system,
     users,
 )
@@ -63,6 +64,7 @@ app.include_router(invoices.router)
 app.include_router(cases.router)
 app.include_router(intake.router)
 app.include_router(knowledge.router)
+app.include_router(supplier_management.router)
 app.include_router(users.router)
 app.include_router(accounts.router)
 app.include_router(system.router)

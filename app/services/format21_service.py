@@ -213,6 +213,14 @@ def validate_profile(profile: CompanyProfile) -> list[Format21Issue]:
     Returns:
         問題清單；空清單代表通過。
     """
+    if not profile.ban and not profile.tax_reg_no:
+        return [
+            Format21Issue(
+                "company",
+                "COMPANY_NOT_CONFIGURED",
+                "尚未設定本公司基本資料，請到「公司基本資料」頁設定統一編號與稅籍編號",
+            )
+        ]
     issues = []
     if not re.fullmatch(r"\d{9}", profile.tax_reg_no):
         issues.append(

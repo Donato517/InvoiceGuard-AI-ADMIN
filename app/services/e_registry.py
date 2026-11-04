@@ -57,6 +57,14 @@ REGISTRY = (
     Capability(
         "suppliers", "供應商管理", "採購管理", "/suppliers", frozenset(Action), system_only=False
     ),
+    Capability(
+        "company.profile",
+        "公司基本資料",
+        "系統管理",
+        "/company-profile",
+        frozenset({Action.VIEW, Action.EDIT}),
+        system_only=False,
+    ),
 )
 
 

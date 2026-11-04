@@ -64,6 +64,50 @@
   {% elif case.status == 'voided' %}
     <p class="alert alert--danger">此請款單已由申請人終止，不能再重送。</p>
   {% endif %}
+  {% if fr.carried_fields %}
+    <section class="fr-section" aria-label="承接前輪確認">
+      <h3 class="fr-section__title">承接前輪確認（{{ fr.carried_fields | length }}）</h3>
+      <p class="muted">以下欄位本輪未被退回也未修改，保留原確認；不需要重新勾選。</p>
+      <ul>
+        {% for item in fr.carried_fields %}
+          <li>
+            {{ item.label }}：承接第 {{ item.source_round }} 輪確認（確認者 {{ item.checked_by or "—" }}，{{ item.checked_at.strftime("%Y-%m-%d %H:%M") if item.checked_at else "—" }}）
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+  {% if fr.return_rounds %}
+    <section class="fr-section" aria-label="退回與回覆紀錄">
+      <h3 class="fr-section__title">退回與回覆紀錄</h3>
+      {% for rnd in fr.return_rounds %}
+        <p class="muted">第 {{ rnd.round }} 輪退回</p>
+        <ul data-return-round="{{ rnd.round }}">
+          {% for item in rnd["items"] %}
+            <li>{{ item.label }}：{{ item.reason }}　<strong>{% if item.response %}申請人回覆：{{ item.response }}{% else %}尚未回覆{% endif %}</strong></li>
+          {% endfor %}
+        </ul>
+      {% endfor %}
+    </section>
+  {% endif %}
+  {% if fr.round_diffs %}
+    <section class="fr-section" aria-label="重送前後比對">
+      <h3 class="fr-section__title">重送前後比對</h3>
+      {% for diff in fr.round_diffs %}
+        <p class="muted">第 {{ diff.round }} 輪正式提交（{{ "純申覆，資料未修改" if not diff.rows else "欄位補正" }}）</p>
+        {% if diff.rows %}
+          <table data-round-diff="{{ diff.round }}">
+            <thead><tr><th>欄位</th><th>修正前</th><th>修正後</th></tr></thead>
+            <tbody>
+              {% for label, old, new in diff.rows %}
+                <tr><td>{{ label }}</td><td>{{ old if old is not none else "（空白）" }}</td><td>{{ new if new is not none else "（空白）" }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      {% endfor %}
+    </section>
+  {% endif %}
   <section class="fr-section" aria-label="檢核提醒">
     <h3 class="fr-section__title">檢核提醒（{{ fr.warnings | length }}）</h3>
     {% if fr.warnings %}
@@ -174,6 +218,15 @@
                        name="return_reason"
                        placeholder="例如：請附折讓單">
               </div>
+              <fieldset class="form-field">
+                <legend>一併授權修改的相依欄位</legend>
+                {% for dep_name, dep_label in fr.return_dependent_fields %}
+                  <label>
+                    <input type="checkbox" name="return_allowed" value="{{ n }}:{{ dep_name }}">
+                    {{ dep_label }}
+                  </label>
+                {% endfor %}
+              </fieldset>
             </div>
           {% endfor %}
           <button type="submit" class="btn btn--danger">退回修正</button>

@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -49,6 +49,9 @@ class LoadedReview:
     changes: list[dict[str, object]]
     history: list[StatusChange]
     department_id: str | None = None
+    carryovers: list[dict[str, object]] = field(default_factory=list)
+    return_items: list[dict[str, object]] = field(default_factory=list)
+    snapshots: list[dict[str, object]] = field(default_factory=list)
 
 
 def is_uuid(value: object) -> bool:
@@ -80,6 +83,9 @@ def load(
         reviews = repo.list_field_reviews(db, invoice_id)
         changes = repo.list_changes(db, invoice_id)
         history_rows = repo.list_history(db, invoice_id)
+        carryovers = repo.list_carryovers(db, invoice_id)
+        return_items = repo.list_return_items(db, invoice_id)
+        snapshots = repo.list_snapshots(db, invoice_id)
     except repo.SQLAlchemyError:
         raise ReviewUnavailableError from None
     finally:
@@ -87,6 +93,9 @@ def load(
     return LoadedReview(
         case=build_review_case(row, reviews),
         department_id=row.get("department_id"),
+        carryovers=carryovers,  # type: ignore[arg-type]
+        return_items=return_items,  # type: ignore[arg-type]
+        snapshots=snapshots,  # type: ignore[arg-type]
         changes=changes,  # type: ignore[arg-type]
         history=[
             StatusChange(

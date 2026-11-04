@@ -4,6 +4,7 @@
 全部離線；不連資料庫。示範發票（整數 ID）仍走記憶體，由 test_finance_review_pages 驗證。
 """
 
+import json
 from collections.abc import Iterator
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -413,6 +414,115 @@ def test_applied_change_writes_history_then_field_review_comments() -> None:
     assert db.calls[1][1]["reason"] == "attachment：補上採購單"
     review_params = db.calls[2][1]
     assert (review_params["submission_round"], review_params["comment"]) == (3, "請附折讓單")
+
+
+def test_return_writes_structured_items_in_the_same_transaction_before_field_comments() -> None:
+    db = RecordingDb(status_updated=True)
+    change = _change(
+        new_status=STATUS_RETURNED,
+        return_items=(
+            ReturnItem("tax_amount", "稅額應為 50", None, ("total_amount",)),
+            ReturnItem("attachment", "影像模糊"),
+            ReturnItem("其他", "請補說明"),
+        ),
+        field_review_updates=(
+            FieldReview("header", "tax_amount", None, "1", "2", review_comment="稅額應為 50"),
+        ),
+    )
+
+    assert repo.apply_status_change(db, change, tax_type=None, submission_round=2) is True  # type: ignore[arg-type]
+
+    names = [" ".join(sql.split()[:3]) for sql, _ in db.calls]
+    assert names == [
+        "UPDATE public.invoices SET",
+        "INSERT INTO public.invoice_status_history",
+        "INSERT INTO public.invoice_return_items",
+        "INSERT INTO public.invoice_return_items",
+        "INSERT INTO public.invoice_return_items",
+        "UPDATE public.invoice_field_reviews SET",
+    ]
+    field, image, other = (params for _, params in db.calls[2:5])
+    assert (field["item_kind"], field["field_scope"], field["field_name"]) == (
+        "field",
+        "header",
+        "tax_amount",
+    )
+    assert field["submission_round"] == 2 and field["created_by"] == FINANCE
+    assert json.loads(field["allowed_fields"]) == [
+        {"field_scope": "header", "field_name": "total_amount"}
+    ]
+    assert (
+        image["item_kind"],
+        image["field_scope"],
+        image["field_name"],
+        image["allowed_fields"],
+    ) == ("image", None, None, "[]")
+    assert (other["item_kind"], other["reason"]) == ("other", "請補說明")
+
+
+def test_lost_race_writes_no_structured_return_items() -> None:
+    db = RecordingDb(status_updated=False)
+    change = _change(new_status=STATUS_RETURNED, return_items=(ReturnItem("tax_amount", "x"),))
+
+    assert repo.apply_status_change(db, change, tax_type=None, submission_round=1) is False  # type: ignore[arg-type]
+    assert len(db.calls) == 1
+
+
+def test_item_field_return_keeps_the_line_item_id() -> None:
+    db = RecordingDb(status_updated=True)
+    item_id = "11111111-1111-4111-8111-111111111111"
+    change = _change(
+        new_status=STATUS_RETURNED, return_items=(ReturnItem("line_amount", "x", item_id),)
+    )
+
+    repo.apply_status_change(db, change, tax_type=None, submission_round=1)  # type: ignore[arg-type]
+
+    params = db.calls[2][1]
+    assert (params["field_scope"], params["item_id"]) == ("item", item_id)
+
+
+class TableDb:
+    """記錄查詢；to_regclass 查詢回傳資料表是否存在，其他查詢回傳設定的列。"""
+
+    def __init__(
+        self, exists: bool, rows: list[dict[str, Any]] | None = None, error: Exception | None = None
+    ) -> None:
+        self.exists = exists
+        self.rows = rows or []
+        self.error = error
+        self.calls: list[str] = []
+
+    def execute(self, statement: Any, params: dict[str, Any]) -> Any:
+        self.calls.append(str(statement))
+        if "to_regclass" in str(statement):
+            return SimpleNamespace(scalar_one=lambda: self.exists)
+        if self.error:
+            raise self.error
+        return SimpleNamespace(mappings=lambda: iter(self.rows))
+
+
+@pytest.mark.parametrize(
+    "reader", [repo.list_carryovers, repo.list_return_items, repo.list_snapshots]
+)
+def test_new_table_reads_return_empty_before_the_migration_and_never_query_the_missing_table(
+    reader: Any,
+) -> None:
+    db = TableDb(exists=False)  # API 的 Migration 還沒套用
+
+    assert reader(db, INVOICE_ID) == []
+    assert len(db.calls) == 1 and "to_regclass" in db.calls[0]  # 只確認存在，不查詢不存在的表
+
+
+def test_new_table_reads_return_rows_when_the_tables_exist() -> None:
+    db = TableDb(exists=True, rows=[{"submission_round": 1}])
+
+    assert repo.list_return_items(db, INVOICE_ID) == [{"submission_round": 1}]
+    assert "invoice_return_items" in db.calls[1]
+
+
+def test_new_table_reads_do_not_hide_database_errors() -> None:
+    with pytest.raises(RuntimeError):
+        repo.list_snapshots(TableDb(exists=True, error=RuntimeError("boom")), INVOICE_ID)
 
 
 def test_repository_never_commits_or_rolls_back() -> None:

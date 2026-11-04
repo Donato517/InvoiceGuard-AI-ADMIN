@@ -9,6 +9,7 @@
     - 所有 UUID 以 CAST(:x AS uuid) 帶入；呼叫端須先確認字串是合法 UUID。
 """
 
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -68,6 +69,35 @@ INSERT_HISTORY = text("""
     VALUES (CAST(:invoice_id AS uuid), :old_status, :new_status, :reason,
             CAST(:changed_by AS uuid), :changed_at)
 """)
+INSERT_RETURN_ITEM = text("""
+    INSERT INTO public.invoice_return_items
+        (invoice_id, submission_round, item_kind, field_scope, item_id, field_name, reason,
+         allowed_fields, created_by)
+    VALUES (CAST(:invoice_id AS uuid), :submission_round, :item_kind, :field_scope,
+            CAST(:item_id AS uuid), :field_name, :reason, CAST(:allowed_fields AS jsonb),
+            CAST(:created_by AS uuid))
+""")
+LIST_CARRYOVERS = text("""
+    SELECT c.submission_round, c.field_scope, c.item_id::text AS item_id, c.field_name,
+        r.submission_round AS source_round, r.checked_by::text AS checked_by, r.checked_at
+    FROM public.invoice_field_review_carryovers c
+    JOIN public.invoice_field_reviews r ON r.field_review_id = c.source_field_review_id
+    WHERE c.invoice_id = CAST(:invoice_id AS uuid)
+    ORDER BY c.submission_round, c.field_scope, c.field_name
+""")
+LIST_RETURN_ITEMS = text("""
+    SELECT submission_round, item_kind, field_name, reason, status, response_action, response_note,
+        responded_at, response_round
+    FROM public.invoice_return_items
+    WHERE invoice_id = CAST(:invoice_id AS uuid)
+    ORDER BY submission_round, created_at, return_item_id
+""")
+LIST_SNAPSHOTS = text("""
+    SELECT submission_round, submission_kind, header, items, submitted_at
+    FROM public.invoice_submission_snapshots
+    WHERE invoice_id = CAST(:invoice_id AS uuid)
+    ORDER BY submission_round
+""")
 UPDATE_FIELD_REVIEW = text("""
     UPDATE public.invoice_field_reviews
     SET is_checked = false, checked_by = NULL, checked_at = NULL, review_comment = :comment,
@@ -92,6 +122,68 @@ def list_field_reviews(db: Session, invoice_id: str) -> list[dict[str, Any]]:
         dict(r)
         for r in db.execute(LIST_REVIEW_FIELD_REVIEWS, {"invoice_id": invoice_id}).mappings()
     ]
+
+
+TABLE_EXISTS = text("SELECT to_regclass(:name) IS NOT NULL")
+
+
+def _optional_rows(
+    db: Session, table: str, statement: Any, invoice_id: str
+) -> list[dict[str, Any]]:
+    """讀取重送新增資料表的列；資料表尚未建立（API 的 Migration 還沒套用）時回空清單。
+
+    先以 to_regclass 確認資料表存在再查詢，不開啟 savepoint 或交易、也不吞掉查詢錯誤：
+    審核頁因此在 Migration 之前仍可檢視與核准（只是沒有重送資訊），其他資料庫錯誤照常拋出。
+    """
+    if not db.execute(TABLE_EXISTS, {"name": f"public.{table}"}).scalar_one():
+        return []
+    return [dict(r) for r in db.execute(statement, {"invoice_id": invoice_id}).mappings()]
+
+
+def list_carryovers(db: Session, invoice_id: str) -> list[dict[str, Any]]:
+    """讀取承接前輪確認效力的欄位（含原確認者、確認時間與來源輪次）；只讀，不推定任何欄位已通過。"""
+    return _optional_rows(db, "invoice_field_review_carryovers", LIST_CARRYOVERS, invoice_id)
+
+
+def list_return_items(db: Session, invoice_id: str) -> list[dict[str, Any]]:
+    """讀取各輪的結構化退件項目與申請人回覆（原因與回覆分開保存，只讀）。"""
+    return _optional_rows(db, "invoice_return_items", LIST_RETURN_ITEMS, invoice_id)
+
+
+def list_snapshots(db: Session, invoice_id: str) -> list[dict[str, Any]]:
+    """讀取各輪正式提交的完整快照（表頭與明細），供畫面比對修正前後；只讀。"""
+    return _optional_rows(db, "invoice_submission_snapshots", LIST_SNAPSHOTS, invoice_id)
+
+
+def return_item_kind(field: str) -> str:
+    """退回項目類型：附件／圖片問題為 image，「其他」為 other，其餘為欄位。"""
+    return {"attachment": "image", "其他": "other"}.get(field, "field")
+
+
+def insert_return_items(db: Session, change: StatusChange, *, submission_round: int) -> None:
+    """退回時把每個項目結構化寫入 invoice_return_items（與狀態、歷程同一交易，不 commit）。"""
+    for item in change.return_items:
+        kind = return_item_kind(item.field)
+        is_field = kind == "field"
+        db.execute(
+            INSERT_RETURN_ITEM,
+            {
+                "invoice_id": change.invoice_id,
+                "submission_round": submission_round,
+                "item_kind": kind,
+                "field_scope": ("item" if item.item_id else "header") if is_field else None,
+                "item_id": item.item_id if is_field else None,
+                "field_name": item.field if is_field else None,
+                "reason": item.reason,
+                "allowed_fields": json.dumps(
+                    [{"field_scope": "header", "field_name": name} for name in item.allowed]
+                    if is_field
+                    else [],
+                    ensure_ascii=False,
+                ),
+                "created_by": change.changed_by,
+            },
+        )
 
 
 def list_changes(db: Session, invoice_id: str) -> list[dict[str, Any]]:
@@ -156,6 +248,8 @@ def apply_status_change(
             "changed_at": change.changed_at,
         },
     )
+    if change.return_items:
+        insert_return_items(db, change, submission_round=submission_round)
     for review in change.field_review_updates:
         db.execute(
             UPDATE_FIELD_REVIEW,

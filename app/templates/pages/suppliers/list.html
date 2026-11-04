@@ -1,0 +1,68 @@
+{# @template pages/suppliers/list.html
+   @description 供應商模擬列表，依名稱、統編及別名搜尋。
+   @route GET /suppliers
+#}
+{% extends "layouts/supplier_demo.html" %}
+{% block title %}供應商管理{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <div>
+      <h2>供應商管理</h2>
+      <p class="muted">維護虛構供應商基本資料與預設交易條件。</p>
+    </div>
+    <a href="/suppliers/new" class="btn btn--primary">新增供應商</a>
+  </div>
+  <section class="card">
+    <form method="get" action="/suppliers" class="filter-bar">
+      <label for="q">統編、名稱或別名</label><input id="q" name="q" type="search" value="{{ q }}" maxlength="200">
+      <button class="btn btn--primary" type="submit">搜尋</button><a class="btn btn--secondary" href="/suppliers">清除</a>
+    </form>
+    <p class="muted">搜尋結果 {{ suppliers|length }} 筆，包含啟用與停用資料。</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">供應商／別名</th>
+            <th scope="col">國別／統編</th>
+            <th scope="col">付款條件</th>
+            <th scope="col">狀態</th>
+            <th scope="col">徵信等級／交貨條件</th>
+            <th scope="col">修改時間</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in suppliers %}
+            <tr>
+              <td>
+                <a href="/suppliers/{{ item.supplier_id }}">{{ item.supplier_name }}</a>
+                <p class="muted supplier-demo-lines">{{ item.aliases or '未設定別名' }}</p>
+              </td>
+              <td>
+                {{ item.country_code }}
+                <br>
+                {{ item.tax_id or '未提供' }}
+              </td>
+              <td>
+                {{ terms[item.payment_terms] }}／{{ bases[item.payment_basis] }}
+                <br>
+                {{ item.payment_days }} 天 · {{ item.currency }}
+              </td>
+              <td><span class="badge {% if item.is_active %}badge--success{% else %}badge--gray{% endif %}">{{ '啟用' if item.is_active else '停用' }}</span></td>
+              <td>
+                {{ ratings[item.credit_rating] }}
+                <p class="muted">{{ item.delivery_terms or '交貨條件未設定' }}</p>
+              </td>
+              <td class="small-text">
+                {{ item.updated_at[:19].replace('T', ' ') }}
+                <br>
+                台灣時間
+              </td>
+              <td><a class="btn btn--secondary btn--small"
+   href="/suppliers/{{ item.supplier_id }}">檢視</a> <a class="btn btn--secondary btn--small"
+    href="/suppliers/{{ item.supplier_id }}/edit">修改</a></td>
+            </tr>{% else %}<tr><td colspan="7">沒有符合條件的供應商，請調整搜尋或新增虛構資料。</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+    </section>
+{% endblock %}

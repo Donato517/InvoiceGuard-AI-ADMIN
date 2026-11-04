@@ -1,0 +1,32 @@
+{# @template layouts/supplier_demo.html
+   @description 供應商隔離模擬版型，沿用 ADMIN base 及樣式；不顯示真實登入與部門。
+#}
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('css/pages/suppliers.css') }}">{% endblock %}
+{% block body %}
+  <div class="admin-layout">
+    <aside class="app-sidebar supplier-demo-sidebar">
+      <h1 class="supplier-demo-brand">InvoiceGuard 後台</h1>
+      <p class="supplier-demo-label">模擬模式</p>
+      <nav aria-label="試作導覽">
+        <a class="supplier-demo-nav supplier-demo-nav--active" href="/suppliers">供應商管理</a>
+      </nav>
+      <p class="supplier-demo-hint">
+        獨立試作工作區
+        <br>
+        僅使用虛構資料
+      </p>
+    </aside>
+    <div class="admin-layout__main">
+      <header class="app-header">
+        <strong>供應商管理試作</strong><span class="badge badge--gray">模擬模式</span>
+      </header>
+      <main class="admin-layout__content">
+        <div class="content">
+          <p class="alert alert--info" role="status">模擬模式：僅使用本機測試資料，重啟後保留。請勿輸入真實供應商或帳戶資訊。</p>
+          {% block content %}{% endblock %}
+        </div>
+      </main>
+    </div>
+  </div>
+{% endblock %}

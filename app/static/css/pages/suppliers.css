@@ -1,0 +1,26 @@
+/* 供應商試作：沿用 ADMIN 元件，只補必要布局。 */
+.supplier-demo-brand { font-size: 1.1rem; color: white; padding: 1.5rem .75rem .5rem; }
+.supplier-demo-label, .supplier-demo-hint { color: #cbd5e1; padding: 0 1rem; }
+.supplier-demo-hint { margin-top: 2rem; font-size: .875rem; }
+.supplier-demo-nav { display: block; color: white; padding: 1rem; }
+.supplier-demo-nav--active { background: var(--color-primary); }
+.supplier-demo-permission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem 0; }
+.supplier-demo-permission-table { min-width: 36rem; }
+.supplier-demo-permission-table td:not(:first-child), .supplier-demo-permission-table th:not(:first-child) { text-align: center; }
+.supplier-demo-permission-check { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+.supplier-demo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem 1.5rem; }
+.supplier-demo-details { margin: 0; }
+.supplier-demo-details > div { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--color-border); }
+.supplier-demo-details dt { font-weight: 600; }
+.supplier-demo-details dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.supplier-demo-lines { white-space: pre-line; margin-bottom: 0; }
+.supplier-demo-actions { display: flex; gap: .75rem; padding-bottom: 2rem; }
+.supplier-demo-sidebar { width: auto; }
+@media (max-width: 768px) {
+  .supplier-demo-grid { grid-template-columns: 1fr; }
+  .supplier-demo-details > div { grid-template-columns: 1fr; gap: .25rem; }
+  .supplier-demo-sidebar { display: block; position: static; width: auto; }
+  .supplier-demo-hint { display: none; }
+  .admin-layout { display: block; }
+  .admin-layout__main { margin-left: 0; }
+}

@@ -1034,3 +1034,34 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 處理：`finance_review_repository.apply_status_change` 新增 `record_reviewer`（終止不覆蓋審核者），`get_review_row` 讀 `department_id`；`finance_review_db_service.LoadedReview` 帶部門；`app/routers/invoices.py` 的 `_returned_case`／`_return_request`／`_changed_fields` 對資料庫案件讀資料庫，新增 `_terminate_db_invoice`；樣板新增 `_procurement_terminate.html`，資料庫案件的步驟 3 只顯示退回項目與終止；資料庫寫入的審核與終止新增同源檢查。
 - 驗證：新增 `tests/unit/test_applicant_return_db.py`（10 項）與同源檢查測試；ADMIN pytest 2572 passed 以上、9 skipped、1 failed（缺 Pillow 的既有項目）；ruff、djlint、`check_project` 通過。未驗：SQL 在真實 PostgreSQL、真實 DB 寫入、瀏覽器目視（無待補正的資料庫案件可操作）。
 - 已知缺口：重送與線上修改補正尚未提供；申報檔、傳票與步驟 6～9 仍是記憶體示範。
+
+## 2026-11-03 供應商隔離原型
+
+僅 codex/supplier-demo 工作區。本次用本機 SQLite、獨立 scripts/supplier_demo_app.py 入口及既有 ADMIN base/CSS 試作。
+依分層檢查將入口自 app 根目錄移至 scripts；路由不讀 SQLite，Service 不含 SQL，Repository 不 commit／rollback。
+Service 控制交易與關閉連線，重複統編由本機唯一限制把關，編輯與啟停檢查原資料版本。
+詳情空白與表單布局已修正。最終 17 個離線案例、瀏覽器操作、Ruff、djLint、check_project 均通過。
+未修改正式 app.main、登入或權限，未連共用 DB／Storage，未 push／merge／部署。
+完整紀錄見 SUPPLIER_DEMO_TEST_REPORT.md。
+
+## 2026-11-03 徵信等級與交貨條件更新
+
+新增人工模擬徵信標籤與交貨條件，列表、詳情及編輯表單皆支援。
+本機資料先備份再增加欄位，原識別碼、名稱、統編、狀態及建立時間核對保留。
+本次最終結果：pytest 21 passed、djLint 3 檔 0 錯誤、Ruff 及 check_project 通過；真實本機瀏覽器儲存及顯示兩欄通過。
+徵信僅為模擬人工標籤，未實作正式徵信查核、歷次評估或自動交易限制。未連共用 DB／Storage，未 Push／Merge。
+
+## 2026-11-04 獨立供應商試作部門功能清單
+
+使用者確認功能清單應加入尚未上傳的獨立模組，而非正式 ADMIN。
+沿用試作 Router／Service／SQLite Repository 增加模擬部門設定；新表不更動供應商資料。
+新增配置模板與專用 JS，全選／取消僅操作畫面；POST 沿用 token、同源與本機限制，拒絕未知／重複欄位與過期版本。
+配置明確標示未接入實際授權，不修改既有登入或正式 department_permissions。
+驗證：27 離線測試通過、Ruff／djLint／check_project 通過，桌面互動與390px布局通過，14筆原資料雜湊一致。
+只重新啟動已核對的8092試作服務，未停止正式三站；無 Push／Merge／部署。
+
+### 2026-11-04 使用者澄清後修正
+
+先前將原預覽理解成部門權限設定有誤。已移除部門選單與模板，改在供應商詳情基本資料後加入六列功能列表。
+供應商UUID對應獨立本機勾選設定；未開發操作不可勾選，舊表單版本不可覆蓋新設定。原資料不重設、部門舊表不刪除。
+27個離線測試、Ruff、模板lint、分層檢查與桌機／手機互動均通過，14筆主檔雜湊保留一致。實際權限仍未接線，所有修改只在供應商工作區。

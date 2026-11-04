@@ -1,0 +1,75 @@
+{# @template pages/suppliers/detail.html
+   @description 完整資料及具勾選確認的停用表單。
+   @route GET /suppliers/{id}
+#}
+{% extends "layouts/supplier_demo.html" %}
+{% block title %}供應商詳情{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <h2>{{ supplier.supplier_name }}</h2>
+    <div><a href="/suppliers"
+   class="btn btn--secondary">返回列表</a> <a href="/suppliers/{{ supplier.supplier_id }}/edit"
+    class="btn btn--primary">修改資料</a></div>
+  </div>
+  {% if message %}<p class="alert alert--success" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert alert--danger" role="alert">{{ error }}</p>{% endif %}
+  <section class="card">
+    <h3>基本與聯絡資料</h3>
+    <dl class="supplier-demo-details">
+      {% for label,value in [('識別碼',supplier.supplier_id),('狀態','啟用' if supplier.is_active else '停用'),('國家／地區',supplier.country_code),('統編／稅籍編號',supplier.tax_id),('別名',supplier.aliases),('聯絡人',supplier.contact_name),('電話',supplier.phone),('Email',supplier.email),('地址',supplier.address)] %}
+        <div>
+          <dt>{{ label }}</dt>
+          <dd>
+            {{- value or '未提供' -}}
+          </dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </section>
+  {% include "pages/suppliers/_function_list.html" %}
+  <section class="card">
+    <h3>徵信與交貨條件</h3>
+    <dl class="supplier-demo-details">
+      <div>
+        <dt>供應商徵信等級</dt>
+        <dd>
+          {{ ratings[supplier.credit_rating] }}
+        </dd>
+      </div>
+      <div>
+        <dt>交貨條件</dt>
+        <dd>
+          {{ supplier.delivery_terms or '未設定' }}
+        </dd>
+      </div>
+    </dl>
+    <p class="muted">等級為人工設定的模擬標籤，不代表正式徵信結果，也不自動阻擋交易。</p>
+  </section>
+  <section class="card">
+    <h3>預設交易條件</h3>
+    <dl class="supplier-demo-details">
+      {% for label,value in [('付款條件',terms[supplier.payment_terms]),('起算基準',bases[supplier.payment_basis]),('付款天數',supplier.payment_days|string ~ ' 天'),('付款方式',methods[supplier.payment_method]),('幣別',supplier.currency),('備註',supplier.notes),('建立時間',supplier.created_at),('修改時間',supplier.updated_at)] %}
+        <div>
+          <dt>{{ label }}</dt>
+          <dd>
+            {{- value or '未提供' -}}
+          </dd>
+        </div>
+      {% endfor %}</dl><p class="muted">付款條件僅作預設資料示範；本版不計算到期日、不執行付款，也未串接發票。</p></section>
+  <section class="card">
+    <h3>{{ '停用供應商' if supplier.is_active else '重新啟用供應商' }}</h3>
+    <form method="post"
+          action="/suppliers/{{ supplier.supplier_id }}/status"
+          class="form">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="updated_at" value="{{ supplier.updated_at }}"><input type="hidden"
+       name="active"
+       value="{{ '0' if supplier.is_active else '1' }}">
+      {% if supplier.is_active %}<p>停用後保留所有模擬資料，可隨時重新啟用。</p><label><input type="checkbox"
+       name="confirm"
+       value="yes"
+       required> 我確認停用此模擬供應商</label>{% endif %}
+      <button class="btn btn--secondary" type="submit">{{ '確認停用' if supplier.is_active else '重新啟用' }}</button>
+    </form>
+  </section>
+{% endblock %}
+{% block scripts %}<script src="{{ static_url('js/supplier-demo-permissions.js') }}" defer></script>{% endblock %}

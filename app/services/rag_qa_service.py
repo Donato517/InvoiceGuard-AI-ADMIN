@@ -33,6 +33,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -314,6 +315,7 @@ class QaSource:
     file_title: str
     knowledge_name: str
     chunk_index: int
+    effective_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -333,6 +335,8 @@ class QaAnswer:
     sources: tuple[QaSource, ...] = ()
     total_tokens: int | None = None
     note: str | None = None
+    # 送給模型的段落來源文件（去重、依段落順序）；沒有相關段落時為空
+    retrieved_titles: tuple[str, ...] = ()
 
     @property
     def failed(self) -> bool:
@@ -353,6 +357,9 @@ _ARTICLE_MENTION = re.compile(
     r"(?:\s*之\s*([〇零一二三四五六七八九十百兩\d]+))?"
 )
 _REFERENCE = re.compile(r"第([〇零一二三四五六七八九十百兩\d]+)(條|章|節)")
+# 「附件五」「附件 5」與「格式代號 21」「代號21」這類精確編號，向量檢索容易漏掉，另以文字比對補足
+_ATTACHMENT = re.compile(r"附件([〇零一二三四五六七八九十百兩\d]+)")
+_CODE = re.compile(r"代號(\d{1,3})")
 
 
 def _to_int(numeral: str) -> int | None:
@@ -389,11 +396,12 @@ def _to_chinese(number: int) -> str:
 
 
 def reference_groups(question: str) -> list[list[str]]:
-    """從問題取出「第 X 條／章／節」，組成文字比對的條件組（組內每個樣式都要符合）。
+    """從問題取出「第 X 條／章／節」「附件 X」「代號 NN」，組成文字比對的條件組（組內每個樣式都要符合）。
 
     樣式同時接受中文與阿拉伯數字，例：第(4|四)章。章與每個節組成一組（「第四章第一節、第二節」
     → [第四章, 第一節]、[第四章, 第二節]）；每個條各自一組。比對對象是去除空白後的段落，
-    段落前綴已含章節標題（見 rag_indexing_service.add_heading_context）。最多 MAX_REFERENCE_GROUPS 組。
+    段落前綴已含章節標題與文件名稱（見 rag_indexing_service.add_heading_context）。附件各自一組；
+    代號與「代號」二字同組（文件名稱含「代號」即可，例：發票憑證種類代號清單）。最多 MAX_REFERENCE_GROUPS 組。
     """
     found: dict[str, list[str]] = {"章": [], "節": [], "條": []}
     for numeral, kind in _REFERENCE.findall(re.sub(r"\s+", "", question)):
@@ -408,6 +416,14 @@ def reference_groups(question: str) -> list[list[str]]:
     if chapters and not groups:
         groups.append(chapters)
     groups.extend([article] for article in found["條"])
+    compact = re.sub(r"\s+", "", question)
+    for numeral in dict.fromkeys(_ATTACHMENT.findall(compact)):
+        number = _to_int(numeral)
+        if number is not None and number <= 99:
+            groups.append([f"附件({number}|{_to_chinese(number)})"])
+    for code in dict.fromkeys(_CODE.findall(compact)):
+        # 段落已去除空白；代號前後不可緊接其他數字（避免 21 比對到 121、210）
+        groups.append(["代號", f"(^|[^0-9]){code}([^0-9]|$)"])
     return groups[:MAX_REFERENCE_GROUPS]
 
 
@@ -421,7 +437,9 @@ def merge_hits(keyword_hits: list[SearchHit], vector_hits: list[SearchHit]) -> l
 
 def _prompt(question: str, hits: list[SearchHit]) -> str:
     blocks = "\n\n".join(
-        f"[{n}] 知識庫「{hit.knowledge_name}」《{hit.file_title}》第 {hit.chunk_index + 1} 段\n{hit.content}"
+        f"[{n}] 知識庫「{hit.knowledge_name}」《{hit.file_title}》第 {hit.chunk_index + 1} 段"
+        + (f"（生效日 {hit.effective_date.isoformat()}）" if hit.effective_date else "")
+        + f"\n{hit.content}"
         for n, hit in enumerate(hits, start=1)
     )
     return f"【參考段落】\n{blocks}\n\n【問題】\n{question}"
@@ -661,7 +679,13 @@ def _check_reply(reply: ChatReply, hits: list[SearchHit], contact: str) -> QaAns
             note=f"回答提到的{'、'.join(unsupported)}不在標註的段落，已丟棄",
         )
     sources = tuple(
-        QaSource(n, hits[n - 1].file_title, hits[n - 1].knowledge_name, hits[n - 1].chunk_index)
+        QaSource(
+            n,
+            hits[n - 1].file_title,
+            hits[n - 1].knowledge_name,
+            hits[n - 1].chunk_index,
+            hits[n - 1].effective_date,
+        )
         for n in cited
     )
     return QaAnswer(
@@ -999,6 +1023,8 @@ def _answer(
     if deadline is not None and _remaining(deadline) <= 0:
         return QaAnswer(SERVICE_UNAVAILABLE, grounded=False, note="超過整題時限")
     relevant = merge_hits(keyword_hits, _relevant(hits))
+    # 送給模型的段落來自哪些文件（題庫測試據此分辨「沒找到」與「找到但答偏」）
+    retrieved = tuple(dict.fromkeys(hit.file_title for hit in relevant))
     if not relevant:
         note = (
             f"最相近段落距離 {min(h.distance for h in hits):.2f}，超過門檻 {MAX_DISTANCE}"
@@ -1010,6 +1036,36 @@ def _answer(
             grounded=False,
             note=note,
         )
+    return replace(
+        _compose_with_retrieval(
+            text,
+            relevant,
+            understanding,
+            client,
+            chat_factory,
+            department_name,
+            contact,
+            fallback_factory,
+            deadline,
+            knowledge_names,
+        ),
+        retrieved_titles=retrieved,
+    )
+
+
+def _compose_with_retrieval(
+    text: str,
+    relevant: list[SearchHit],
+    understanding: QuestionUnderstanding,
+    client: GroqClient | None,
+    chat_factory: Callable[[], GroqClient],
+    department_name: str | None,
+    contact: str,
+    fallback_factory: Callable[[], VertexChatClient],
+    deadline: float | None,
+    knowledge_names: Sequence[str],
+) -> QaAnswer:
+    """有相關段落時請模型回答；模型判斷段落不足時改回查無資料訊息。"""
     answer = compose_answer(
         text,
         relevant,

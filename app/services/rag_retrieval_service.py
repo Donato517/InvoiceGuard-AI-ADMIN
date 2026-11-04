@@ -87,6 +87,7 @@ def build_result(
             knowledge_name=c.knowledge_name,
             rag_file_id=c.rag_file_id,
             knowledge_names=c.knowledge_names,
+            effective_date=c.effective_date,
         )
         for c in accepted
     )

@@ -18,9 +18,16 @@ from app.services.rag_qa_service import NO_ANSWER, SERVICE_UNAVAILABLE, QaAnswer
 ACT = "加值型及非加值型營業稅法"
 
 
-def _answer(text: str, *titles: str) -> QaAnswer:
+def _answer(text: str, *titles: str, retrieved: tuple[str, ...] | None = None) -> QaAnswer:
+    """合成回答；retrieved 預設等於引用的文件（檢索有找到、模型也引用）。"""
     sources = tuple(QaSource(n, title, "營業稅", 0) for n, title in enumerate(titles, start=1))
-    return QaAnswer(text, grounded=bool(titles), sources=sources, total_tokens=120)
+    return QaAnswer(
+        text,
+        grounded=bool(titles),
+        sources=sources,
+        total_tokens=120,
+        retrieved_titles=titles if retrieved is None else retrieved,
+    )
 
 
 def test_case_ids_are_unique_and_expectations_valid() -> None:
@@ -39,6 +46,7 @@ def test_passing_concept_answer() -> None:
     )
     result = rag_eval_service.evaluate(case, _answer("白話說明：\n加值與非加值… [1]", ACT))
     assert result.passed and [c.label for c in result.checks] == [
+        "檢索命中",
         "有依文件回答",
         "引用預期文件",
         "含關鍵字",
@@ -49,10 +57,15 @@ def test_passing_concept_answer() -> None:
 @pytest.mark.parametrize(
     "answer,failed_label",
     [
-        (_answer("白話說明：非加值 [1]", "統一發票使用辦法"), "引用預期文件"),
+        (
+            _answer(
+                "白話說明：非加值 [1]", "統一發票使用辦法", retrieved=(ACT, "統一發票使用辦法")
+            ),
+            "引用預期文件",
+        ),
         (_answer("白話說明：只講加值 [1]", ACT), "含關鍵字"),
         (_answer("你可以這樣做：非加值 [1]", ACT), "概念格式"),
-        (QaAnswer(NO_ANSWER, grounded=False), "有依文件回答"),
+        (QaAnswer(NO_ANSWER, grounded=False, retrieved_titles=(ACT,)), "有依文件回答"),
     ],
 )
 def test_each_failed_check_is_reported(answer: QaAnswer, failed_label: str) -> None:
@@ -135,3 +148,28 @@ def test_eval_page_and_run_only_for_it(pages: Pages, monkeypatch: pytest.MonkeyP
 def test_chat_page_links_to_eval(pages: Pages) -> None:
     pages.is_it = True
     assert 'href="/knowledge/eval"' in pages.client.get("/knowledge/chat").text
+
+
+# ---- 分層檢查：檢索層與回答層分開 ----
+
+
+def test_retrieval_miss_is_reported_separately_from_answer() -> None:
+    """檢索沒找到預期文件、模型也查無資料：兩層都報，看得出是檢索的問題。"""
+    case = EvalCase("x", "稅率", sources_any=(ACT,), keywords_any=("5%",))
+    result = rag_eval_service.evaluate(case, QaAnswer(NO_ANSWER, grounded=False))
+    assert [(c.label, c.passed) for c in result.checks] == [
+        ("檢索命中", False),
+        ("有依文件回答", False),
+    ]
+    assert "候選段落來源：無" in result.checks[0].detail
+
+
+def test_retrieval_hit_but_no_answer_points_to_answer_layer() -> None:
+    """檢索有找到、模型卻判斷不足：檢索層通過，問題在回答層。"""
+    case = EvalCase("x", "稅率", sources_any=(ACT,))
+    answer = QaAnswer(NO_ANSWER, grounded=False, retrieved_titles=(ACT, "施行細則"))
+    result = rag_eval_service.evaluate(case, answer)
+    assert [(c.label, c.passed) for c in result.checks] == [
+        ("檢索命中", True),
+        ("有依文件回答", False),
+    ]

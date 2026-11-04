@@ -330,6 +330,7 @@ class RetrievalCandidate:
     parse_status: str
     can_read: bool = True
     file_count: int = 0
+    effective_date: date | None = None
 
     @property
     def knowledge_name(self) -> str:
@@ -349,6 +350,8 @@ class SearchHit:
     knowledge_name: str
     rag_file_id: str
     knowledge_names: tuple[str, ...] = ()
+    # 文件生效日（rag_files.effective_date）；未知或不適用為 None
+    effective_date: date | None = None
 
 
 @dataclass(frozen=True)

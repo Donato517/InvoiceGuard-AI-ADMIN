@@ -14,7 +14,7 @@
     <div class="sources">
       來源：
       {% for source in answer.sources %}
-        <div>[{{ source.number }}] 知識庫「{{ source.knowledge_name }}」《{{ source.file_title }}》第 {{ source.chunk_index + 1 }} 段</div>
+        <div>[{{ source.number }}] 知識庫「{{ source.knowledge_name }}」《{{ source.file_title }}》第 {{ source.chunk_index + 1 }} 段{% if source.effective_date %}（生效日 {{ source.effective_date }}）{% endif %}</div>
       {% endfor %}
     </div>
   {% endif %}

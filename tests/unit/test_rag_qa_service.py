@@ -1527,3 +1527,45 @@ def test_question_type_is_added_to_answer_prompt(review_hits: list[SearchHit]) -
     chat.understanding = '{"type":"definition","concepts":["甲"],"need":"甲的意思","queries":[]}'
     _ask("甲是什麼？", chat)
     assert "【題型】定義題（問名詞是什麼意思）" in chat.answer_calls[0][0][0].text
+
+
+# ---- 附件／代號比對、生效日、送給模型的來源文件（2026-11-04）----
+
+
+def test_reference_groups_add_attachment_and_code_patterns() -> None:
+    groups = qa.reference_groups("附件五 和 附件 12 的格式，還有格式代號 21 是什麼")
+    assert ["附件(5|五)"] in groups and ["附件(12|十二)"] in groups
+    assert ["代號", "(^|[^0-9])21([^0-9]|$)"] in groups
+
+
+def test_reference_groups_limit_still_applies() -> None:
+    question = "第1條第2條第3條第4條附件一代號21"
+    assert len(qa.reference_groups(question)) == qa.MAX_REFERENCE_GROUPS
+
+
+def test_prompt_header_shows_effective_date_when_known() -> None:
+    from datetime import date
+
+    dated = replace(hit(0.1), effective_date=date(2024, 1, 1))
+    prompt = qa._prompt("問題", [dated, hit(0.2, 1)])
+    assert "第 1 段（生效日 2024-01-01）" in prompt
+    assert prompt.count("生效日") == 1
+
+
+def test_answer_records_retrieved_titles_and_source_effective_date(
+    review_hits: list[SearchHit],
+) -> None:
+    from datetime import date
+
+    review_hits.append(replace(hit(0.1), file_title="營業稅法", effective_date=date(2024, 1, 1)))
+    review_hits.append(replace(hit(0.2, 1), file_title="施行細則"))
+    answer = _ask("問題", FakeChat("規定 [1]"))
+    assert answer.grounded
+    assert answer.retrieved_titles == ("營業稅法", "施行細則")
+    assert answer.sources[0].effective_date == date(2024, 1, 1)
+
+
+def test_no_relevant_passage_has_no_retrieved_titles(review_hits: list[SearchHit]) -> None:
+    review_hits.append(hit(0.9))
+    answer = _ask("問題", FakeChat("不會被呼叫 [1]"))
+    assert not answer.grounded and answer.retrieved_titles == ()

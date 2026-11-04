@@ -31,8 +31,7 @@ F09 格式 21 申報檔由 `DatabaseCompanyProfileProvider` 讀取：統編寫�
 
 ## 正式啟用步驟
 
-1. 資料庫維護者確認 `alembic_version` 為 `5e8b11d0a941`（供應商），再取得授權執行 API migration `8ef487f17b06`：建立 `public.company_profile`（RLS、REVOKE PUBLIC／anon／authenticated）並新增功能目錄 `company_profile`，不寫入公司資料、不授予部門權限。
-2. 由有部門管理權限的人到「部門管理」幫財務部勾選「公司基本資料」的查看／修改。
-3. 財務到 `/company-profile` 設定公司資料，再到申報資料頁確認批次卡片不再出現公司資料錯誤。
+正式 DB 已有資料表與功能碼：`public.company_profile` 與 `app_functions` 的 `company_profile` 已由組長以手動 SQL 建立（Schema v2.0／v2.1，正式結構以 `InvoiceGuard_AI_PostgreSQL_Schema_v2_1_PortableAuth_draft.sql` 為準）。正式 DB 不以 Alembic 管理，**不需要也不能**執行 migration `8ef487f17b06`（表已存在會被擋下）；該 migration 只作為結構定義與測試庫使用。
 
-**注意**：新版程式部署後、migration 執行前，F09 讀不到資料表會擋下產檔（原本以測試統編產出的檔案本來也不能申報）。
+1. 由有部門管理權限的人到「部門管理」幫財務部勾選「公司基本資料」的查看／修改。
+2. 財務到 `/company-profile` 設定公司資料，再到申報資料頁確認批次卡片不再出現公司資料錯誤。

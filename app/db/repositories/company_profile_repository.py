@@ -1,4 +1,4 @@
-"""本公司基本資料固定參數 SQL；表由 API migration 8ef487f17b06 建立，固定只有一筆，不提交交易。"""
+"""本公司基本資料固定參數 SQL；表定義見 Schema v2.1（與 migration 8ef487f17b06 相同），固定只有一筆，不提交交易。"""
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError as SQLAlchemyError

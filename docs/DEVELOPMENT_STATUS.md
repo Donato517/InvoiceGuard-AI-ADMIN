@@ -1,4 +1,4 @@
-> 2026-11-04：新增「公司基本資料」`/company-profile`（名稱、統一編號、稅籍編號必填，稅籍編號輸入兩次確認；負責人、地址、稽徵機關、聯絡窗口選填），F09 申報檔改讀此資料，未設定時擋下產檔。需執行 API migration `8ef487f17b06` 並由部門管理勾選後才能使用，詳見 [COMPANY_PROFILE](COMPANY_PROFILE.md)。
+> 2026-11-04：新增「公司基本資料」`/company-profile`（名稱、統一編號、稅籍編號必填，稅籍編號輸入兩次確認；負責人、地址、稽徵機關、聯絡窗口選填），F09 申報檔改讀此資料，未設定時擋下產檔。正式 DB 已有資料表與功能碼（手動 SQL，Schema v2.1），由部門管理勾選後即可使用，詳見 [COMPANY_PROFILE](COMPANY_PROFILE.md)。
 
 > 2026-11-04：正式供應商列表／內容／新增修改／停用啟用、部門四操作及交易重驗已接線，2718 項 ADMIN 離線測試通過、32 項略過。正式 DB 套用與實際端到端驗收尚未執行，詳見 [SUPPLIER_MANAGEMENT](SUPPLIER_MANAGEMENT.md)。
 

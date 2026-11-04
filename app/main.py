@@ -19,6 +19,7 @@ from app.routers import (
     accounts,
     auth,
     cases,
+    company_profile,
     dashboard,
     db_inspection,
     departments,
@@ -65,6 +66,7 @@ app.include_router(cases.router)
 app.include_router(intake.router)
 app.include_router(knowledge.router)
 app.include_router(supplier_management.router)
+app.include_router(company_profile.router)
 app.include_router(users.router)
 app.include_router(accounts.router)
 app.include_router(system.router)

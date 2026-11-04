@@ -1,0 +1,142 @@
+{#
+  @template pages/company_profile/form.html
+  @description 設定或修改本公司基本資料；稅籍編號輸入兩次，一致才能存檔。錯誤時保留輸入（確認欄除外）。
+  @route GET /company-profile/edit；送出 POST /company-profile
+  @context values: dict          表單值 {company_name, ban, tax_reg_no, 六個選填欄位, updated_at}
+  @context profile: dict | None  既有資料（有值代表修改，帶 updated_at 版本）；None 代表第一次設定
+  @context errors: list[str]     驗證錯誤
+  @context postal_codes: dict    縣市 → {鄉鎮市區: 3 碼郵遞區號}（中華郵政 103.12.25 一覽表），供伺服器端產生選項
+  @context postal_options: list  同一份清單的有序陣列 [[縣市, [[鄉鎮市區, 郵遞區號], …]], …]，供 main.js 連動
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}{{ '修改' if profile else '設定' }}公司基本資料{% endblock %}
+{% block content %}
+  <h2>{{ '修改' if profile else '設定' }}公司基本資料</h2>
+  {% if errors %}
+    <div class="alert alert--danger" role="alert">
+      <strong>尚未儲存，請修正：</strong>
+      <ul>
+        {% for error in errors %}<li>{{ error }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+  <p class="muted">＊為必填。統一編號會驗算檢查碼；稅籍編號沒有公開的檢查規則，請輸入兩次確認。</p>
+  <form method="post" action="/company-profile" class="form">
+    <input type="hidden"
+           name="updated_at"
+           value="{{ values.get('updated_at', '') if profile else '' }}">
+    <section class="card">
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="company_name">公司名稱＊</label>
+          <input id="company_name"
+                 name="company_name"
+                 value="{{ values.get('company_name', '') }}"
+                 maxlength="120"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="ban">統一編號（8 碼）＊</label>
+          <input id="ban"
+                 name="ban"
+                 value="{{ values.get('ban', '') }}"
+                 inputmode="numeric"
+                 pattern="[0-9]{8}"
+                 maxlength="8"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="tax_reg_no">稅籍編號（9 碼）＊</label>
+          <input id="tax_reg_no"
+                 name="tax_reg_no"
+                 value="{{ values.get('tax_reg_no', '') }}"
+                 inputmode="numeric"
+                 pattern="[0-9]{9}"
+                 maxlength="9"
+                 autocomplete="off"
+                 required>
+        </div>
+        <div class="form-field">
+          <label for="tax_reg_no_confirm">再次輸入稅籍編號＊</label>
+          <input id="tax_reg_no_confirm"
+                 name="tax_reg_no_confirm"
+                 inputmode="numeric"
+                 pattern="[0-9]{9}"
+                 maxlength="9"
+                 autocomplete="off"
+                 required>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <h3>其他資料（選填，只記錄顯示）</h3>
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="representative_name">負責人</label>
+          <input id="representative_name"
+                 name="representative_name"
+                 value="{{ values.get('representative_name', '') }}"
+                 maxlength="80">
+        </div>
+        {% set city = values.get('business_city', '') %}
+        <div class="form-field">
+          <label for="business_city">營業地址－縣市</label>
+          <select id="business_city"
+                  name="business_city"
+                  data-postal-city="#business_district"
+                  data-postal-zip="#business_zip_code">
+            <option value="">請選擇</option>
+            {% for name in postal_codes %}
+              <option value="{{ name }}" {% if city == name %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="business_district">營業地址－鄉鎮市區</label>
+          <select id="business_district"
+                  name="business_district"
+                  data-postal-district="#business_zip_code">
+            <option value="">請選擇</option>
+            {% for name, code in postal_codes.get(city, {}).items() %}
+              <option value="{{ name }}"
+                      data-zip="{{ code }}"
+                      {% if values.get('business_district', '') == name %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="business_zip_code">郵遞區號（自動帶出）</label>
+          <input id="business_zip_code"
+                 value="{{ values.get('business_zip_code', '') }}"
+                 readonly
+                 tabindex="-1">
+        </div>
+        <div class="form-field">
+          <label for="business_street">營業地址－路街巷弄門牌</label>
+          <input id="business_street"
+                 name="business_street"
+                 value="{{ values.get('business_street', '') }}"
+                 maxlength="200"
+                 placeholder="例如：範例路 1 號 3 樓">
+        </div>
+        {% for name, label, limit in [('tax_office', '主管稽徵機關（例如某國稅局某分局）', 80), ('contact_name', '申報聯絡人', 80), ('contact_phone', '聯絡電話', 40), ('contact_email', '聯絡 Email', 200)] %}
+          <div class="form-field">
+            <label for="{{ name }}">{{ label }}</label>
+            <input id="{{ name }}"
+                   name="{{ name }}"
+                   value="{{ values.get(name, '') }}"
+                   maxlength="{{ limit }}"
+                   {% if name == 'contact_email' %}type="email"{% else %}type="text"{% endif %}>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+    {# 縣市 → 鄉鎮市區清單，供 main.js 切換縣市時重建選項；type 為 JSON 資料，不會執行。
+       用陣列保留中華郵政原檔順序（tojson 會把物件的鍵重新排序） #}
+    <script type="application/json" id="tw-postal-codes">{{ postal_options | tojson }}</script>
+    <div class="toolbar__actions">
+      <a href="/company-profile" class="btn btn--secondary">取消</a>
+      <button type="submit" class="btn btn--primary">儲存</button>
+    </div>
+  </form>
+{% endblock %}

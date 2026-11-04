@@ -1,0 +1,13 @@
+{#
+  @template pages/company_profile/saved.html
+  @description 只有修改權限、沒有查看權限時的儲存結果；不顯示公司資料。
+  @route POST /company-profile
+  @context message: str  結果訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}公司基本資料{% endblock %}
+{% block content %}
+  <h2>公司基本資料</h2>
+  <p role="status">{{ message }}</p>
+  <a class="btn btn--secondary" href="/welcome">返回歡迎頁</a>
+{% endblock %}

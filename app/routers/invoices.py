@@ -67,7 +67,7 @@ from app.services import finance_review_db_service as finance_db
 from app.services import invoice_intake_mapping as intake_mapping
 from app.services import invoice_intake_service as intake_service
 from app.services import invoice_review_service
-from app.services.company_profile_service import HardcodedCompanyProfileProvider
+from app.services.company_profile_service import DatabaseCompanyProfileProvider
 from app.services.e_admin_service import INVOICES, EModule, get_e_module
 from app.services.finance_review_service import (
     FinanceReviewError,
@@ -925,8 +925,8 @@ def invoice_review_list(
 
 # ---- 申報檔（F09）----
 
-# TODO(StacieChen): 公司主檔確定後改由設定讀取（見 F_Schema補充建議_v1.5.md §5）
-_FILING_PROFILE = HardcodedCompanyProfileProvider()
+# 本公司資料由「公司基本資料」頁維護（public.company_profile）；沒有資料庫連線時才用示範值
+_FILING_PROFILE = DatabaseCompanyProfileProvider()
 _TAX_CATEGORY_TO_TYPE = {"應稅": "taxable", "零稅率": "zero_rated", "免稅": "tax_exempt"}
 _ROC_DATE = re.compile(r"(\d{2,3})/(\d{1,2})/(\d{1,2})")
 _REPORT_PERIOD = re.compile(r"\d{5}")

@@ -1,0 +1,71 @@
+{#
+  @template pages/company_profile/detail.html
+  @description 本公司基本資料（名稱、統一編號、稅籍編號）查看頁；F09 申報檔讀取這裡的統編與稅籍編號。
+  @route GET /company-profile
+  @context profile: dict | None  {company_name, ban, tax_reg_no, representative_name, business_zip_code, business_city,
+                                 business_district, business_street, tax_office,
+                                 contact_name, contact_phone, contact_email, created_at, updated_at}；尚未設定時為 None
+  @context can: dict             {view, edit} 目前部門的操作權限
+  @context message: str          儲存成功訊息
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}公司基本資料{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <h2>公司基本資料</h2>
+    {% if can.edit %}
+      <a href="/company-profile/edit" class="btn btn--primary">{{ '修改資料' if profile else '設定公司資料' }}</a>
+    {% endif %}
+  </div>
+  {% if message %}<p class="alert alert--success" role="status">{{ message }}</p>{% endif %}
+  {% if not profile %}
+    <p class="alert alert--warning">尚未設定公司基本資料。設定前，申報資料頁無法產生格式 21 申報檔。</p>
+  {% else %}
+    <section class="card">
+      <h3>申報營業人資料</h3>
+      <table class="table">
+        <tbody>
+          <tr>
+            <th scope="row">公司名稱</th>
+            <td>{{ profile.company_name }}</td>
+          </tr>
+          <tr>
+            <th scope="row">統一編號</th>
+            <td>{{ profile.ban }}</td>
+          </tr>
+          <tr>
+            <th scope="row">稅籍編號</th>
+            <td>{{ profile.tax_reg_no }}</td>
+          </tr>
+          {% set address = (profile.business_zip_code ~ ' ' if profile.business_zip_code else '') ~ profile.business_city ~ profile.business_district ~ profile.business_street %}
+          <tr>
+            <th scope="row">負責人</th>
+            <td>{{ profile.representative_name or '未提供' }}</td>
+          </tr>
+          <tr>
+            <th scope="row">營業地址</th>
+            <td>{{ address or '未提供' }}</td>
+          </tr>
+          {% for name, label in [('tax_office', '主管稽徵機關'), ('contact_name', '申報聯絡人'), ('contact_phone', '聯絡電話'), ('contact_email', '聯絡 Email')] %}
+            <tr>
+              <th scope="row">{{ label }}</th>
+              <td>{{ profile[name] or '未提供' }}</td>
+            </tr>
+          {% endfor %}
+          <tr>
+            <th scope="row">最後修改時間</th>
+            <td>{{ profile.updated_at[:16] | replace('T', ' ') }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+  <section class="card">
+    <h3>說明</h3>
+    <ul class="muted small-text">
+      <li>統一編號 8 碼：寫在申報檔每一行的買受人統編與檔名（統編.TXT），也用來比對發票的買受人統編。</li>
+      <li>稅籍編號 9 碼：寫在申報檔每一行的開頭，不可用統一編號代替。可在國稅局的營業人設立（變更）登記核准函、歷次 401 申報書表頭或統一發票購票證找到。</li>
+      <li>公司遷址到不同國稅局轄區時，稅籍編號可能改變，請記得更新。</li>
+    </ul>
+  </section>
+{% endblock %}

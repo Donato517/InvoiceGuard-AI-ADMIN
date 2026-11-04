@@ -54,6 +54,18 @@
       ],
       "app_scope": "admin",
       "is_active": false
+    },
+    {
+      "function_code": "company.profile",
+      "function_name": "公司基本資料",
+      "category": "系統管理",
+      "route": "/company-profile",
+      "actions": [
+        "edit",
+        "view"
+      ],
+      "app_scope": "admin",
+      "is_active": false
     }
   ],
   "pending_domains": [

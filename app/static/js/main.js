@@ -637,6 +637,40 @@ document.addEventListener('change', (event) => {
   }
 })
 
+// 公司基本資料：選縣市後重建鄉鎮市區選項，選鄉鎮市區後帶出 3 碼郵遞區號
+// 清單來自頁面內 #tw-postal-codes（中華郵政一覽表）；郵遞區號只供顯示，伺服器會依縣市與區重新帶出
+document.addEventListener('change', (event) => {
+  const citySelect = event.target.closest('select[data-postal-city]')
+  if (citySelect) {
+    const districtSelect = document.querySelector(citySelect.dataset.postalCity)
+    const zipInput = document.querySelector(citySelect.dataset.postalZip)
+    const source = document.getElementById('tw-postal-codes')
+    if (!districtSelect || !source) {
+      return
+    }
+    // 資料為 [[縣市, [[鄉鎮市區, 郵遞區號], …]], …]，保留中華郵政原檔順序
+    const entry = JSON.parse(source.textContent).find(([city]) => city === citySelect.value)
+    districtSelect.replaceChildren(new Option('請選擇', ''))
+    for (const [name, code] of entry ? entry[1] : []) {
+      const option = new Option(name, name)
+      option.dataset.zip = code
+      districtSelect.append(option)
+    }
+    if (zipInput) {
+      zipInput.value = ''
+    }
+    return
+  }
+  const districtSelect = event.target.closest('select[data-postal-district]')
+  if (districtSelect) {
+    const zipInput = document.querySelector(districtSelect.dataset.postalDistrict)
+    const option = districtSelect.options[districtSelect.selectedIndex]
+    if (zipInput) {
+      zipInput.value = option ? option.dataset.zip || '' : ''
+    }
+  }
+})
+
 // 知識庫題庫測試：「全部執行」依序送出每一題（一次一題，避開 60 秒限制），等上一題完成才送下一題
 document.addEventListener('click', async (event) => {
   const runAll = event.target.closest('[data-eval-run-all]')

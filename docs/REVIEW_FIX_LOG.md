@@ -1072,3 +1072,10 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 問題：獨立 SQLite 模擬站未接正式 ADMIN；曾誤加供應商功能勾選表。
 處理：移除勾選表，新增正式 supplier_management router/service 與 suppliers_repository；固定 suppliers capability 與 company scope，沿用既有 Session／部門許可／交易鎖，側欄置於登出前。新增欄位／唯一索引由 API migration 管理。無模擬資料自動匯入、無自動部門授權。
 驗證：ADMIN 全套 2718 passed、32 skipped、1 個既有 Starlette/httpx warning；供應商專項 18 passed。API migration 離線輸出 2 passed、隔離 PG 1 skipped（未配置隔離 DB）。正式 DB 套用及真實端到端未執行。
+
+
+## 2026-11-04 財務審核資料庫錯誤記錄真正原因
+
+問題：正式 ADMIN 財務「退回補正」顯示「資料庫目前無法使用」，但 `finance_review_db_service` 把所有 SQLAlchemy 錯誤轉成同一個例外且不記 log，無法分辨缺表、權限／RLS、約束或 Trigger（如 `guard_field_review_update`）。
+處理：`load`、`commit_change`、`save_tax_type` 失敗時以 WARNING 記 `finance_review_db_error`：操作（含新狀態）、發票 UUID、例外與驅動類別、SQLSTATE、資料表、約束名稱與主訊息（200 字內）。不記 SQL、參數、DETAIL、連線字串或例外全文；畫面訊息不變。rollback 失敗不覆蓋原錯誤。
+驗證：新增 3 個離線測試（Trigger 原因可見且不含 SQL／參數、無驅動資訊時欄位為 "-"、連線失敗只記類別）；全套 2795 passed、31 skipped；Ruff、format、check_project、environment --check 通過。正式環境 log 未驗證。

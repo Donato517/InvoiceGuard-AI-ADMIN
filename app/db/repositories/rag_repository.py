@@ -170,7 +170,8 @@ def _file_scope(*, review: bool = False) -> str:
 
 _HIT_SELECT = """
     SELECT c.content, {distance} AS distance, f.title AS file_title, f.file_version,
-           c.chunk_index, sf.knowledge_names, f.rag_file_id::text AS rag_file_id
+           c.chunk_index, sf.knowledge_names, f.rag_file_id::text AS rag_file_id,
+           f.effective_date
     FROM scoped_files sf
     JOIN public.rag_files f ON f.rag_file_id = sf.rag_file_id
     JOIN public.rag_chunks c ON c.rag_file_id = f.rag_file_id
@@ -184,7 +185,7 @@ SEARCH_CHUNKS = text(
            c.content, c.embedding_model, {_DISTANCE} AS distance,
            f.title AS file_title, f.file_version, sf.knowledge_base_ids, sf.knowledge_names,
            'approved' AS approval_status, true AS is_active, true AS can_read, true AS use_for_qa,
-           sf.file_count, f.is_approved, f.parse_status
+           sf.file_count, f.is_approved, f.parse_status, f.effective_date
     FROM scoped_files sf
     JOIN public.rag_files f ON f.rag_file_id = sf.rag_file_id
     JOIN public.rag_chunks c ON c.rag_file_id = f.rag_file_id

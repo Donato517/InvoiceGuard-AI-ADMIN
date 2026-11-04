@@ -5,6 +5,8 @@
 注意事項：
     - 只限資訊部（沿用 ask_test 的資訊部檢查）；一次只跑一題，避開 60 秒限制，畫面依序呼叫。
     - 範圍為全部已核准、啟用且至少一份檔案的知識庫，不帶部門。
+    - 分層檢查：「檢索命中」看送給模型的段落是否含預期文件，「引用預期文件」看回答實際引用；
+      檢索沒命中＝檢索或切段問題；檢索命中但沒引用或查無資料＝回答（提示詞）問題。
     - 不保存題目執行結果；每次執行都會呼叫模型並消耗 token。
 """
 
@@ -85,10 +87,19 @@ def evaluate(case: EvalCase, answer: QaAnswer) -> EvalResult:
                 ),
             ),
         )
+    # 分層檢查：先看檢索有沒有找到預期文件，再看模型是否依段落回答，錯誤原因才分得清楚
+    checks = []
+    if case.sources_any:
+        found = list(answer.retrieved_titles)
+        hit = any(expected in title for title in found for expected in case.sources_any)
+        checks.append(
+            EvalCheck("檢索命中", hit, "" if hit else f"候選段落來源：{'、'.join(found) or '無'}")
+        )
     if not answer.grounded:
-        # 查無資料時其他檢查沒有意義，只回報這一項
-        return EvalResult(case, answer, (EvalCheck("有依文件回答", False, "查無資料"),))
-    checks = [EvalCheck("有依文件回答", True)]
+        # 查無資料時回答層的檢查沒有意義，只回報這一項（檢索命中仍保留，可看出是哪一層的問題）
+        checks.append(EvalCheck("有依文件回答", False, "查無資料"))
+        return EvalResult(case, answer, tuple(checks))
+    checks.append(EvalCheck("有依文件回答", True))
     if case.sources_any:
         titles = [source.file_title for source in answer.sources]
         hit = any(expected in title for title in titles for expected in case.sources_any)

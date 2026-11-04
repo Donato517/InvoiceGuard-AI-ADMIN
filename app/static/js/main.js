@@ -107,11 +107,31 @@ function setBusy(message) {
   overlay.querySelector('.busy-overlay__text').textContent = message
 }
 
+// 一般 POST 表單（非 HTMX，送出後換頁）一律顯示遮罩，避免使用者以為卡住而重複送出；
+// 有 data-busy 用指定訊息，沒有就用預設訊息；data-busy="" 代表不顯示。HTMX 表單沿用下方 htmx 事件。
+const DEFAULT_BUSY_MESSAGE = '處理中，請稍候…'
 document.addEventListener('submit', (event) => {
-  const message = event.target.dataset.busy
-  if (message && !event.defaultPrevented) {
+  const form = event.target
+  if (event.defaultPrevented || !form?.dataset) {
+    return
+  }
+  const attribute = (name) => (typeof form.getAttribute === 'function' ? form.getAttribute(name) : null)
+  const isHtmx = attribute('hx-post') !== null || attribute('hx-get') !== null
+  const isPost = (attribute('method') || '').toLowerCase() === 'post'
+  const message =
+    form.dataset.busy !== undefined ? form.dataset.busy : isPost && !isHtmx ? DEFAULT_BUSY_MESSAGE : ''
+  if (message) {
     setBusy(message)
   }
+})
+
+// 會換頁的連結（例如上傳完成後重新整理清單）加上 data-busy 也顯示遮罩；新分頁或修飾鍵開啟時不顯示
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[data-busy]')
+  if (!link || !link.dataset.busy || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return
+  }
+  setBusy(link.dataset.busy)
 })
 document.addEventListener('htmx:beforeRequest', (event) => {
   const message = event.detail.elt.closest('[data-busy]')?.dataset.busy
@@ -614,5 +634,26 @@ document.addEventListener('change', (event) => {
   const categorySelect = event.target.closest('select[data-account-filter]')
   if (categorySelect) {
     filterAccountsByCategory(categorySelect)
+  }
+})
+
+// 知識庫題庫測試：「全部執行」依序送出每一題（一次一題，避開 60 秒限制），等上一題完成才送下一題
+document.addEventListener('click', async (event) => {
+  const runAll = event.target.closest('[data-eval-run-all]')
+  if (!runAll || typeof htmx === 'undefined') {
+    return
+  }
+  runAll.disabled = true
+  try {
+    for (const button of document.querySelectorAll('[data-eval-run]')) {
+      await htmx.ajax('POST', '/knowledge/eval/run', {
+        source: button,
+        target: button.dataset.evalTarget,
+        swap: 'innerHTML',
+        values: { case_id: button.dataset.evalRun },
+      })
+    }
+  } finally {
+    runAll.disabled = false
   }
 })

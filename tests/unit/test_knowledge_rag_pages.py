@@ -211,7 +211,7 @@ def test_documents_page_shows_index_failure_and_hides_it_actions(pages: Pages) -
     response = pages.client.get("/knowledge/files")
 
     assert response.status_code == 200
-    assert "PDF 超過 15 頁" in response.text
+    assert "PDF 超過 45 頁" in response.text
     assert f"/knowledge/files/{FILE}/index" not in response.text  # 上傳部門不能建立索引
     assert f"/knowledge/files/{FILE}/status" not in response.text  # 非資訊部看不到核准
 
@@ -922,7 +922,7 @@ def test_file_library_exposes_states_metadata_and_references(pages: Pages) -> No
         "營業稅申報",
     ]:
         assert label in response.text
-    assert "PDF 超過 15 頁" in response.text
+    assert "PDF 超過 45 頁" in response.text
     assert "/knowledge/files/upload" in response.text
     form = HtmlElements(response.text)
     sources = form.elements("select", name="source_type")

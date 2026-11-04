@@ -930,6 +930,8 @@ KNOWLEDGE_ROUTES = (
     ("GET", "/knowledge/chat"),
     ("GET", "/knowledge/chat/choices"),
     ("POST", "/knowledge/chat/ask"),
+    ("GET", "/knowledge/eval"),
+    ("POST", "/knowledge/eval/run"),
     ("POST", "/knowledge/shared-tax/copy"),
     ("POST", "/knowledge/shared-tax/files"),
     ("POST", "/knowledge/shared-tax/files/sample-file/remove"),

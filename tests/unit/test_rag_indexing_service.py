@@ -293,7 +293,12 @@ def test_text_without_coordinates_is_unchanged() -> None:
 def test_pdf_extraction_labels_items() -> None:
     class Pdf:
         def process(
-            self, content: bytes, mime_type: str, *, timeout_seconds: float | None = None
+            self,
+            content: bytes,
+            mime_type: str,
+            *,
+            timeout_seconds: float | None = None,
+            options: object = None,
         ) -> OcrResult:
             return _ocr(ARTICLE_ROWS)
 

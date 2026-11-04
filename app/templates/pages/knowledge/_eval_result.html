@@ -1,0 +1,48 @@
+{#
+  @template pages/knowledge/_eval_result.html
+  @description 題庫測試一題的結果（HTMX 放入該題的結果欄）：通過與否、各項檢查、token 與回答全文；標籤沿用共用 badge。
+  @route POST /knowledge/eval/run
+  @context result: EvalResult  {case, answer, checks[{label, passed, detail}], passed}
+#}
+<div class="eval-result">
+  <div class="eval-result__summary">
+    {% if result.passed %}
+      <span class="badge badge--success">✓ 通過</span>
+    {% else %}
+      <span class="badge badge--danger">✗ 未通過</span>
+    {% endif %}
+    {% if result.answer.total_tokens %}
+      <span class="muted small-text">{{ result.answer.total_tokens }} tokens</span>
+    {% endif %}
+  </div>
+  <ul class="eval-result__checks small-text">
+    {% for check in result.checks %}
+      <li class="{{ 'eval-check--ok' if check.passed else 'eval-check--bad' }}">
+        {{ '✓' if check.passed else '✗' }} {{ check.label }}
+        {% if check.detail %}<span class="muted">：{{ check.detail }}</span>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+  {% if result.answer.note %}<p class="muted small-text">測試說明：{{ result.answer.note }}</p>{% endif %}
+  <details>
+    <summary class="small-text">回答全文</summary>
+    <div class="small-text eval-answer">{{ result.answer.text }}</div>
+    {% if result.answer.sources %}
+      <div class="sources small-text">
+        來源：
+        {% for source in result.answer.sources %}
+          <div>[{{ source.number }}]《{{ source.file_title }}》第 {{ source.chunk_index + 1 }} 段</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </details>
+  <button type="button"
+          class="btn btn--secondary btn--small"
+          hx-post="/knowledge/eval/run"
+          hx-vals='{"case_id": "{{ result.case.case_id }}"}'
+          hx-target="#eval-result-{{ result.case.case_id }}"
+          hx-swap="innerHTML"
+          data-busy=""
+          data-eval-run="{{ result.case.case_id }}"
+          data-eval-target="#eval-result-{{ result.case.case_id }}">重新執行</button>
+</div>

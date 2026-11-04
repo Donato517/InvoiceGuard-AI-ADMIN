@@ -1,0 +1,68 @@
+{#
+  @template pages/knowledge/eval.html
+  @description 資訊部題庫回歸測試：列出固定題目，可逐題執行或「全部執行」依序跑（一次一題，避開 60 秒限制）；
+               結果不保存，重新整理即清空。每次執行都會呼叫模型並消耗 token。版面沿用知識庫管理頁（knowledge.css）。
+  @route GET /knowledge/eval；執行 POST /knowledge/eval/run（HTMX，結果放入該題的結果欄）
+  @context cases: tuple[EvalCase]  題目與預期（app/schemas/rag_eval_cases.py）
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}題庫測試{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <a href="/knowledge/chat" class="btn btn--secondary btn--small">← 返回知識庫問答</a>
+    <h2>題庫測試</h2>
+    <p class="muted small-text">調整提示詞、切段或檢索後，用固定題目確認回答有沒有變差。範圍為全部已核准、啟用且有檔案的知識庫，不帶部門。</p>
+  </div>
+  <p class="alert alert--info">每題都會實際呼叫模型並消耗 token（約 20～50 秒），全部執行約需數分鐘；結果不保存，重新整理即清空。</p>
+  <section class="card">
+    <div class="toolbar">
+      <h2 class="card__title">題目清單（共 {{ cases | length }} 題）</h2>
+      <div class="toolbar__actions">
+        <button type="button" class="btn btn--primary btn--small" data-eval-run-all>全部執行</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="table eval-table">
+        <thead>
+          <tr>
+            <th scope="col">題目</th>
+            <th scope="col">預期</th>
+            <th scope="col">結果</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for case in cases %}
+            <tr>
+              <td>{{ case.question }}</td>
+              <td class="small-text">
+                {% if case.no_answer %}
+                  <span class="badge badge--neutral">應查無資料</span>
+                {% else %}
+                  {% if case.sources_any %}<div>引用：{{ case.sources_any | join('／') }}</div>{% endif %}
+                  {% if case.keywords_any %}<div>關鍵字：{{ case.keywords_any | join('／') }}</div>{% endif %}
+                  {% if case.expected_format %}
+                    <div>格式：{{ '概念' if case.expected_format == 'concept' else '步驟' }}</div>
+                  {% endif %}
+                {% endif %}
+              </td>
+              <td id="eval-result-{{ case.case_id }}">
+                <button type="button"
+                        class="btn btn--secondary btn--small"
+                        hx-post="/knowledge/eval/run"
+                        hx-vals='{"case_id": "{{ case.case_id }}"}'
+                        hx-target="#eval-result-{{ case.case_id }}"
+                        hx-swap="innerHTML"
+                        data-busy=""
+                        data-eval-run="{{ case.case_id }}"
+                        data-eval-target="#eval-result-{{ case.case_id }}">執行</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

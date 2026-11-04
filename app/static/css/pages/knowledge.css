@@ -224,3 +224,41 @@
 .knowledge-confirm .modal__body {
   overflow-wrap: anywhere;
 }
+
+/* 題庫測試：回答全文保留換行 */
+.eval-answer {
+  white-space: pre-wrap;
+}
+
+/* 題庫測試：每題結果（標籤沿用共用 badge，檢查清單與知識庫頁同色系） */
+.eval-result {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.eval-result__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.eval-result__checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eval-check--ok {
+  color: var(--color-success);
+}
+
+.eval-check--bad {
+  color: var(--color-danger);
+}
+
+/* 題庫測試：結果展開後列會變高，題目與預期靠上對齊才對得到是哪一題 */
+.eval-table td {
+  vertical-align: top;
+}

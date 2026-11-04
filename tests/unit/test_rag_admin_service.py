@@ -441,7 +441,12 @@ class FakeDocumentAI:
         self.closed = False
 
     def process(
-        self, content: bytes, mime_type: str, *, timeout_seconds: float | None = None
+        self,
+        content: bytes,
+        mime_type: str,
+        *,
+        timeout_seconds: float | None = None,
+        options: object = None,
     ) -> object:
         self.calls.append(timeout_seconds)
         if self.error:

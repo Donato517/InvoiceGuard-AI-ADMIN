@@ -16,6 +16,7 @@ from uuid import UUID
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 
 from app.db.repositories import finance_review_repository as repo
 from app.routers import invoices as inv
@@ -324,6 +325,80 @@ def test_commit_change_rolls_back_on_database_error(monkeypatch: pytest.MonkeyPa
         svc.commit_change(_change(), case=_case(), tax_type=None, session_factory=lambda: session)
 
     assert session.events == ["rollback"]
+
+
+class _FakeDiag:
+    table_name = "invoice_field_reviews"
+    constraint_name = None
+    message_primary = "此確認已被後續輪次承接，不可更動或取消"
+
+
+class _FakePgError(Exception):
+    sqlstate = "P0001"
+    diag = _FakeDiag()
+
+
+def _trigger_error() -> Exception:
+    """模擬 Trigger RAISE：SQL 與參數含發票內容，不應出現在 log。"""
+    return DBAPIError(
+        "UPDATE public.invoice_field_reviews SET review_comment = %(comment)s",
+        {"comment": "SECRET-COMMENT"},
+        _FakePgError("full text SECRET-DETAIL"),
+    )
+
+
+def test_commit_change_logs_the_real_database_cause_without_sql_or_params(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = FakeSession()
+
+    def boom(db: Any, change: Any, **kw: Any) -> bool:
+        raise _trigger_error()
+
+    monkeypatch.setattr(svc.repo, "apply_status_change", boom)
+
+    with caplog.at_level("WARNING", logger=svc.__name__), pytest.raises(svc.ReviewUnavailableError):
+        svc.commit_change(
+            _change(new_status=STATUS_RETURNED),
+            case=_case(),
+            tax_type=None,
+            session_factory=lambda: session,
+        )
+
+    assert session.events == ["rollback"]
+    [record] = caplog.records
+    message = record.getMessage()
+    assert f"op=commit_change:{STATUS_RETURNED}" in message
+    assert f"invoice={INVOICE_ID}" in message
+    assert "driver_error=_FakePgError sqlstate=P0001 table=invoice_field_reviews" in message
+    assert "constraint=- message=此確認已被後續輪次承接" in message
+    assert "SECRET" not in message and "UPDATE" not in message
+
+
+def test_db_error_summary_handles_errors_without_driver_details() -> None:
+    summary = svc.db_error_summary(RuntimeError("postgresql://user:pw@host/db"))
+    assert summary == {
+        "error": "RuntimeError",
+        "driver_error": "-",
+        "sqlstate": "-",
+        "table": "-",
+        "constraint": "-",
+        "message": "-",
+    }
+
+
+def test_connection_failure_is_logged_by_class_name_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def factory() -> Any:
+        raise RuntimeError("postgresql://user:SECRET@host/db")
+
+    with caplog.at_level("WARNING", logger=svc.__name__), pytest.raises(svc.ReviewUnavailableError):
+        svc.load(INVOICE_ID, session_factory=factory)
+
+    [record] = caplog.records
+    assert "op=load" in record.getMessage() and "error=RuntimeError" in record.getMessage()
+    assert "SECRET" not in record.getMessage()
 
 
 @pytest.mark.parametrize("changes", [{"changed_by": "finance-9"}, {"invoice_id": "3"}])

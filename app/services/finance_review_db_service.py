@@ -9,8 +9,12 @@
     - 財務填的會計科目與扣抵代號，目前 invoices 沒有對應欄位（Schema 由 API 管理），核准時以文字寫進
       invoice_status_history.reason 留存；待 Schema 補欄位後改寫欄位。
     - 本機 ADMIN 連的是正式 DB，寫入即正式資料寫入；單元測試以替身 Session 驗證，不連線。
+    - 資料庫錯誤對使用者一律顯示「資料庫目前無法使用」，但會以 WARNING 記下錯誤類別、SQLSTATE、資料表、
+      約束名稱與主訊息（含 Trigger RAISE 的文字），供 Vercel log 判斷原因；不記 SQL、參數、DETAIL、
+      連線字串或例外全文，避免把發票內容或機密寫進 log。
 """
 
+import logging
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -24,6 +28,8 @@ from app.schemas.finance_review import ReviewCase, StatusChange
 from app.services.finance_review_service import build_review_case
 
 SessionFactory = Callable[[], Session]
+logger = logging.getLogger(__name__)
+_MESSAGE_LIMIT = 200
 
 
 class ReviewConflictError(Exception):
@@ -73,7 +79,8 @@ def load(
     """
     try:
         db = session_factory()
-    except Exception:
+    except Exception as error:
+        _log_db_error("load", invoice_id, error)
         raise ReviewUnavailableError from None
     try:
         case_repository.begin_read_snapshot(db)
@@ -86,7 +93,8 @@ def load(
         carryovers = repo.list_carryovers(db, invoice_id)
         return_items = repo.list_return_items(db, invoice_id)
         snapshots = repo.list_snapshots(db, invoice_id)
-    except repo.SQLAlchemyError:
+    except repo.SQLAlchemyError as error:
+        _log_db_error("load", invoice_id, error)
         raise ReviewUnavailableError from None
     finally:
         _close(db)
@@ -131,11 +139,14 @@ def commit_change(
         ReviewConflictError: 資料庫狀態已不是 change.expected_status。
         ReviewUnavailableError: 資料庫無法使用或寫入失敗。
     """
+    operation = f"commit_change:{change.new_status}"
     if not is_uuid(change.changed_by) or not is_uuid(change.invoice_id):
+        logger.warning("finance_review_db_error op=%s reason=non_uuid_id", operation)
         raise ReviewUnavailableError
     try:
         db = session_factory()
-    except Exception:
+    except Exception as error:
+        _log_db_error(operation, change.invoice_id, error)
         raise ReviewUnavailableError from None
     try:
         applied = repo.apply_status_change(
@@ -151,8 +162,9 @@ def commit_change(
         db.commit()
     except ReviewConflictError:
         raise
-    except repo.SQLAlchemyError:
-        db.rollback()
+    except repo.SQLAlchemyError as error:
+        _log_db_error(operation, change.invoice_id, error)
+        _rollback(db)
         raise ReviewUnavailableError from None
     finally:
         _close(db)
@@ -175,7 +187,8 @@ def save_tax_type(
         raise ReviewUnavailableError
     try:
         db = session_factory()
-    except Exception:
+    except Exception as error:
+        _log_db_error("save_tax_type", invoice_id, error)
         raise ReviewUnavailableError from None
     try:
         if not repo.update_tax_type(db, invoice_id, tax_type, expected_status):
@@ -184,8 +197,9 @@ def save_tax_type(
         db.commit()
     except ReviewConflictError:
         raise
-    except repo.SQLAlchemyError:
-        db.rollback()
+    except repo.SQLAlchemyError as error:
+        _log_db_error("save_tax_type", invoice_id, error)
+        _rollback(db)
         raise ReviewUnavailableError from None
     finally:
         _close(db)
@@ -202,6 +216,49 @@ def accounting_note(
     ]
     text = "；".join(part for part in parts if part)
     return text or None
+
+
+def db_error_summary(error: BaseException) -> dict[str, str]:
+    """把資料庫例外整理成可安全寫進 log 的欄位（不含 SQL、參數、DETAIL 或例外全文）。
+
+    Args:
+        error: SQLAlchemy 例外（orig 為 psycopg 例外）或開啟連線時的任何例外。
+
+    Returns:
+        error／driver_error（類別名稱）、sqlstate、table、constraint、message（主訊息，最多 200 字）；
+        沒有的欄位為 "-"。
+    """
+    orig = getattr(error, "orig", None)
+    diag = getattr(orig, "diag", None)
+
+    def text_of(value: object) -> str:
+        return str(value)[:_MESSAGE_LIMIT] if value else "-"
+
+    return {
+        "error": type(error).__name__,
+        "driver_error": type(orig).__name__ if orig is not None else "-",
+        "sqlstate": text_of(getattr(orig, "sqlstate", None)),
+        "table": text_of(getattr(diag, "table_name", None)),
+        "constraint": text_of(getattr(diag, "constraint_name", None)),
+        "message": text_of(getattr(diag, "message_primary", None)),
+    }
+
+
+def _log_db_error(operation: str, invoice_id: str, error: BaseException) -> None:
+    """以 WARNING 記錄資料庫失敗原因；畫面仍只顯示「資料庫目前無法使用」。"""
+    summary = db_error_summary(error)
+    logger.warning(
+        "finance_review_db_error op=%s invoice=%s error=%s driver_error=%s sqlstate=%s "
+        "table=%s constraint=%s message=%s",
+        operation,
+        invoice_id,
+        *summary.values(),
+    )
+
+
+def _rollback(db: Session) -> None:
+    with suppress(Exception):  # rollback 失敗不覆蓋原本的錯誤
+        db.rollback()
 
 
 def _close(db: Session) -> None:

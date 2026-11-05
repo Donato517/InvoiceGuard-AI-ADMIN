@@ -215,7 +215,7 @@
   }
 
   function noteKey(input) {
-    var box = input.closest(".invoice14-field, td");
+    var box = input.closest(".invoice14-field, .item-cell, td");
     var note = box && box.querySelector("[data-check-field]");
     return note ? note.getAttribute("data-check-field") : null;
   }

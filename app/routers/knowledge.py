@@ -272,6 +272,7 @@ def _render_knowledge_list(
                 "can_manage": can_manage_knowledge_base(kb, mine, actor),
                 "to_index": len(overview.files_to_index.get(kb.knowledge_base_id, [])),
                 "file_count": kb.file_count,
+                "no_answer_count": overview.no_answer_counts.get(kb.knowledge_base_id, 0),
             }
         )
 
@@ -295,6 +296,7 @@ def _render_knowledge_list(
             "q": q,
             "department_id": department_id,
             "is_it_reviewer": actor.is_it,
+            "no_answer_days": rag_service.NO_ANSWER_DAYS,
             "qa_choices": _qa_choices(kbs, rows, departments, actor),
             "error": error,
         },

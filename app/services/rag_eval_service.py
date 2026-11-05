@@ -139,4 +139,7 @@ def run_case(case_id: str, actor: RagActor) -> EvalResult:
     ids = eval_knowledge_base_ids()
     if not ids:
         raise RagRuleError("KNOWLEDGE_REQUIRED", "沒有已核准、啟用且有檔案的知識庫可以測試")
-    return evaluate(case, rag_qa_service.ask_test(case.question, actor, ids))
+    # 題庫測試不計入查無資料次數
+    return evaluate(
+        case, rag_qa_service.ask_test(case.question, actor, ids, record_no_answer_stats=False)
+    )

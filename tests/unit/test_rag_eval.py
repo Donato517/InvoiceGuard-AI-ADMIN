@@ -104,8 +104,10 @@ def test_run_case_uses_all_available_knowledge_bases(monkeypatch: pytest.MonkeyP
     )
     seen = {}
 
-    def ask_test(question: str, actor: RagActor, ids: list[str], *args: object) -> QaAnswer:
-        seen.update(question=question, ids=ids)
+    def ask_test(
+        question: str, actor: RagActor, ids: list[str], *args: object, **kwargs: object
+    ) -> QaAnswer:
+        seen.update(question=question, ids=ids, **kwargs)
         return QaAnswer(NO_ANSWER, grounded=False)
 
     monkeypatch.setattr(rag_qa_service, "ask_test", ask_test)
@@ -114,6 +116,8 @@ def test_run_case_uses_all_available_knowledge_bases(monkeypatch: pytest.MonkeyP
     assert result.passed and seen == {
         "question": "公司尾牙要辦在哪裡？",
         "ids": [KB_ROW.knowledge_base_id],
+        # 題庫測試不計入查無資料次數
+        "record_no_answer_stats": False,
     }
 
 

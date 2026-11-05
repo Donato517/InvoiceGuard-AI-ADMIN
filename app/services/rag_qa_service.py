@@ -25,15 +25,24 @@
       期限、義務、例外或條號；程式檢查白話說明有數字或條號卻沒有來源時丟棄回答。
       比較題依每個關鍵名詞各產生一句查詢，避免只查到一邊。
     - 問答為即時對話（v1.5 核定），不保存問題或回答，也不寫入日誌。
+    - 查無資料次數（2026-11-05，Schema v2.0 rag_no_answer_stats）：回答為「查無資料」時，檢索範圍內
+      每個知識庫當日次數加 1；只記次數，不存問題、回答或使用者。服務失敗、未通過檢查與題庫測試不記錄；
+      寫入用獨立短交易，失敗只略過，不影響回答。
+    - 版本（2026-11-05）：同名文件（標題去掉括號內年度／版次／修正字樣後相同）有多份且生效日都已知時，
+      只用目前有效（生效日 ≤ 今天且最新）的一份；生效日未知的不判斷、照常使用；尚未生效的照常使用，
+      段落標頭標示「尚未生效」。
+    - 段落多樣化（2026-11-05）：向量檢索的段落同一文件最多 MAX_CHUNKS_PER_FILE 段，其餘文件的段落優先；
+      其他文件不足時才補回。章節條文比對的段落不受此限（使用者指定條號）。
     - GroqClient 目前沒有 temperature 參數，無法再降低隨機性；需要時由專案負責人調整共用模組。
 """
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -47,9 +56,14 @@ from app.integrations.vertex_chat import VertexChatClient
 from app.integrations.vertex_embedding import EmbeddingError, VertexEmbeddingClient
 from app.schemas.rag import DepartmentOption, RagActor, RagRuleError, SearchHit
 from app.services import rag_retrieval_service as retrieval
+from app.utils.format import TAIPEI_TZ
+
+logger = logging.getLogger(__name__)
 
 # 最多給模型幾段（向量檢索與章節條文比對合併後）
 TOP_K = 8
+# 向量檢索的段落同一文件最多幾段（多樣化；其他文件不足時才補回）
+MAX_CHUNKS_PER_FILE = 3
 # 章節條文文字比對最多取幾段、最多比對幾組條件
 KEYWORD_TOP_K = 4
 MAX_REFERENCE_GROUPS = 4
@@ -337,6 +351,8 @@ class QaAnswer:
     note: str | None = None
     # 送給模型的段落來源文件（去重、依段落順序）；沒有相關段落時為空
     retrieved_titles: tuple[str, ...] = ()
+    # 查無資料（沒有相關段落，或模型判斷段落不足）；服務失敗與未通過檢查為 False
+    no_answer: bool = False
 
     @property
     def failed(self) -> bool:
@@ -428,17 +444,82 @@ def reference_groups(question: str) -> list[list[str]]:
 
 
 def merge_hits(keyword_hits: list[SearchHit], vector_hits: list[SearchHit]) -> list[SearchHit]:
-    """合併章節比對與向量檢索的段落（章節比對優先），去除重複，最多 TOP_K 段。"""
+    """合併章節比對與向量檢索的段落（章節比對優先），去除重複，最多 TOP_K 段。
+
+    向量段落同一文件超過 MAX_CHUNKS_PER_FILE 段的部分排到後面，讓其他文件的段落先進來；
+    其他文件不足 TOP_K 時才補回。章節比對的段落不受限（使用者指定條號）。
+    """
     merged: dict[tuple[str, int], SearchHit] = {}
-    for hit in (*keyword_hits, *vector_hits):
+    for hit in keyword_hits:
+        merged.setdefault((hit.rag_file_id, hit.chunk_index), hit)
+    per_file: dict[str, int] = {}
+    overflow: list[SearchHit] = []
+    for hit in vector_hits:
+        key = (hit.rag_file_id, hit.chunk_index)
+        if key in merged:
+            continue
+        if per_file.get(hit.rag_file_id, 0) >= MAX_CHUNKS_PER_FILE:
+            overflow.append(hit)
+            continue
+        per_file[hit.rag_file_id] = per_file.get(hit.rag_file_id, 0) + 1
+        merged[key] = hit
+    for hit in overflow:
         merged.setdefault((hit.rag_file_id, hit.chunk_index), hit)
     return list(merged.values())[:TOP_K]
 
 
-def _prompt(question: str, hits: list[SearchHit]) -> str:
+# 標題括號內的年度、版次、修正字樣（例：「（113年修正）」「(第2版)」）不影響是否為同一份規定
+_VERSION_NOTE = re.compile(r"[（(][^（）()]*(?:\d|年|版|修正|修訂)[^（）()]*[）)]")
+
+
+def _title_key(title: str) -> str:
+    return "".join(_VERSION_NOTE.sub("", title).split()).casefold()
+
+
+def superseded_file_ids(hits: Sequence[SearchHit], today: date) -> set[str]:
+    """同名文件有多份時，找出已被較新版本取代的文件 ID。
+
+    只比較生效日已知的文件：目前有效版本＝生效日 ≤ today 中最新的一份，生效日更早的同名文件視為舊版；
+    生效日未知或尚未生效的文件不會被排除。
+
+    Args:
+        hits: 檢索到的段落（可含多份文件）。
+        today: 今天（台灣日期）。
+
+    Returns:
+        應排除的 rag_file_id。
+    """
+    dates: dict[str, dict[str, date | None]] = {}
+    for hit in hits:
+        dates.setdefault(_title_key(hit.file_title), {})[hit.rag_file_id] = hit.effective_date
+    superseded: set[str] = set()
+    for files in dates.values():
+        effective = [day for day in files.values() if day is not None and day <= today]
+        if len(files) < 2 or not effective:
+            continue
+        current = max(effective)
+        superseded |= {
+            file_id for file_id, day in files.items() if day is not None and day < current
+        }
+    return superseded
+
+
+def _today() -> date:
+    return datetime.now(TAIPEI_TZ).date()
+
+
+def _prompt(question: str, hits: list[SearchHit], today: date | None = None) -> str:
+    current = today or _today()
+
+    def dated(hit: SearchHit) -> str:
+        if not hit.effective_date:
+            return ""
+        pending = "，尚未生效" if hit.effective_date > current else ""
+        return f"（生效日 {hit.effective_date.isoformat()}{pending}）"
+
     blocks = "\n\n".join(
         f"[{n}] 知識庫「{hit.knowledge_name}」《{hit.file_title}》第 {hit.chunk_index + 1} 段"
-        + (f"（生效日 {hit.effective_date.isoformat()}）" if hit.effective_date else "")
+        + dated(hit)
         + f"\n{hit.content}"
         for n, hit in enumerate(hits, start=1)
     )
@@ -646,7 +727,9 @@ def _check_reply(reply: ChatReply, hits: list[SearchHit], contact: str) -> QaAns
             note=f"回答超過 {ANSWER_MAX_TOKENS} tokens 被截斷",
         )
     if _NO_INFO_MARK in text:
-        return QaAnswer(NO_ANSWER, False, total_tokens=tokens, note=_INSUFFICIENT_NOTE)
+        return QaAnswer(
+            NO_ANSWER, False, total_tokens=tokens, note=_INSUFFICIENT_NOTE, no_answer=True
+        )
     cited = check_citations(text, len(hits))
     if cited is None:
         return QaAnswer(
@@ -733,7 +816,7 @@ def compose_answer(
         問答結果。
     """
     if not hits:
-        return QaAnswer(NO_ANSWER, grounded=False)
+        return QaAnswer(NO_ANSWER, grounded=False, no_answer=True)
     prompt = _prompt(question, hits)
     if question_type in QUESTION_TYPES:
         prompt += f"\n\n【題型】{QUESTION_TYPES[question_type]}"
@@ -829,6 +912,8 @@ def ask(
         fallback_factory=fallback_factory,
         deadline=deadline,
     )
+    if answer.no_answer:
+        record_no_answer(open_session, department_id=actor.department_id)
     return _with_understanding_note(answer, understanding)
 
 
@@ -864,8 +949,12 @@ def ask_test(
     chat_factory: Callable[[], GroqClient] = GroqClient.from_settings,
     open_session: Callable[[], Session] = rag_repository.open_session,
     fallback_factory: Callable[[], VertexChatClient] = VertexChatClient.from_settings,
+    record_no_answer_stats: bool = True,
 ) -> QaAnswer:
-    """資訊部依勾選知識庫，驗證後依序理解、檢索及回答；部門不擴大檢索範圍。"""
+    """資訊部依勾選知識庫，驗證後依序理解、檢索及回答；部門不擴大檢索範圍。
+
+    record_no_answer_stats 為 False 時查無資料不計次（題庫回歸測試使用）。
+    """
     deadline = time.monotonic() + QA_TOTAL_SECONDS
     text = _clean_question(question)
     if not actor.is_it:
@@ -912,7 +1001,42 @@ def ask_test(
         fallback_factory=fallback_factory,
         deadline=deadline,
     )
+    if answer.no_answer and record_no_answer_stats:
+        record_no_answer(open_session, knowledge_base_ids=ids)
     return _with_understanding_note(answer, understanding)
+
+
+def record_no_answer(
+    open_session: Callable[[], Session],
+    *,
+    knowledge_base_ids: Sequence[str] | None = None,
+    department_id: str | None = None,
+) -> None:
+    """查無資料時，檢索範圍內每個知識庫當日（台灣日期）次數加 1；失敗只略過，不影響回答。
+
+    Args:
+        open_session: 開啟 DB Session。
+        knowledge_base_ids: 資訊部測試勾選的知識庫；None 時改用 department_id 選用問答的知識庫。
+        department_id: 部門問答的目前部門。
+    """
+    try:
+        db = open_session()
+        try:
+            ids = (
+                list(knowledge_base_ids)
+                if knowledge_base_ids is not None
+                else rag_repository.list_qa_knowledge_base_ids(db, department_id)
+                if department_id
+                else []
+            )
+            if ids:
+                rag_repository.increment_no_answer(db, ids, datetime.now(TAIPEI_TZ).date())
+                db.commit()
+        finally:
+            db.close()
+    except Exception as error:  # 統計只是附帶紀錄，任何失敗都不能影響回答
+        # 只記錯誤類別，不記問題、回答或知識庫內容
+        logger.warning("rag_no_answer_stats_write_failed error=%s", type(error).__name__)
 
 
 def _no_answer_text(need: str, knowledge_names: Sequence[str]) -> str:
@@ -1022,7 +1146,13 @@ def _answer(
         return QaAnswer(SERVICE_UNAVAILABLE, grounded=False, note="資料庫讀取失敗")
     if deadline is not None and _remaining(deadline) <= 0:
         return QaAnswer(SERVICE_UNAVAILABLE, grounded=False, note="超過整題時限")
-    relevant = merge_hits(keyword_hits, _relevant(hits))
+    nearby = _relevant(hits)
+    # 同名文件只用目前有效的版本（舊版段落不送給模型）
+    superseded = superseded_file_ids([*keyword_hits, *nearby], _today())
+    relevant = merge_hits(
+        [hit for hit in keyword_hits if hit.rag_file_id not in superseded],
+        [hit for hit in nearby if hit.rag_file_id not in superseded],
+    )
     # 送給模型的段落來自哪些文件（題庫測試據此分辨「沒找到」與「找到但答偏」）
     retrieved = tuple(dict.fromkeys(hit.file_title for hit in relevant))
     if not relevant:
@@ -1035,6 +1165,7 @@ def _answer(
             _no_answer_text(understanding.need, knowledge_names),
             grounded=False,
             note=note,
+            no_answer=True,
         )
     return replace(
         _compose_with_retrieval(

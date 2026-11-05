@@ -232,3 +232,7 @@ C 組 `/intake` 與 `/cases` 交付候選（2026-11-03，分支 `feature/c-intak
 財務退件結構化寫入（2026-11-03，分支 feature/resubmit-admin-integration，**尚未 Commit／Push／Merge**）：財務退回時，除原有狀態、歷程與本輪覆核列更新外，同一交易另寫入 `invoice_return_items`（欄位、原因、授權的相依表頭欄位，附件／其他為 image／other 類型；`finance_review_repository.insert_return_items`）；退回表單新增「一併授權修改的相依欄位」（銷售額、稅額、總計）。審核畫面新增「承接前輪確認」（讀 `invoice_field_review_carryovers`，顯示原確認者、時間與來源輪次），被承接的欄位仍可被再次退回。**前置條件：寫入退件項目的「財務退回」需要 API 的 Migration `7c1d4e9a2b30` 先套用，否則該次退回會失敗（交易整體 rollback，案件狀態不變）。審核頁的讀取（退回與回覆紀錄、前後比對、承接）在 Migration 尚未套用時降級為空，不影響檢視與核准。** 驗證：單元測試以替身 Session 驗證 SQL 順序與參數；另在本機隔離 PostgreSQL 以真實登入操作 ADMIN 退回一張測試發票，資料庫確認 `invoice_return_items` 與狀態同交易寫入（OCR 以紀錄替身取代）。未驗證：正式資料庫、圖片作廢、確認者顯示為 UUID 而非姓名。ADMIN 目前沒有「逐欄確認」操作（2026-11-02 決議取消），因此實際流程不會產生已確認的覆核列，R1 承接在正式流程中尚無資料可承接。
 
 財務審核頁顯示重送結果（2026-11-03，分支 feature/resubmit-admin-integration，**尚未 Commit**）：審核頁新增「退回與回覆紀錄」（各輪財務原始退件原因與申請人回覆分開呈現，讀 `invoice_return_items`）與「重送前後比對」（相鄰兩輪 `invoice_submission_snapshots` 的欄位差異，純申覆顯示資料未修改）；修改歷程彈窗沿用 `invoice_changes`（含每次編輯事件）。2026-11-02 取消逐欄確認的決議不變，未恢復。以真實登入完成一張發票三輪（退回→補正→再次退回→補正→核准）的本機隔離 PostgreSQL 操作。
+
+
+- 2026-11-05 財務審核方案 1：清單新增上傳者帳號欄（`user_accounts.email` 取 @ 前，缺值「未提供」）、「本人上傳／無權審核」標籤與「檢視詳情」；詳情頁本人上傳時唯讀。後端核准仍由 `SELF_APPROVAL` 擋下；禁止本人退回已核定並由後端 `SELF_RETURN` 拒絕（2026-11-05）。新 JOIN 未在真實 PostgreSQL 驗證。
+- 2026-11-05 本人上傳限制已涵蓋核准、退回、儲存會計欄位三條後端路徑（403）。

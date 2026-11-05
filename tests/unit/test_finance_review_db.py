@@ -194,7 +194,8 @@ def test_self_approval_is_blocked_for_database_invoices(
 
     response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=_ORIGIN)
 
-    assert response.status_code == 400 and "不能核准自己送出的請款單" in response.text
+    # 2026-11-05：本人限制統一在路由前段以 403 拒絕（服務層 SELF_APPROVAL 為第二道）
+    assert response.status_code == 403 and "不得由您自行核准、退回或儲存會計欄位" in response.text
     assert fake.commits == []
 
 
@@ -621,3 +622,94 @@ def test_approve_and_return_without_same_origin_are_refused(
 
     assert approve.status_code == 403 and returned.status_code == 403
     assert fake.commits == []
+
+
+# ---- 同源檢查（非原提交者的財務帳號，案件可審核；確保是同源檢查而非本人限制擋下）----
+
+_CROSS_ORIGIN = {"Origin": "http://evil.example"}
+
+
+def _prepare_accounting(client: TestClient) -> None:
+    client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=_ORIGIN, data=ACCOUNTING
+    )
+
+
+@pytest.mark.parametrize("headers", [{}, _CROSS_ORIGIN], ids=["no-origin", "cross-origin"])
+def test_finance_approve_requires_same_origin(
+    client: TestClient, fake: FakeDb, headers: dict[str, str]
+) -> None:
+    _prepare_accounting(client)
+
+    response = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve", headers=headers)
+
+    assert response.status_code == 403
+    assert "不得由您自行" not in response.text  # 不是本人限制造成的 403
+    assert fake.commits == []
+
+
+@pytest.mark.parametrize("headers", [{}, _CROSS_ORIGIN], ids=["no-origin", "cross-origin"])
+def test_finance_return_requires_same_origin(
+    client: TestClient, fake: FakeDb, headers: dict[str, str]
+) -> None:
+    response = client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/return",
+        headers=headers,
+        data={"return_field": "total_amount", "return_reason": "請附折讓單"},
+    )
+
+    assert response.status_code == 403
+    assert "不得由您自行" not in response.text
+    assert fake.commits == []
+
+
+@pytest.mark.parametrize("headers", [{}, _CROSS_ORIGIN], ids=["no-origin", "cross-origin"])
+def test_finance_accounting_requires_same_origin(
+    client: TestClient, fake: FakeDb, headers: dict[str, str]
+) -> None:
+    response = client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/accounting",
+        headers=headers,
+        data=ACCOUNTING | {"tax_type": "zero_rated"},
+    )
+
+    assert response.status_code == 403
+    assert fake.tax_saves == []
+
+
+def test_finance_same_origin_return_succeeds(client: TestClient, fake: FakeDb) -> None:
+    response = client.post(
+        f"/invoices/{INVOICE_ID}/finance-review/return",
+        headers=_ORIGIN,
+        data={"return_field": "total_amount", "return_reason": "請附折讓單"},
+    )
+
+    assert response.status_code == 303
+    assert len(fake.commits) == 1
+
+
+# ---- 本人限制獨立保留：本人（原提交者）即使帶同源標頭，三項操作仍被拒且完全不寫入 ----
+
+
+def test_submitter_is_denied_all_three_actions_with_valid_origin(
+    admin_client: TestClient, fake: FakeDb
+) -> None:
+    me = _as_finance(SUBMITTER, admin_client)
+    base = f"/invoices/{INVOICE_ID}/finance-review"
+
+    approve = me.post(f"{base}/approve", headers=_ORIGIN)
+    returned = me.post(
+        f"{base}/return",
+        headers=_ORIGIN,
+        data={"return_field": "total_amount", "return_reason": "請附折讓單"},
+    )
+    accounting = me.post(
+        f"{base}/accounting", headers=_ORIGIN, data=ACCOUNTING | {"tax_type": "zero_rated"}
+    )
+
+    assert (approve.status_code, returned.status_code, accounting.status_code) == (403, 403, 403)
+    assert all(
+        "不得由您自行核准、退回或儲存會計欄位" in r.text for r in (approve, returned, accounting)
+    )
+    assert fake.commits == [] and fake.tax_saves == []
+    assert inv._ACCOUNTING_DRAFT == {}  # 沒有暫存會計欄位

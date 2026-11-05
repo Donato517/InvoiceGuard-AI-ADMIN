@@ -1079,3 +1079,34 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 問題：正式 ADMIN 財務「退回補正」顯示「資料庫目前無法使用」，但 `finance_review_db_service` 把所有 SQLAlchemy 錯誤轉成同一個例外且不記 log，無法分辨缺表、權限／RLS、約束或 Trigger（如 `guard_field_review_update`）。
 處理：`load`、`commit_change`、`save_tax_type` 失敗時以 WARNING 記 `finance_review_db_error`：操作（含新狀態）、發票 UUID、例外與驅動類別、SQLSTATE、資料表、約束名稱與主訊息（200 字內）。不記 SQL、參數、DETAIL、連線字串或例外全文；畫面訊息不變。rollback 失敗不覆蓋原錯誤。
 驗證：新增 3 個離線測試（Trigger 原因可見且不含 SQL／參數、無驅動資訊時欄位為 "-"、連線失敗只記類別）；全套 2795 passed、31 skipped；Ruff、format、check_project、environment --check 通過。正式環境 log 未驗證。
+
+
+## 2026-11-05 財務審核頁「方案 1」：上傳者帳號與本人上傳標示
+
+範圍：只改清單與審核詳情顯示；不改補正頁、退回重傳 API、前台與 API repo，無 migration。
+處理：
+- 清單（財務）新增「上傳者帳號」欄：`invoice_repository` 以 `invoices.submitted_by = invoiceguard_identity.user_accounts.user_id` 讀 `email`，顯示時 `account_display()` 只取 `@` 前面；無 `@` 顯示完整帳號；查不到顯示「未提供」。不用 display_name／UUID。
+- 本人判斷：`submitted_by` 與登入者真實 User ID（UUID，不分大小寫）比對，不用顯示文字；示範資料的整數佔位 ID 不算本人。
+- 本人上傳案件仍留在清單與統計；顯示「本人上傳／無權審核」標籤，操作改「檢視詳情」，整列仍可點。詳情頁顯示警示說明與上傳者帳號，核准／退回／會計欄位表單隱藏（唯讀），原圖、欄位、歷史保留。
+- 後端：核准本來就由 `SELF_APPROVAL` 拒絕（未改）。**退回尚無本人限制，是否禁止本人退回待團隊決議**，因此本次未改共用審核規則；目前隱藏退回／會計欄位只是介面，不是後端保護。
+驗證：新增 `tests/unit/test_finance_self_upload.py` 7 項離線測試；全套（排除需 Pillow 的 document_ai 測試）通過，僅 `test_document_ai_bundle_retains_legacy_contract` 因本機 venv 缺 Pillow 失敗（既有環境問題）。正式 DB 的新 JOIN 未在真實 PostgreSQL 執行。
+
+### 2026-11-05 後續：團隊核定禁止本人退回
+`return_to_applicant()` 新增 `SELF_RETURN`：`submitted_by` 等於審核者 User ID 時拒絕（回 400），狀態與歷史不變；核准的 `SELF_APPROVAL` 不變。會計欄位儲存仍無後端本人限制（僅介面隱藏）。新增 2 項測試（本人直接 POST 退回被拒、他人退回正常）。
+
+### 2026-11-05 再調整：三項財務操作統一本人限制
+`invoices.py` 新增 `_deny_self_review()`，在 `finance-review/approve|return|accounting` 任何寫入前以案件 `submitted_by` 與登入者真實 User ID 比對，本人回 403 與中文訊息（與資料庫故障訊息分開），不改記憶體／資料庫、不寫歷程。服務層 `SELF_APPROVAL`、`SELF_RETURN` 保留作為第二道。詳情頁改為顯示停用的「確認核准」「退回補正」「儲存會計欄位」按鈕與返回列表連結，說明文字改為「本人提交……核准、退回或儲存會計欄位」。測試擴充至核准／退回／會計欄位直接 POST 被拒且資料不變、他人正常、偽造 submitted_by 無效。
+
+### 2026-11-05 合併前檢查：帳號查詢相容性與同源測試
+- 帳號查詢：`user_accounts`（草案 v1.8）啟用 RLS 且 `REVOKE ... FROM PUBLIC`、無預設 GRANT，直接 JOIN 在權限不足時會讓整個清單失敗，因此改為獨立查詢 `SELECT_SUBMITTER_ACCOUNTS`（只取 user_id、email；repository 的 `list_submitter_accounts` 不管交易），由 `invoice_review_service._attach_submitter_accounts` 以 SAVEPOINT 隔離（分層檢查不允許 repository 開交易或 rollback），失敗只記例外類別與 SQLSTATE（不記 email／SQL）並顯示「未提供」。畫面與資料字典只帶 `@` 前面的顯示值，完整 Email 不進入頁面。
+- 隔離 PostgreSQL（本機一次性 postgres:15 容器、合成結構與帳號，已停止並移除；不含正式 Schema）驗證三種角色：有 SELECT＋policy → 顯示帳號；無 SELECT → 42501 被吞下、清單與詳情正常、Session 仍可再查；RLS 無放行 policy → 0 列顯示「未提供」。因 `tests/conftest.py` 全域禁止真實連線，此驗證腳本放在 repo 外，未納入 repo；repo 內以假 Session 單元測試涵蓋退路邏輯。
+- 同源測試：`test_database_writes_require_same_origin` 原本以原提交者身分呼叫，新增本人限制後會被 403 提前擋下而掩蓋同源檢查；改用非提交者財務帳號，並在 `test_finance_review_db.py` 對可審核案件新增核准／退回／會計欄位的無 Origin、跨站 Origin 拒絕與同源成功測試；本人三項 403 測試獨立保留。暫時移除 `require_e_origin` 後，相關 7 項測試失敗，證明確實測到同源檢查（已還原）。
+- Pillow：`test_document_ai_bundle.py`（收集階段）與 `test_shared_integrations.py::test_document_ai_bundle_retains_legacy_contract` 的 traceback 皆為 `ModuleNotFoundError: No module named 'PIL'`（`document_ai_evidence.py:25`），確為本機 venv 缺 Pillow；未安裝套件、未驗證裝上後是否通過。
+
+### 2026-11-05 交付前審查：舊版審核入口補上同一個本人限制
+審查發現 `POST /invoices/{id}/review`（舊版核准／退回入口，`detail.html` 表單仍會送出）沒有本人檢查，與步驟 5 規則不一致。該入口對資料庫案件只改被丟棄的複本、不寫資料庫，但對記憶體示範案件會改狀態。處理：同樣呼叫 `_deny_self_review()`（本人 403，不修改資料），並在 `/invoices/{id}` 舊詳情頁本人上傳時隱藏表單、顯示相同說明。新增測試：舊入口本人 403 且狀態不變、他人照常、舊詳情頁表單顯示；`test_department_login.py` 以真實 Session 組裝驗證未登入、採購部（無權限）、財務部本人上傳皆被拒且資料不變。
+
+### 2026-11-05 PR #35 追加：舊版 `POST /invoices/{id}/review` 安全補強
+實際流程：登入與財務部門檢核（`invoice_max_step >= 5`）→ 本人限制 → 直接改記憶體示範案件的欄位與狀態；原先沒有同源檢查、沒有案件狀態檢查（已核准案件可被翻成退回，且修改後沒清審核案件快取，可重複審核）、任何非 `passed` 的 decision 都當退回、欄位內容不檢核；對資料庫案件只改被丟棄的複本卻回成功。
+修正（`app/routers/invoices.py`）：路由加 `Depends(require_e_origin)`（沿用其他寫入路由的同源機制）；資料庫案件回 409（同 `_refuse_legacy_demo_write`）；本人 403；狀態須為可審核，decision 只接受 `passed`／`rejected`，課稅別與扣抵代號只接受固定清單（或維持目前值），文字欄位限 200 字；全部檢核通過後才修改，並在成功後清除審核案件快取。`test_pages` 的舊入口測試改用待審核案件並帶 Origin（瀏覽器表單本來就會帶）。
+驗證：離線／替身測試；暫時拿掉同源、狀態、decision 檢查時對應測試失敗。會計科目與用途為舊版自由文字，只限長度，未改為正式科目清單（舊入口預設值 `6211004 管理-文具用品` 與步驟 5 清單格式不同）。

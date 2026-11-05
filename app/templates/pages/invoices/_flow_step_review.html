@@ -15,10 +15,19 @@
 {% else %}
   {% set fr = finance_review %}
   {% set case = fr.case %}
-  {% set editable = fr.reviewable and not invoice.is_completed %}
+  {% set editable = fr.can_review and not invoice.is_completed %}
   <div class="invoice-correction-split fr-split">
     {% include "pages/invoices/_invoice_original_pane.html" %}
     <section class="correction-field-column" aria-label="財務審核">
+  {% if fr.is_self_upload %}
+    <p class="alert alert--warning" role="alert" data-self-upload-notice>
+      <span class="badge badge--flagged">本人上傳／無權審核</span>
+      此發票由您本人提交，依權限規則不得由您自行核准、退回或儲存會計欄位，請交由其他具備權限的財務人員處理。
+      您仍可檢視原圖、欄位、狀態與審核歷程；這是權限限制，不是資料庫故障。
+      <a href="/invoices">← 返回發票列表</a>
+    </p>
+  {% endif %}
+  <p class="muted small-text">上傳者帳號：<strong data-submitter-account>{{ fr.submitter_account }}</strong></p>
   <div class="fr-header">
     <span>審核狀態：</span>
     <span class="badge {% if case.status == 'approved' %}badge--success{% elif case.status in ['returned_to_applicant', 'rejected', 'voided'] %}badge--danger{% else %}badge--warning{% endif %}">{{ fr.status_label }}</span>
@@ -182,6 +191,11 @@
           </select>
         </div>
       </div>
+      {% if fr.is_self_upload %}
+        <div class="toolbar__actions">
+          <button type="button" class="btn btn--secondary" disabled aria-disabled="true" data-self-upload-disabled>儲存會計欄位</button>
+        </div>
+      {% endif %}
       {% if editable %}<p class="muted small-text">先選費用大項，會計科目只列出該大項的科目。</p>{% endif %}
       {% if editable %}
         <div class="toolbar__actions">
@@ -232,6 +246,14 @@
           <button type="submit" class="btn btn--danger">退回修正</button>
         </form>
       </details>
+    </section>
+  {% endif %}
+  {% if fr.is_self_upload and fr.reviewable %}
+    <section class="fr-section fr-decision" aria-label="審核決定">
+      <h3 class="fr-section__title">審核決定</h3>
+      <button type="button" class="btn btn--success" disabled aria-disabled="true" data-self-upload-disabled>確認核准</button>
+      <button type="button" class="btn btn--danger" disabled aria-disabled="true" data-self-upload-disabled>退回補正</button>
+      <p class="muted small-text">需由其他財務人員操作。</p>
     </section>
   {% endif %}
   {% if fr.history %}

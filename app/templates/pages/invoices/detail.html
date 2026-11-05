@@ -25,7 +25,12 @@
     </div>
     {% include "pages/invoices/_invoice_14_fields_table.html" %}
   </section>
-  {% if (max_flow_step | default(9)) >= 5 %}
+  {% if is_self_upload | default(false) %}
+    <p class="alert alert--warning" data-self-upload-notice>
+      <span class="badge badge--flagged">本人上傳／無權審核</span>
+      此發票由您本人提交，依權限規則不得由您自行核准、退回或儲存會計欄位，請交由其他具備權限的財務人員處理。
+    </p>
+  {% elif (max_flow_step | default(9)) >= 5 %}
     <section class="card">
       <h2 class="card__title">財務審核設定</h2>
       <form method="post" action="/invoices/{{ invoice.id }}/review" class="form">

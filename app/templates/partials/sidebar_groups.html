@@ -1,0 +1,49 @@
+{#
+  @template partials/sidebar_groups.html
+  @description 側欄手風琴群組（2026-11-05 使用者核定）：群組標題可展開／收合，目前頁面所在群組預設展開；
+    側欄收合成圖示列（或手機寬度）時，點群組圖示在右側跳出該群組的功能。開合與收合狀態由 main.js 記在瀏覽器。
+  @context menu: 已授權的側欄項目（SidebarEntry），由 sidebar_groups filter 分組；沒有項目的群組不顯示
+#}
+{% set active_route = request.state.active_sidebar_route if request.state.active_sidebar_route is defined else None %}
+{% for group in menu|sidebar_groups %}
+  {% set current = namespace(found=false) %}
+  {% for item in group.entries %}
+    {% if sidebar_active(item.route, request.url.path, active_route) %}{% set current.found = true %}{% endif %}
+  {% endfor %}
+  <div class="app-sidebar__group{% if current.found %} app-sidebar__group--current{% endif %}"
+       data-sidebar-group="{{ group.key }}">
+    <button class="app-sidebar__group-toggle"
+            type="button"
+            aria-expanded="{{ 'true' if current.found else 'false' }}"
+            aria-controls="sidebar-group-{{ group.key }}"
+            title="{{ group.title }}">
+      <span class="app-sidebar__emoji" aria-hidden="true">{{ group.icon }}</span>
+      <span class="app-sidebar__group-label">{{ group.title }}</span>
+      <svg class="app-sidebar__chevron"
+           aria-hidden="true"
+           viewBox="0 0 16 16"
+           width="14"
+           height="14">
+        <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <div class="app-sidebar__group-items"
+         id="sidebar-group-{{ group.key }}"
+         {% if not current.found %}hidden{% endif %}>
+      <div class="app-sidebar__group-title">{{ group.title }}</div>
+      {% for item in group.entries %}
+        {% if item.route %}
+          <a class="app-sidebar__link{% if sidebar_active(item.route, request.url.path, active_route) %} app-sidebar__link--active{% endif %}"
+             href="{{ item.route }}"
+             {% if sidebar_active(item.route, request.url.path, active_route) %}aria-current="page"{% endif %}>{{ item.name }}</a>
+        {% else %}
+          <span class="app-sidebar__link app-sidebar__link--pending" aria-disabled="true">
+            {{ item.name }}<small class="app-sidebar__tag">{{ item.status }}</small>
+          </span>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}
+<div class="app-sidebar__divider" aria-hidden="true"></div>
+{% include "partials/sidebar_logout.html" %}

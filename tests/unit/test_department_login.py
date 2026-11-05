@@ -325,7 +325,8 @@ def test_no_functions_can_still_log_in_to_welcome_only(
     page = browser.get("/welcome")
     assert page.status_code == 200 and "歡迎回來" in page.text
     navigation = SidebarNavigation(page.text)
-    assert navigation.entries == ["/welcome", "/logout"]
+    # 2026-11-05 使用者核定：側欄不顯示歡迎頁（登入後仍先進歡迎頁）
+    assert navigation.entries == ["/logout"]
     assert navigation.logout_methods == ["post"]
     assert 'href="/functions"' not in page.text
     assert browser.get("/functions").status_code == 403
@@ -560,7 +561,8 @@ def test_removed_session_department_does_not_remove_remaining_primary_membership
     page = browser.get("/welcome")
     assert page.status_code == 200
     navigation = SidebarNavigation(page.text)
-    assert navigation.entries == ["/welcome", "/invoices/upload", "/invoices", "/logout"]
+    # 2026-11-05 使用者核定：側欄不顯示歡迎頁（登入後仍先進歡迎頁）
+    assert navigation.entries == ["/invoices/upload", "/invoices", "/logout"]
     assert browser.get("/accounts").status_code == 403
 
 
@@ -655,7 +657,8 @@ def test_catalog_only_member_keeps_welcome_and_authorized_sidebar(
     login(browser)
     page = browser.get("/welcome")
     assert page.status_code == 200 and "僅授權的業務功能" in page.text
-    assert SidebarNavigation(page.text).entries == ["/welcome", "/logout"]
+    # 2026-11-05 使用者核定：側欄不顯示歡迎頁（登入後仍先進歡迎頁）
+    assert SidebarNavigation(page.text).entries == ["/logout"]
     assert browser.get("/accounts").status_code == 403
 
 
@@ -705,7 +708,8 @@ def test_header_switch_department_updates_primary_and_session(
 
     after_page = browser.get("/welcome")
     assert after_page.status_code == 200
-    assert SidebarNavigation(after_page.text).entries == ["/welcome", "/logout"]
+    # 2026-11-05 使用者核定：側欄不顯示歡迎頁（登入後仍先進歡迎頁）
+    assert SidebarNavigation(after_page.text).entries == ["/logout"]
     assert browser.get("/functions").status_code == 403
 
 
@@ -1167,10 +1171,7 @@ def test_rag_sidebar_keeps_existing_navigation_order(
     after = SidebarNavigation(browser.get("/welcome").text).entries
     assert "/knowledge" in after
     assert [item for item in after if item != "/knowledge"] == before
-    assert all(
-        path in after
-        for path in ("/invoices", "/accounts", "/department", "/functions", "/welcome")
-    )
+    assert all(path in after for path in ("/invoices", "/accounts", "/department", "/functions"))
 
 
 @pytest.mark.parametrize("change", [{"is_active": False}, {"app_scope": "frontend"}])

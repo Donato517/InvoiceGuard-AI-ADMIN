@@ -214,6 +214,211 @@ pre {
   outline-offset: -4px;
 }
 
+/* ---- 側欄頂端與手風琴群組：partials/sidebar_head.html、sidebar_groups.html（2026-11-05）---- */
+.app-sidebar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 0 1.25rem 0.625rem;
+}
+
+.app-sidebar__head .app-sidebar__logo {
+  padding: 0;
+  white-space: nowrap;
+}
+
+.app-sidebar__logo-short {
+  display: none;
+}
+
+.app-sidebar__collapse {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  color: var(--color-sidebar-link);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.app-sidebar__collapse:hover {
+  color: var(--color-bg);
+  background-color: rgb(255 255 255 / 8%);
+}
+
+.app-sidebar__collapse svg,
+.app-sidebar__chevron {
+  transition: transform 0.2s ease;
+}
+
+.app-sidebar__group {
+  position: relative;
+  margin-bottom: 0.25rem;
+}
+
+.app-sidebar__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0.75rem 0.875rem;
+  font: inherit;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-sidebar-link);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.app-sidebar__group-toggle:hover {
+  color: var(--color-bg);
+  background-color: rgb(255 255 255 / 6%);
+}
+
+.app-sidebar__group-toggle:focus-visible,
+.app-sidebar__collapse:focus-visible {
+  outline: 2px solid var(--color-brand-accent);
+  outline-offset: 2px;
+}
+
+.app-sidebar__group--current > .app-sidebar__group-toggle {
+  color: var(--color-bg);
+}
+
+.app-sidebar__group-label {
+  flex: 1;
+}
+
+.app-sidebar__chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.app-sidebar__group-toggle[aria-expanded="true"] .app-sidebar__chevron {
+  transform: rotate(90deg);
+}
+
+.app-sidebar__group-items .app-sidebar__link {
+  padding: 0.625rem 0.875rem 0.625rem 2.375rem;
+  margin-bottom: 0.1875rem;
+  font-size: 0.9375rem;
+}
+
+.app-sidebar__group-items .app-sidebar__link--pending {
+  color: var(--color-sidebar-caption);
+}
+
+/* 群組標題只在圖示列跳出的清單顯示 */
+.app-sidebar__group-title {
+  display: none;
+}
+
+.app-sidebar__tag {
+  margin-left: 0.375rem;
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.app-sidebar__divider {
+  height: 1px;
+  margin: 0.75rem 0.5rem;
+  background: rgb(255 255 255 / 8%);
+}
+
+/* ---- 側欄收合成圖示列：main.js 在 <html> 加 sidebar-collapsed；手機寬度一律是圖示列 ---- */
+.sidebar-collapsed .admin-layout {
+  grid-template-columns: var(--sidebar-width-mobile) 1fr;
+}
+
+.sidebar-collapsed .app-sidebar {
+  padding-right: 0.375rem;
+  padding-left: 0.375rem;
+  overflow: visible;
+}
+
+.sidebar-collapsed .app-sidebar__head {
+  flex-direction: column;
+  padding: 0 0 1rem;
+}
+
+.sidebar-collapsed .app-sidebar__logo-full {
+  display: none;
+}
+
+.sidebar-collapsed .app-sidebar__logo-short {
+  display: inline;
+}
+
+.sidebar-collapsed .app-sidebar__collapse svg {
+  transform: rotate(180deg);
+}
+
+.sidebar-collapsed .app-sidebar__group-label,
+.sidebar-collapsed .app-sidebar__chevron,
+.sidebar-collapsed .app-sidebar__caption {
+  display: none;
+}
+
+.sidebar-collapsed .app-sidebar__group-toggle,
+.sidebar-collapsed nav > .app-sidebar__link,
+.sidebar-collapsed .app-sidebar__logout-button {
+  justify-content: center;
+  padding: 0.875rem 0.3125rem;
+  font-size: 0;
+}
+
+.sidebar-collapsed .app-sidebar__emoji {
+  font-size: var(--font-size-xl);
+}
+
+.sidebar-collapsed .app-sidebar__group--current > .app-sidebar__group-toggle {
+  background-color: var(--color-sidebar-active);
+}
+
+/* 圖示列：點群組圖示時，該群組的功能在右側跳出（main.js 加 data-flyout） */
+.sidebar-collapsed .app-sidebar__group-items,
+.sidebar-collapsed .app-sidebar__group-items[data-flyout] {
+  display: none;
+}
+
+.sidebar-collapsed .app-sidebar__group-items[data-flyout]:not([hidden]) {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 0.375rem);
+  z-index: 30;
+  display: block;
+  min-width: 12rem;
+  padding: 0.5rem;
+  background: var(--color-sidebar-bg);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+}
+
+.sidebar-collapsed .app-sidebar__group-items[data-flyout] .app-sidebar__group-title {
+  display: block;
+  padding: 0.375rem 0.625rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-sidebar-caption);
+}
+
+.sidebar-collapsed .app-sidebar__group-items[data-flyout] .app-sidebar__link {
+  justify-content: flex-start;
+  padding: 0.5625rem 0.75rem;
+  margin-bottom: 0.125rem;
+  font-size: 0.9375rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
 /* ---- 頁首：layouts/admin.html ---- */
 .app-header {
   display: flex;
@@ -418,6 +623,63 @@ pre {
 }
 
 @media (max-width: 800px) {
+  /* 手機寬度：側欄固定是圖示列（同 .sidebar-collapsed），不提供收合按鈕 */
+  .app-sidebar__collapse,
+  .app-sidebar__group-label,
+  .app-sidebar__chevron,
+  .app-sidebar__group-items {
+    display: none;
+  }
+
+  .app-sidebar {
+    overflow: visible;
+  }
+
+  .app-sidebar__head {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .app-sidebar__group-toggle {
+    justify-content: center;
+    padding: 0.875rem 0.3125rem;
+    font-size: 0;
+  }
+
+  .app-sidebar__group--current > .app-sidebar__group-toggle {
+    background-color: var(--color-sidebar-active);
+  }
+
+  .app-sidebar__group-items[data-flyout]:not([hidden]) {
+    position: absolute;
+    top: 0;
+    left: calc(100% + 0.375rem);
+    z-index: 30;
+    display: block;
+    min-width: 12rem;
+    padding: 0.5rem;
+    background: var(--color-sidebar-bg);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  }
+
+  .app-sidebar__group-items[data-flyout] .app-sidebar__group-title {
+    display: block;
+    padding: 0.375rem 0.625rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-sidebar-caption);
+  }
+
+  .app-sidebar__group-items[data-flyout] .app-sidebar__link {
+    justify-content: flex-start;
+    padding: 0.5625rem 0.75rem;
+    margin-bottom: 0.125rem;
+    font-size: 0.9375rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
   .admin-layout {
     grid-template-columns: var(--sidebar-width-mobile) 1fr;
   }

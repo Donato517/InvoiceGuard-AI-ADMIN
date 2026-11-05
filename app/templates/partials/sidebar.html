@@ -1,6 +1,7 @@
 {#
   @template partials/sidebar.html
-  @description 後台左側選單；項目來自 app.constants.MENU_ITEMS，目前所在頁面加上 --active。
+  @description 後台左側選單；已登入時依部門授權顯示手風琴群組（partials/sidebar_groups.html，不含歡迎頁），
+    其他情況（本機初始化、舊版頁面）沿用 app.constants.MENU_ITEMS，目前所在頁面加上 --active。
 #}
 {% set menu_icons = {
   "/welcome": "🏠",
@@ -20,35 +21,17 @@
   "/system/job-runs": "⏱️"
 } %}
 <aside class="app-sidebar">
-  <div class="app-sidebar__logo">
-    InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
-  </div>
+  {% include "partials/sidebar_head.html" %}
   <nav aria-label="後台選單">
     {% set logout_entry = namespace(rendered=false) %}
     {% if request.state.e_configuration_authenticated is defined %}
-      <a class="app-sidebar__link" href="/welcome">
-        <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
-        <span>歡迎頁</span>
-      </a>
-      {% for item in request.state.e_configuration_menu|sidebar_order %}
-        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
-        {% if item.code == "sys.accounts" %}
-          {% include "partials/sidebar_logout.html" %}
-          {% set logout_entry.rendered = true %}
-        {% endif %}
-      {% endfor %}
+      {% set menu = request.state.e_configuration_menu %}
+      {% include "partials/sidebar_groups.html" %}
+      {% set logout_entry.rendered = true %}
     {% elif request.state.e_welcome_authenticated is defined %}
-      <a class="app-sidebar__link app-sidebar__link--active" href="/welcome">
-        <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
-        <span>歡迎頁</span>
-      </a>
-      {% for item in request.state.e_welcome_menu|sidebar_order %}
-        {% if item.code != "sys.department-permissions" %}{% include "partials/sidebar_entry.html" %}{% endif %}
-        {% if item.code == "sys.accounts" %}
-          {% include "partials/sidebar_logout.html" %}
-          {% set logout_entry.rendered = true %}
-        {% endif %}
-      {% endfor %}
+      {% set menu = request.state.e_welcome_menu %}
+      {% include "partials/sidebar_groups.html" %}
+      {% set logout_entry.rendered = true %}
     {% else %}
       {% set navigation = [("歡迎頁", "/welcome"), ("帳號管理", "/accounts"), ("部門管理", "/department"), ("功能管理", "/functions")] if request.state.e_local_setup is defined and request.state.e_local_setup else MENU_ITEMS %}
       {% for label, path in navigation %}

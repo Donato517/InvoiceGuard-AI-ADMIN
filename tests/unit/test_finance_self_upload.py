@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from app.routers import invoices as invoices_router
 from app.utils.account_display import account_display, is_same_user
 
+_ORIGIN = {"Origin": "http://testserver"}
 ME = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
 
@@ -203,7 +204,7 @@ def test_legacy_review_endpoint_denies_self_upload_and_keeps_state(
     _set_uploader(3, ME, "me@example.com")
     before = deepcopy(invoices_router._find_invoice("3"))
     response = finance_me.post(
-        "/invoices/3/review", data={"decision": "passed", "tax_type": "免稅"}
+        "/invoices/3/review", headers=_ORIGIN, data={"decision": "passed", "tax_type": "免稅"}
     )
     assert response.status_code == 403
     after = invoices_router._find_invoice("3")
@@ -217,7 +218,7 @@ def test_legacy_review_endpoint_denies_self_upload_and_keeps_state(
 def test_legacy_review_endpoint_still_works_for_other_reviewer(finance_me: TestClient) -> None:
     _set_uploader(3, OTHER, "other@example.com")
     response = finance_me.post(
-        "/invoices/3/review", data={"decision": "passed"}, follow_redirects=False
+        "/invoices/3/review", headers=_ORIGIN, data={"decision": "passed"}, follow_redirects=False
     )
     assert response.status_code == 303
     assert invoices_router._find_invoice("3")["review_status"] == "approved"
@@ -230,3 +231,102 @@ def test_legacy_detail_page_hides_review_form_for_self_upload(finance_me: TestCl
     assert 'action="/invoices/3/review"' not in html
     _set_uploader(3, OTHER, "other@example.com")
     assert 'action="/invoices/3/review"' in finance_me.get("/invoices/3").text
+
+
+# 舊入口的其餘安全檢核：同源、狀態、decision、欄位內容、資料庫案件；拒絕時資料不變
+def _legacy_snapshot(invoice_id: int) -> tuple[object, ...]:
+    inv = invoices_router._find_invoice(str(invoice_id))
+    return tuple(
+        inv.get(k)
+        for k in (
+            "review_status",
+            "status",
+            "purpose",
+            "account_code",
+            "deduction_code",
+            "tax_type",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "headers", [{}, {"Origin": "http://evil.example"}], ids=["no-origin", "cross"]
+)
+def test_legacy_review_requires_same_origin(
+    finance_me: TestClient, headers: dict[str, str]
+) -> None:
+    _set_uploader(3, OTHER, "other@example.com")
+    before = _legacy_snapshot(3)
+    response = finance_me.post(
+        "/invoices/3/review", headers=headers, data={"decision": "passed", "purpose": "x"}
+    )
+    assert response.status_code == 403
+    assert _legacy_snapshot(3) == before
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"decision": "approve-everything"},
+        {"decision": ""},
+        {"decision": "passed", "tax_type": "9 - 亂填"},
+        {"decision": "passed", "deduction_code": "99"},
+        {"decision": "passed", "purpose": "x" * 201},
+    ],
+    ids=["bad-decision", "empty-decision", "bad-tax", "bad-deduction", "too-long"],
+)
+def test_legacy_review_rejects_invalid_input_without_partial_change(
+    finance_me: TestClient, data: dict[str, str]
+) -> None:
+    _set_uploader(3, OTHER, "other@example.com")
+    before = _legacy_snapshot(3)
+    response = finance_me.post("/invoices/3/review", headers=_ORIGIN, data=data)
+    assert response.status_code == 400
+    assert _legacy_snapshot(3) == before  # 沒有部分修改（含 purpose 等欄位）
+
+
+def test_legacy_review_refuses_non_reviewable_status_and_keeps_data(
+    finance_me: TestClient,
+) -> None:
+    _set_uploader(1, OTHER, "other@example.com")  # 示範案件 1 已核准
+    before = _legacy_snapshot(1)
+    response = finance_me.post(
+        "/invoices/1/review", headers=_ORIGIN, data={"decision": "rejected", "purpose": "改寫"}
+    )
+    assert response.status_code == 400 and "不在待財務審核狀態" in response.text
+    assert _legacy_snapshot(1) == before
+
+
+def test_legacy_review_unknown_invoice_is_404(finance_me: TestClient) -> None:
+    response = finance_me.post(
+        "/invoices/999999/review", headers=_ORIGIN, data={"decision": "passed"}
+    )
+    assert response.status_code == 404
+
+
+def test_legacy_review_refuses_database_invoices(
+    finance_me: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """資料庫案件不會被舊入口寫入；回 409 而不是假裝成功。"""
+    db_id = "5b0f8b0e-6c7a-4c55-9a1e-0a1b2c3d4e5f"
+    invoice = dict(invoices_router.DEMO_TEST_INVOICES[2])
+    invoice.update(id=db_id, uploaded_by=OTHER)
+    monkeypatch.setattr(invoices_router.invoice_review_service, "fetch_invoice", lambda _i: invoice)
+    response = finance_me.post(
+        f"/invoices/{db_id}/review", headers=_ORIGIN, data={"decision": "passed"}
+    )
+    assert response.status_code == 409
+
+
+def test_legacy_review_cannot_review_the_same_case_twice(finance_me: TestClient) -> None:
+    """舊入口修改後審核案件快取必須失效；否則狀態檢核讀到過期的待審核，可重複核准或翻轉。"""
+    _set_uploader(3, OTHER, "other@example.com")
+    first = finance_me.post(
+        "/invoices/3/review", headers=_ORIGIN, data={"decision": "passed"}, follow_redirects=False
+    )
+    assert first.status_code == 303
+    again = finance_me.post(
+        "/invoices/3/review", headers=_ORIGIN, data={"decision": "rejected"}, follow_redirects=False
+    )
+    assert again.status_code == 400 and "不在待財務審核狀態" in again.text
+    assert invoices_router._find_invoice("3")["review_status"] == "approved"

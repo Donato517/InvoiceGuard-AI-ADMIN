@@ -207,7 +207,8 @@ def test_invoice_flow_steps_render(admin_client: TestClient) -> None:
 
 def test_invoice_review_and_flow_advance(admin_client: TestClient) -> None:
     review_res = admin_client.post(
-        "/invoices/1/review",
+        "/invoices/3/review",  # 案件 1 已核准，舊入口不再允許重審；案件 3 為待審核
+        headers={"Origin": "http://testserver"},  # 瀏覽器表單一定會帶；舊入口現在要求同源
         data={
             "decision": "passed",
             "purpose": "辦公測試用途",

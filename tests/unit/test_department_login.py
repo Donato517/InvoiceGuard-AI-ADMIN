@@ -1038,7 +1038,9 @@ def test_finance_review_posts_require_session_department_and_not_self_upload(
             data={"decision": "passed"},
             follow_redirects=False,
         )
-        assert legacy.status_code == 303
+        assert (
+            legacy.status_code == 400 and "不在待財務審核狀態" in legacy.text
+        )  # 案件 1 已核准，由狀態規則拒絕（不是本人 Guard）
     finally:
         _FINANCE_CASES.clear()
         invoice.clear()

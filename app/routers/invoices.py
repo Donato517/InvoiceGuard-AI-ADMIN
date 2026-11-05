@@ -2655,7 +2655,39 @@ def procurement_terminate(
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=5", status_code=303)
 
 
-@router.post("/{invoice_id}/review")
+_LEGACY_DECISIONS = frozenset({"passed", "rejected"})
+# 舊表單接受純代碼（"1"）或「代碼 - 名稱」（"1 - 應稅"）
+_LEGACY_TAX_TYPES = frozenset(
+    form for v in TAX_TYPES.values() for form in (v[0], f"{v[0]} - {v[2:]}")
+)
+_LEGACY_DEDUCTION_CODES = frozenset(
+    form for v in DEDUCTION_CODES.values() for form in (v[0], f"{v[0]} - {v[2:]}")
+)
+_LEGACY_TEXT_LIMIT = 200
+
+
+def _legacy_field_blockers(
+    invoice: dict[str, Any],
+    purpose: str | None,
+    account_code: str | None,
+    deduction_code: str | None,
+    tax_type: str | None,
+) -> list[ReviewBlocker]:
+    """舊入口的欄位檢核：課稅別與扣抵代號只接受固定清單（或維持目前值），其餘文字限制長度。"""
+    blockers: list[ReviewBlocker] = []
+    for name, value, allowed in (
+        ("tax_type", tax_type, _LEGACY_TAX_TYPES),
+        ("deduction_code", deduction_code, _LEGACY_DEDUCTION_CODES),
+    ):
+        if value and value not in allowed and value != invoice.get(name):
+            blockers.append(ReviewBlocker("BAD_FIELD", f"{name} 不在可選清單中"))
+    for name, value in (("purpose", purpose), ("account_code", account_code)):
+        if value is not None and len(value) > _LEGACY_TEXT_LIMIT:
+            blockers.append(ReviewBlocker("BAD_FIELD", f"{name} 超過長度限制"))
+    return blockers
+
+
+@router.post("/{invoice_id}/review", dependencies=[Depends(require_e_origin)])
 def review_invoice(
     request: Request,
     invoice_id: str,
@@ -2671,8 +2703,20 @@ def review_invoice(
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    # 舊入口只處理記憶體示範案件；資料庫案件不會被它寫入，回成功會誤導，與其他舊示範寫入一致地拒絕
+    _refuse_legacy_demo_write(invoice_id, invoice)
     if (denied := _deny_self_review(request, invoice)) is not None:
         return denied  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
+    # 以下全部檢核都在修改任何資料之前完成
+    case = _finance_case(invoice)
+    blockers: list[ReviewBlocker] = []
+    if case.status not in REVIEWABLE_STATUSES:
+        blockers.append(ReviewBlocker("NOT_REVIEWABLE", "這張請款單目前不在待財務審核狀態"))
+    if decision not in _LEGACY_DECISIONS:
+        blockers.append(ReviewBlocker("BAD_DECISION", "審核決定只能是核准或退回"))
+    blockers += _legacy_field_blockers(invoice, purpose, account_code, deduction_code, tax_type)
+    if blockers:
+        return _review_error(request, invoice, FinanceReviewError(blockers))
 
     if purpose is not None:
         invoice["purpose"] = purpose
@@ -2690,6 +2734,9 @@ def review_invoice(
         invoice["review_status"] = "returned"
         invoice["status"] = "flagged"
 
+    _FINANCE_CASES.pop(
+        str(invoice["id"]), None
+    )  # 審核案件快取已過期；下次依新狀態重建，避免重複審核
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=5", status_code=303)
 
 

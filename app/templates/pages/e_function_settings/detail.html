@@ -91,6 +91,8 @@
         程式對應：
         {% if builtin %}
           系統內建，所有部門固定可查看，不需手動授權。
+        {% elif values.function_code in showcase_codes %}
+          已接線。依目前部門權限驗證，從供應商管理的範例發票入口使用。
         {% elif values.function_code in registered_codes %}
           已有能力登錄，正式驗權仍待整合。
         {% else %}

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.constants import WELCOME_CODE, WELCOME_PATH
 from app.schemas.e_admin import Action, DeniedError, UnavailableError
+from app.schemas.showcase import ACTIVATE_CODE, CATALOG_CODE, CODE
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,15 @@ def supported_actions(
     code: str, definitions: tuple[Capability, ...] = REGISTRY
 ) -> frozenset[Action]:
     """未知或尚未接入的功能沒有可授出的操作。"""
+    # Show Case 已有固定路由及服務驗權；允許既有部門矩陣授出已實作操作。
+    showcase_actions = {
+        CATALOG_CODE: frozenset({Action.VIEW, Action.CREATE, Action.EDIT}),
+        ACTIVATE_CODE: frozenset({Action.VIEW, Action.EDIT}),
+    }
+    if code == CODE:
+        return frozenset()
+    if code in showcase_actions:
+        return showcase_actions[code]
     try:
         return capability(code, definitions).actions
     except DeniedError:

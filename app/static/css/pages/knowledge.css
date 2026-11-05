@@ -109,6 +109,11 @@
   margin: 0;
 }
 
+/* 部門問答僅呈現對話區；資訊部測試頁保留原有雙欄。 */
+.qa-layout--department {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 #chatMessages {
   display: flex;
   flex: 1;

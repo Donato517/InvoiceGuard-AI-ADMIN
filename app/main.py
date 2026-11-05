@@ -32,7 +32,9 @@ from app.routers import (
     invoice_correction,
     invoices,
     knowledge,
+    knowledge_qa,
     robots,
+    showcases,
     supplier_management,
     system,
     users,
@@ -67,6 +69,7 @@ app.include_router(invoices.router)
 app.include_router(cases.router)
 app.include_router(intake.router)
 app.include_router(knowledge.router)
+app.include_router(knowledge_qa.router)
 app.include_router(supplier_management.router)
 app.include_router(company_profile.router)
 app.include_router(users.router)
@@ -82,3 +85,4 @@ app.include_router(dev_files.page)
 # 06_E 正式功能；共同接點未就緒時拒絕操作。
 app.include_router(e_admin.router)
 app.include_router(e_function_settings.router)
+app.include_router(showcases.router)

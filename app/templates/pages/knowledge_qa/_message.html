@@ -1,0 +1,21 @@
+{#
+  @template pages/knowledge_qa/_message.html
+  @description 單題回答及來源；沿用資訊部的文字與來源呈現，不顯示測試診斷。
+  @route POST /knowledge-qa/ask
+  @context question: str 問題
+  @context answer: QaAnswer 回答及來源
+#}
+<div class="message user">
+  <div class="message__text">{{ question }}</div>
+</div>
+<div class="message assistant">
+  <div class="message__text">{{ answer.text }}</div>
+  {% if answer.sources %}
+    <div class="sources">
+      來源：
+      {% for source in answer.sources %}
+        <div>[{{ source.number }}] 知識庫「{{ source.knowledge_name }}」《{{ source.file_title }}》第 {{ source.chunk_index + 1 }} 段</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>

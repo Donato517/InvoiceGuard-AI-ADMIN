@@ -97,6 +97,7 @@ from app.services.procurement_case_service import (
     prepare_resubmit,
     prepare_terminate,
 )
+from app.utils.account_display import account_display, is_same_user
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
@@ -816,6 +817,7 @@ def _render_invoice_list_view(
     active_invoices = _get_active_invoices(request)
     base_invoices = [_ensure_invoice_14_fields(i) for i in active_invoices if section_filter(i)]
     for i in base_invoices:
+        i["is_self_upload"] = is_finance and _is_self_upload(i.get("uploaded_by"), current_user_id)
         status_code = _derive_invoice_status(i)
         i["display_status_code"] = status_code
         i["display_status_label"] = INVOICE_STATUS_MAP.get(status_code, "待審核")
@@ -1228,6 +1230,7 @@ def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
             "invoice": invoice,
             "fields_14": fields_14,
             "max_flow_step": getattr(request.state, "invoice_max_step", 9),
+            "is_self_upload": _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)),
         },
     )
 
@@ -1988,6 +1991,11 @@ def _reviewer_id(request: Request) -> str:
     return str(getattr(request.state, "invoice_user_id", "1"))
 
 
+def _is_self_upload(uploader_id: object, current_user_id: object) -> bool:
+    """是否本人上傳：只比對真實 User ID（UUID）；示範資料的整數佔位 ID 不算本人。"""
+    return finance_db.is_uuid(current_user_id) and is_same_user(uploader_id, current_user_id)
+
+
 def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str, Any]:
     """步驟 5 財務審核畫面所需資料。"""
     loaded = _load_db_review(str(invoice["id"])) if _is_db_invoice(invoice) else None
@@ -2016,10 +2024,15 @@ def _finance_review_view(request: Request, invoice: dict[str, Any]) -> dict[str,
         dept_name = dept_name or extra_dept
         sub_name = sub_name or extra_sub
 
+    # 本人上傳：只比對真實 User ID；「可檢視」與「可審核」分開（後端另有 SELF_APPROVAL）
+    is_self_upload = _is_self_upload(case.submitted_by, _reviewer_id(request))
     return {
         "case": case,
         "status_label": STATUS_LABELS.get(case.status, case.status),
         "reviewable": reviewable,
+        "is_self_upload": is_self_upload,
+        "can_review": reviewable and not is_self_upload,
+        "submitter_account": invoice.get("submitter_account") or account_display(None),
         "warnings": case.warnings,
         "department_name": dept_name or "採購部",
         "submitter_name": sub_name or invoice.get("uploaded_by") or "—",
@@ -2092,11 +2105,34 @@ def _review_redirect(invoice_id: str) -> RedirectResponse:
 
 
 def _review_error(
-    request: Request, invoice: dict[str, Any], error: FinanceReviewError
+    request: Request, invoice: dict[str, Any], error: FinanceReviewError, status_code: int = 400
 ) -> HTMLResponse:
     response = _render_flow_page(request, invoice, 5, error=str(error))
-    response.status_code = 400
+    response.status_code = status_code
     return response
+
+
+_SELF_REVIEW_MESSAGE = (
+    "此發票由您本人提交，依權限規則不得由您自行核准、退回或儲存會計欄位，"
+    "請交由其他具備權限的財務人員處理。"
+)
+
+
+def _deny_self_review(request: Request, invoice: dict[str, Any]) -> HTMLResponse | None:
+    """三項財務操作（核准、退回、儲存會計欄位）共用的本人限制；須在任何寫入前呼叫。
+
+    以案件的 submitted_by 與登入者真實 User ID 比對，不採用請求內容；
+    拒絕時回 403 與清楚訊息，不寫資料庫、不改記憶體，也與資料庫故障訊息分開。
+    """
+    case = _finance_case(invoice)
+    if _is_self_upload(case.submitted_by, _reviewer_id(request)):
+        return _review_error(
+            request,
+            invoice,
+            FinanceReviewError([ReviewBlocker("SELF_REVIEW", _SELF_REVIEW_MESSAGE)]),
+            status_code=403,
+        )
+    return None
 
 
 @router.post("/{invoice_id}/finance-review/accounting", response_model=None)
@@ -2113,6 +2149,8 @@ def finance_update_accounting(
     先選費用大項再選會計科目，科目須屬於該大項；扣抵代號為獨立選項，不與會計科目連動。
     """
     invoice = _finance_review_target(request, invoice_id)
+    if (denied := _deny_self_review(request, invoice)) is not None:
+        return denied
     category = expense_category.strip()
     account = account_code.strip()
     current = _finance_case(invoice)
@@ -2163,6 +2201,8 @@ def _save_db_accounting(
 def finance_approve(request: Request, invoice_id: str) -> Response:
     """步驟 5：核准；有任何未處理項目時列出原因並擋下。"""
     invoice = _finance_review_target(request, invoice_id)
+    if (denied := _deny_self_review(request, invoice)) is not None:
+        return denied
     case = _finance_case(invoice)
     db_backed = _is_db_invoice(invoice)
     if db_backed and not finance_db.is_uuid(_reviewer_id(request)):
@@ -2197,6 +2237,8 @@ def finance_return(
     return_allowed 的值為「列序號:相依欄位名稱」（例如 0:total_amount），表示財務一併授權申請人修改的相依表頭欄位。
     """
     invoice = _finance_review_target(request, invoice_id)
+    if (denied := _deny_self_review(request, invoice)) is not None:
+        return denied
     allowed: dict[int, list[str]] = {}
     for raw in return_allowed or []:
         index, _, name = raw.partition(":")
@@ -2622,13 +2664,15 @@ def review_invoice(
     account_code: Annotated[str | None, Form()] = None,
     deduction_code: Annotated[str | None, Form()] = None,
     tax_type: Annotated[str | None, Form()] = None,
-) -> RedirectResponse:
-    """步驟 5：財務審核——核准、退回與更新會計欄位。"""
+) -> Response:
+    """步驟 5：財務審核——核准、退回與更新會計欄位（舊版入口；本人上傳回 403）。"""
     if getattr(request.state, "invoice_max_step", 9) < 5:
         raise DeniedError
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    if (denied := _deny_self_review(request, invoice)) is not None:
+        return denied  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
 
     if purpose is not None:
         invoice["purpose"] = purpose

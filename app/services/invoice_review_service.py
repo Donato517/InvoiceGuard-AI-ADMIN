@@ -5,12 +5,45 @@
     - 提供給 Router 層讀取與儲存發票之統一介面，維持分層架構（Router 不直接存取 DB 與雲端整合）。
 """
 
+import logging
 from typing import Any
 from uuid import UUID
 
 from app.db.repositories import case_repository
 from app.db.repositories import invoice_repository as repository
 from app.integrations.supabase_storage import S3StorageClient
+from app.utils.account_display import account_display
+
+_logger = logging.getLogger(__name__)
+
+
+def _uuid_or_empty(value: Any) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
+
+def _attach_submitter_accounts(session: Any, invoices: list[dict[str, Any]]) -> None:
+    """為發票補上上傳者帳號顯示值（Email 只留 @ 前面）；查詢失敗只顯示「未提供」。
+
+    user_accounts 啟用 RLS 且預設不開放，權限不足或被 RLS 擋下時不得讓發票清單或詳情失敗：
+    以 SAVEPOINT 隔離查詢，失敗只回到此處。日誌只記例外類別與 SQLSTATE，不記 Email、SQL 或參數。
+    """
+    ids = [_uuid_or_empty(i.get("uploaded_by")) for i in invoices]
+    accounts: dict[str, str] = {}
+    try:
+        with session.begin_nested():
+            accounts = repository.list_submitter_accounts(session, ids)
+    except repository.DatabaseError as error:
+        sqlstate = getattr(getattr(error, "orig", None), "sqlstate", None) or "-"
+        _logger.warning(
+            "invoice_submitter_account_unavailable error=%s sqlstate=%s",
+            type(error).__name__,
+            sqlstate,
+        )
+    for invoice, uid in zip(invoices, ids, strict=True):
+        invoice["submitter_account"] = account_display(accounts.get(uid) if uid else None)
 
 
 def fetch_invoices(
@@ -24,13 +57,15 @@ def fetch_invoices(
     if session is None:
         return None
     try:
-        return repository.list_invoices(
+        invoices = repository.list_invoices(
             session,
             user_id=user_id,
             is_finance=is_finance,
             status=status,
             q=q,
         )
+        _attach_submitter_accounts(session, invoices)
+        return invoices
     finally:
         session.close()
 
@@ -41,7 +76,10 @@ def fetch_invoice(invoice_id: Any) -> dict[str, Any] | None:
     if session is None:
         return None
     try:
-        return repository.get_invoice_by_id(session, invoice_id)
+        invoice = repository.get_invoice_by_id(session, invoice_id)
+        if invoice is not None:
+            _attach_submitter_accounts(session, [invoice])
+        return invoice
     finally:
         session.close()
 

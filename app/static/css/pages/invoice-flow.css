@@ -900,3 +900,6 @@
 .table th.col-w-action {
   width: 4rem;
 }
+
+/* 財務清單：本人上傳（無權審核）列，淡灰底但文字清楚；整列仍可點擊 */
+.row--self-upload { background: rgba(120, 120, 120, 0.08); }

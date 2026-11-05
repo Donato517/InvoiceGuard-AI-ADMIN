@@ -938,6 +938,114 @@ KNOWLEDGE_ROUTES = (
 )
 
 
+_REVIEW_POSTS = (
+    ("/invoices/1/finance-review/accounting", {"tax_type": "taxable", "deduction_code": "1"}),
+    ("/invoices/1/finance-review/approve", {}),
+    ("/invoices/1/finance-review/return", {"return_field": "total_amount", "return_reason": "x"}),
+    ("/invoices/1/review", {"decision": "passed"}),
+)
+
+
+def _review_state(invoice: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(invoice.get(k) for k in ("review_status", "status", "tax_type", "stage"))
+
+
+def test_finance_review_posts_require_session_department_and_not_self_upload(
+    browser: TestClient, state: dict[str, Any]
+) -> None:
+    """真實 Session 組裝：未登入、非財務部、財務部本人上傳都被後端拒絕且資料不變；財務部他人上傳照常。"""
+    grant = [
+        dict(
+            function_code="Triplicate Uniform Invoice",
+            function_name="(21)三聯式統一發票",
+            app_scope="both",
+            is_active=True,
+            can_view=True,
+            can_create=True,
+            can_edit=True,
+            can_delete=False,
+        )
+    ]
+    state["departments"] = [
+        {
+            "department_id": DEPARTMENT,
+            "department_code": "PROC",
+            "department_name": "採購部",
+            "is_active": True,
+        },
+        {
+            "department_id": OTHER,
+            "department_code": "FIN",
+            "department_name": "財務部",
+            "is_active": True,
+        },
+    ]
+    state["functions"] = grant
+    state["department_functions"] = {DEPARTMENT: grant, OTHER: grant}
+
+    from app.routers.invoices import _FINANCE_CASES, _INVOICE_STORE
+
+    invoice = _INVOICE_STORE[0]
+    original_uploader = invoice.get("uploaded_by")
+    snapshot = dict(invoice)
+    try:
+        # 未登入：直接呼叫四個審核端點都不可成功，也不改資料
+        for path, data in _REVIEW_POSTS:
+            denied = browser.post(path, headers=ORIGIN, data=data, follow_redirects=False)
+            assert denied.status_code in (303, 401, 403), path
+            if denied.status_code == 303:
+                assert denied.headers["location"].startswith("/login"), path
+        assert _review_state(invoice) == _review_state(snapshot)
+
+        login(browser)
+        me = str(state["account"]["user_id"])
+
+        # 採購部（無審核權限）：本人上傳與他人上傳都拒絕
+        for uploader in (me, "99999999-9999-4999-8999-999999999999"):
+            invoice["uploaded_by"] = uploader
+            _FINANCE_CASES.clear()  # 示範資料的審核案件會快取送出者
+            for path, data in _REVIEW_POSTS:
+                assert browser.post(path, headers=ORIGIN, data=data).status_code == 403, path
+        assert _review_state(invoice) == _review_state(snapshot)
+
+        # 切到財務部：本人上傳 → 四個端點皆 403 且資料不變
+        browser.post(
+            "/switch-department",
+            headers=ORIGIN,
+            data={"switch_department_id": str(OTHER), "next": "/invoices"},
+        )
+        invoice["uploaded_by"] = me
+        _FINANCE_CASES.clear()
+        for path, data in _REVIEW_POSTS:
+            response = browser.post(path, headers=ORIGIN, data=data, follow_redirects=False)
+            assert response.status_code == 403, path
+        assert _review_state(invoice) == _review_state(snapshot)
+
+        # 財務部、他人上傳：合法審核不被新 Guard 誤擋
+        invoice["uploaded_by"] = "99999999-9999-4999-8999-999999999999"
+        _FINANCE_CASES.clear()
+        ok = browser.post(
+            "/invoices/1/finance-review/accounting",
+            headers=ORIGIN,
+            data={"tax_type": "taxable", "deduction_code": "1"},
+            follow_redirects=False,
+        )
+        # 案件 1 的狀態可能不在可審核狀態（既有業務規則回 400）；重點是不被本人 Guard 擋下（403）
+        assert ok.status_code in (303, 400) and "不得由您自行" not in ok.text
+        legacy = browser.post(
+            "/invoices/1/review",
+            headers=ORIGIN,
+            data={"decision": "passed"},
+            follow_redirects=False,
+        )
+        assert legacy.status_code == 303
+    finally:
+        _FINANCE_CASES.clear()
+        invoice.clear()
+        invoice.update(snapshot)
+        invoice["uploaded_by"] = original_uploader
+
+
 @pytest.mark.parametrize("method,path", KNOWLEDGE_ROUTES)
 def test_all_knowledge_routes_reject_without_admin_cookie_even_if_legacy_guard_is_overridden(
     browser: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, path: str

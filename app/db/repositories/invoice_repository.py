@@ -9,9 +9,14 @@ from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_engine
+from app.utils.account_display import account_display
+
+# Service 以此捕捉資料庫例外（Service 不直接依賴 SQLAlchemy）
+DatabaseError = SQLAlchemyError
 
 SELECT_INVOICES = text("""
     SELECT i.invoice_id::text AS invoice_id,
@@ -98,6 +103,14 @@ SELECT_INVOICE_BY_ID = text("""
         LIMIT 1
     ) f ON true
     WHERE i.invoice_id::text = :invoice_id
+""")
+
+# 帳號與發票主查詢分開：user_accounts 啟用 RLS 且無預設 GRANT，權限不足或被 RLS 擋下時，
+# 只讓「上傳者帳號」退回「未提供」，不讓發票清單或詳情整體失敗。只取 user_id 與 email。
+SELECT_SUBMITTER_ACCOUNTS = text("""
+    SELECT user_id::text AS user_id, email
+    FROM invoiceguard_identity.user_accounts
+    WHERE user_id::text = ANY(CAST(:user_ids AS text[]))
 """)
 
 SELECT_INVOICE_ITEMS = text("""
@@ -203,6 +216,7 @@ def _row_to_invoice_dict(
         "id": row["invoice_id"],
         "uploaded_by": row.get("submitted_by") or "1",
         "submitter_name": row.get("submitter_name") or "",
+        "submitter_account": account_display(row.get("submitter_account")),
         "department_id": row.get("department_id") or "",
         "department_name": row.get("department_name") or "",
         "format_identification": row.get("format_identification") or "",
@@ -236,6 +250,25 @@ def _row_to_invoice_dict(
         "filing_preview": None,
         "first_four_checked": stage >= 4,
     }
+
+
+def list_submitter_accounts(db: Session, user_ids: list[str]) -> dict[str, str]:
+    """讀取上傳者登入帳號（user_accounts.email）；只取 user_id 與 email。
+
+    不處理錯誤、不管理交易：權限不足或 RLS 造成的例外由 Service 以 SAVEPOINT 隔離並退回「未提供」。
+
+    Args:
+        db: 資料庫 Session。
+        user_ids: 上傳者 User ID；空值略過。
+
+    Returns:
+        {user_id: email}；查不到（含被 RLS 過濾）的 ID 不在結果中。
+    """
+    ids = sorted({u for u in user_ids if u})
+    if not ids:
+        return {}
+    rows = db.execute(SELECT_SUBMITTER_ACCOUNTS, {"user_ids": ids}).mappings().all()
+    return {str(r["user_id"]): str(r["email"] or "") for r in rows}
 
 
 def list_invoices(

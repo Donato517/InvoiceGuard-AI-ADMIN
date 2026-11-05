@@ -347,9 +347,12 @@ def return_to_applicant(
         狀態異動；field_review_updates 為要同交易更新的欄位確認列。
 
     Raises:
-        FinanceReviewError: 不在審核狀態、沒有退回項目或原因空白。
+        FinanceReviewError: 不在審核狀態、本人送出、沒有退回項目或原因空白。
     """
     _require_reviewable(case)
+    if case.submitted_by is not None and case.submitted_by == reviewer:
+        # 2026-11-05 團隊核定：本人上傳不得自行退回，與核准同為 SELF_APPROVAL 規則
+        raise FinanceReviewError([ReviewBlocker("SELF_RETURN", "不能退回自己送出的請款單")])
     cleaned = tuple(
         ReturnItem(i.field.strip(), i.reason.strip(), i.item_id, tuple(dict.fromkeys(i.allowed)))
         for i in items

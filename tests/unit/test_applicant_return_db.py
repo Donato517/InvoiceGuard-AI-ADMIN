@@ -219,10 +219,13 @@ def test_terminate_needs_a_real_account(admin_client: TestClient, fake: FakeDb) 
 def test_database_writes_require_same_origin(client: TestClient, fake: FakeDb) -> None:
     accounting = {"tax_type": "taxable", "deduction_code": "1"}
     terminate = client.post(f"/invoices/{INVOICE_ID}/procurement/terminate", data={"reason": "x"})
-    saved = client.post(
+    # 財務動作改用「非原提交者」的財務帳號，避免被本人限制（403）提前擋下而掩蓋同源檢查；
+    # 財務審核各動作的同源檢查另在 test_finance_review_db 以待審核案件實測。
+    finance = _as(FINANCE, client)
+    saved = finance.post(
         f"/invoices/{INVOICE_ID}/finance-review/accounting", headers=ORIGIN, data=accounting
     )
-    approve = client.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
+    approve = finance.post(f"/invoices/{INVOICE_ID}/finance-review/approve")
 
     assert terminate.status_code == 403
     assert saved.status_code in (303, 400)  # 帶同源標頭可通過（案件是待補正，會被規則擋下）

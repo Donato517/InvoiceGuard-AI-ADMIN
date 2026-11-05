@@ -32,6 +32,14 @@ OTHER = "22222222-2222-4222-8222-222222222222"
 PNG = ("invoice.png", b"fake-png-bytes", "image/png")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_draft_store() -> Iterator[None]:
+    """草稿字典是模組層級的記憶體；每個測試前後清空，避免前一個測試留下的草稿影響下一個。"""
+    invoices_router._DRAFT_INVOICE_STORE.clear()
+    yield
+    invoices_router._DRAFT_INVOICE_STORE.clear()
+
+
 @pytest.fixture
 def flow_api(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
     monkeypatch.setattr(invoices_router, "get_intake_client", lambda request: api.client())
@@ -741,3 +749,258 @@ def test_restart_route_still_does_not_exist(browser_as: Any) -> None:
         404,
         405,
     )
+
+
+# ---- 重新上傳：無論有沒有重複發票，都停在新的上傳頁（可選檔）、仍登入、沒有 403 或登入頁 ----
+
+
+@pytest.mark.parametrize("department", ["採購部", "財務部"])
+def test_reupload_without_a_duplicate_also_lands_on_the_new_upload_page(
+    browser_as: Any, api: FakeApi, department: str
+) -> None:
+    client, _ = browser_as(ME, department)
+    draft_id = _start_draft(client)
+    _upload(client, draft_id)  # 一般的核對頁：沒有重複發票
+    review = client.get(f"/invoices/{draft_id}/flow?step=3")
+    assert f'formaction="/invoices/{draft_id}/flow/discard"' in review.text
+
+    discard = _discard(client, draft_id)
+    new = client.get(discard.headers["location"])
+    page = client.get(new.headers["location"])
+
+    assert [discard.status_code, new.status_code, page.status_code] == [303, 303, 200]
+    assert 'type="file"' in page.text  # 可以選檔
+    assert draft_id not in invoices_router._DRAFT_INVOICE_STORE
+    assert all(r.method != "DELETE" for r in api.requests)
+
+
+@pytest.mark.parametrize("department", ["採購部", "財務部"])
+def test_new_upload_page_works_when_the_next_request_hits_an_instance_without_the_draft(
+    browser_as: Any, api: FakeApi, department: str
+) -> None:
+    """Vercel 可能把下一個請求交給沒有這份記憶體草稿的實例：一般員工不能因此得到 403。"""
+    client, _ = browser_as(ME, department)
+    new = client.get("/invoices/new")
+    draft_id = new.headers["location"].split("/")[2]
+    invoices_router._DRAFT_INVOICE_STORE.pop(draft_id)  # 模擬另一個實例：沒有這份草稿
+
+    page = client.get(new.headers["location"])
+    assert page.status_code == 200 and 'type="file"' in page.text
+
+    invoices_router._DRAFT_INVOICE_STORE.pop(draft_id, None)  # 上傳時又換了一個實例
+    upload = _upload(client, draft_id)
+    assert (
+        upload.status_code == 303
+        and upload.headers["location"] == f"/invoices/{draft_id}/flow?step=3"
+    )
+    assert invoices_router._DRAFT_INVOICE_STORE[draft_id]["uploaded_by"] == ME
+
+
+def test_recreated_empty_drafts_do_not_open_up_other_pages_or_other_peoples_drafts(
+    browser_as: Any, api: FakeApi
+) -> None:
+    owner, _ = browser_as(ME)
+    draft_id = _start_draft(owner)
+    _upload(owner, draft_id)
+    intruder, _ = browser_as(OTHER)
+
+    # 這個實例上已有別人的草稿：照舊 403，不會被接手
+    assert intruder.get(f"/invoices/{draft_id}/flow?step=1").status_code == 403
+    assert _upload(intruder, draft_id).status_code == 403
+    assert invoices_router._DRAFT_INVOICE_STORE[draft_id]["uploaded_by"] == ME
+    # 只有步驟 1 會替本人重建空草稿；其他步驟對沒看過的 id 仍是 403
+    unknown = "dddddddd-0000-4000-8000-000000000004"
+    assert intruder.get(f"/invoices/{unknown}/flow?step=3").status_code == 403
+
+
+# ---- 方案 C：步驟 1 的 GET 只顯示選檔頁（不寫入草稿字典）；真正上傳時才建立並保存本人草稿 ----
+# 下面用兩個各自獨立的記憶體字典模擬兩個伺服器實例；這是離線模擬，不是真實 Vercel 多實例驗證。
+# 已知限制（本次不解決）：上傳與核對被不同實例處理時，核對會回 404；發票清單頁會清掉該實例所有人的草稿。
+
+
+class _Fleet:
+    """兩個模擬實例：切換時只換掉模組內的草稿字典，其他程式與資料完全相同。"""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._mp = monkeypatch
+        self.stores = {"A": invoices_router._IdKeyedDict(), "B": invoices_router._IdKeyedDict()}
+
+    def on(self, name: str) -> Any:
+        self._mp.setattr(invoices_router, "_DRAFT_INVOICE_STORE", self.stores[name])
+        return self.stores[name]
+
+
+@pytest.fixture
+def fleet(monkeypatch: pytest.MonkeyPatch) -> _Fleet:
+    return _Fleet(monkeypatch)
+
+
+UNKNOWN_ID = "dddddddd-0000-4000-8000-000000000004"
+
+
+@pytest.mark.parametrize("department", ["採購部", "財務部"])
+def test_step1_get_shows_the_upload_page_without_saving_any_draft(
+    browser_as: Any, department: str
+) -> None:
+    client, _ = browser_as(ME, department)
+    drafts_before = dict(invoices_router._DRAFT_INVOICE_STORE)
+    snapshot = _memory_snapshot()
+
+    page = client.get(f"/invoices/{UNKNOWN_ID}/flow?step=1")
+
+    assert page.status_code == 200 and 'type="file"' in page.text  # 可以立即選檔
+    assert UNKNOWN_ID not in invoices_router._DRAFT_INVOICE_STORE  # 單純開頁不補寫草稿
+    assert dict(invoices_router._DRAFT_INVOICE_STORE) == drafts_before  # 其他草稿也沒被動
+    assert _memory_snapshot() == snapshot
+    assert 'action="/invoices/' in page.text and f"/invoices/{UNKNOWN_ID}/flow/upload" in page.text
+
+
+def test_step1_get_never_overwrites_or_takes_over_an_existing_draft(
+    browser_as: Any, api: FakeApi
+) -> None:
+    owner, _ = browser_as(ME)
+    draft_id = _start_draft(owner)
+    _upload(owner, draft_id)
+    held = invoices_router._DRAFT_INVOICE_STORE[draft_id]
+    before = dict(held)
+
+    assert owner.get(f"/invoices/{draft_id}/flow?step=1").status_code == 200
+    assert (
+        invoices_router._DRAFT_INVOICE_STORE[draft_id] is held and dict(held) == before
+    )  # 本人：不覆寫
+
+    intruder, _ = browser_as(OTHER)
+    assert intruder.get(f"/invoices/{draft_id}/flow?step=1").status_code == 403  # 他人：不可接手
+    assert invoices_router._DRAFT_INVOICE_STORE[draft_id] is held and dict(held) == before
+
+
+@pytest.mark.parametrize("department", ["採購部", "財務部"])
+def test_upload_without_a_draft_creates_and_saves_the_users_own_draft(
+    browser_as: Any, api: FakeApi, department: str
+) -> None:
+    client, _ = browser_as(ME, department)
+    assert UNKNOWN_ID not in invoices_router._DRAFT_INVOICE_STORE
+
+    upload = _upload(client, UNKNOWN_ID)
+
+    assert upload.status_code == 303
+    assert upload.headers["location"] == f"/invoices/{UNKNOWN_ID}/flow?step=3"
+    draft = invoices_router._DRAFT_INVOICE_STORE[UNKNOWN_ID]  # 真正上傳時才建立並保存
+    assert draft["uploaded_by"] == ME and draft["id"] == UNKNOWN_ID  # 上傳者是目前登入者、id 正確
+    assert draft.get("intake_form") is not None and draft.get("file_bytes")
+    assert api.paths() == ["/api/v1/invoices/recognize"]  # 只有辨識，沒有提交
+
+
+def test_upload_never_takes_over_another_users_draft(browser_as: Any, api: FakeApi) -> None:
+    owner, _ = browser_as(ME)
+    draft_id = _start_draft(owner)
+    _upload(owner, draft_id)
+    held = invoices_router._DRAFT_INVOICE_STORE[draft_id]
+    calls = len(api.requests)
+    intruder, _ = browser_as(OTHER)
+
+    assert _upload(intruder, draft_id).status_code == 403
+    assert invoices_router._DRAFT_INVOICE_STORE[draft_id] is held and held["uploaded_by"] == ME
+    assert len(api.requests) == calls  # 被拒絕時沒有呼叫 OCR
+
+
+def test_other_steps_never_hand_a_regular_employee_an_empty_draft(browser_as: Any) -> None:
+    client, _ = browser_as(ME)
+
+    for step in (3, 4):
+        assert client.get(f"/invoices/{UNKNOWN_ID}/flow?step={step}").status_code == 403
+    assert client.post(
+        f"/invoices/{UNKNOWN_ID}/flow/review", headers=_ORIGIN, data=review_data("check")
+    ).status_code in (403, 404)
+    owned = [d for d in invoices_router._DRAFT_INVOICE_STORE.values() if d.get("uploaded_by") == ME]
+    assert owned == []  # 沒有任何屬於本人的可操作空草稿被補建
+
+
+def test_a_real_case_is_never_turned_into_a_draft_by_step1(
+    browser_as: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_id = "eeeeeeee-0000-4000-8000-000000000005"
+    case = {"id": case_id, "uploaded_by": OTHER, "stage": 9, "status": "approved"}
+    monkeypatch.setattr(
+        invoices_router.invoice_review_service,
+        "fetch_invoice",
+        lambda i: case if i == case_id else None,
+    )
+    client, _ = browser_as(ME)  # 非財務、非上傳者
+    snapshot = _memory_snapshot()
+
+    response = client.get(f"/invoices/{case_id}/flow?step=1")
+
+    assert response.status_code == 403  # 走原本的案件權限，不是新草稿
+    assert case_id not in invoices_router._DRAFT_INVOICE_STORE
+    assert _memory_snapshot() == snapshot
+    demo = client.get("/invoices/3/flow?step=1")  # 發票清單裡的示範案件也一樣：不轉成草稿
+    assert demo.status_code in (200, 403) and "3" not in invoices_router._DRAFT_INVOICE_STORE
+
+
+def test_cross_instance_step1_is_served_without_leaving_an_empty_draft(
+    browser_as: Any, fleet: _Fleet
+) -> None:
+    client, _ = browser_as(ME)  # 一般員工
+    fleet.on("A")
+    new = client.get("/invoices/new")
+    draft_id = new.headers["location"].split("/")[2]
+    assert draft_id in fleet.stores["A"]
+
+    fleet.on("B")  # 下一個請求被交給沒有這份草稿的實例
+    page = client.get(new.headers["location"])
+
+    assert page.status_code == 200 and 'type="file"' in page.text
+    assert draft_id not in fleet.stores["B"] and len(fleet.stores["B"]) == 0  # 沒有留下無用的空草稿
+
+
+def test_cross_instance_upload_creates_the_users_draft_only_on_the_serving_instance(
+    browser_as: Any, api: FakeApi, fleet: _Fleet
+) -> None:
+    client, _ = browser_as(ME)
+    fleet.on("A")
+    draft_id = client.get("/invoices/new").headers["location"].split("/")[2]
+
+    fleet.on("B")
+    upload = _upload(client, draft_id)
+
+    assert upload.status_code == 303
+    assert fleet.stores["B"][draft_id]["uploaded_by"] == ME
+    assert fleet.stores["B"][draft_id].get("intake_form") is not None
+    assert (
+        fleet.stores["A"][draft_id].get("intake_form") is None
+    )  # 實例 A 的空草稿沒有被「補上」資料
+
+
+def test_cross_instance_review_cannot_pretend_the_recognition_exists_or_submit(
+    browser_as: Any, api: FakeApi, fleet: _Fleet
+) -> None:
+    """已知限制：上傳在 B、核對回到 A 時會失敗；失敗必須誠實，不能顯示成功、不能提交、不能讓別人讀到 B 的資料。"""
+    client, _ = browser_as(ME)
+    fleet.on("A")
+    draft_id = client.get("/invoices/new").headers["location"].split("/")[2]
+    fleet.on("B")
+    _upload(client, draft_id)
+    fleet.on("A")
+    calls = len(api.requests)
+
+    page = client.get(f"/invoices/{draft_id}/flow?step=3")
+    review = client.post(
+        f"/invoices/{draft_id}/flow/review",
+        headers=_ORIGIN,
+        data=review_data("submit", recognition_id=RID),
+    )
+    live = client.post(
+        f"/invoices/{draft_id}/flow/check", headers=_ORIGIN, data=review_data("check")
+    )
+
+    assert review.status_code == 404 and live.status_code == 404  # 找不到辨識中的草稿，而不是成功
+    assert len(api.requests) == calls  # 沒有任何提交或檢核請求送到 API
+    assert "/cases/" not in review.text and "submitted" not in review.text.lower()
+    assert (
+        "flow-review-form" not in page.text and "辦公文具" not in page.text
+    )  # 不顯示 B 的辨識結果
+    fleet.on("B")  # 別人在擁有這份草稿的實例上也讀不到
+    intruder, _ = browser_as(OTHER)
+    assert intruder.get(f"/invoices/{draft_id}/flow?step=3").status_code == 403
+    assert fleet.stores["B"][draft_id]["uploaded_by"] == ME

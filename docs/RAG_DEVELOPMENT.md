@@ -1,6 +1,6 @@
 # RAG 開發說明
 
-> 適用 ADMIN 與 API；兩站此檔內容相同，修改時手動同步。最後更新：2026-11-05（ADMIN：查無資料次數、同名文件版本、段落多樣化；11-04 起 API 端此檔待同步）。
+> 適用 ADMIN 與 API；兩站此檔內容相同，修改時手動同步。最後更新：2026-11-05（查無資料次數、同名文件版本、段落多樣化；ADMIN 與 API 已同步）。
 > 結構依據：`InvoiceGuard_AI_PostgreSQL_Schema_v1_8_PortableAuth_draft.sql` 與 `InvoiceGuard_AI_v1_7_to_v1_8_ALTER.sql`。程式涵蓋 ADMIN 檔案庫、知識庫組合、資訊部問答與操作視窗，不新增 ORM Model、migration 或套件。
 > 正式 DB 已套用 v1.8（2026-10-31 本機 ADMIN 連正式 DB 已讀到 v1.8 欄位與移轉後的關聯）。新版程式尚未提交、尚未部署，Vercel 仍是舊程式。
 

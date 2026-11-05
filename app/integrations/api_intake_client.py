@@ -43,6 +43,8 @@ MAX_MESSAGE_CHARS = 200
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # 只讀取、沒有副作用的操作：逾時或回應異常時可以安全重試；其餘（辨識、提交、重送、作廢）結果不明時不得自動重送
 READ_ONLY_OPERATIONS = frozenset({"check", "read"})
+# API resubmit：首次成功回 201，相同冪等鍵的重試（replayed=true）回 200；兩者都是成功
+RESUBMIT_SUCCESS_STATUSES = frozenset({200, 201})
 
 Model = TypeVar("Model", bound=BaseModel)
 
@@ -175,7 +177,7 @@ class ApiIntakeClient:
             "POST",
             f"{API_PREFIX}/{_uuid_path(invoice_id)}/resubmit",
             ResubmitView,
-            200,
+            RESUBMIT_SUCCESS_STATUSES,
             json_body=body,
         )
 
@@ -198,7 +200,7 @@ class ApiIntakeClient:
         method: str,
         path: str,
         model: type[Model],
-        expected: int,
+        expected: int | frozenset[int],
         *,
         json_body: Mapping[str, Any] | None = None,
         files: Mapping[str, tuple[str, bytes, str]] | None = None,
@@ -237,7 +239,10 @@ class ApiIntakeClient:
 
     @staticmethod
     def _parse(
-        response: httpx.Response, model: type[Model], expected: int, operation: str
+        response: httpx.Response,
+        model: type[Model],
+        expected: int | frozenset[int],
+        operation: str,
     ) -> Model:
         if len(response.content) > MAX_RESPONSE_BYTES:
             raise IntakeTransportError(
@@ -247,7 +252,8 @@ class ApiIntakeClient:
             body = response.json()
         except ValueError:
             body = None
-        if response.status_code != expected:
+        accepted = expected if isinstance(expected, frozenset) else frozenset({expected})
+        if response.status_code not in accepted:
             raise _api_error(response.status_code, body)
         try:
             return model.model_validate(body)

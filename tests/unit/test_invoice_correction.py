@@ -144,7 +144,8 @@ class FakeApi:
 def api() -> FakeApi:
     fake = FakeApi()
     fake.responses["return-items"] = httpx.Response(200, json=return_items_json())
-    fake.responses["resubmit"] = httpx.Response(200, json=resubmit_json())
+    # API 的首次成功回 201（相同冪等鍵的重試才回 200 與 replayed=true）
+    fake.responses["resubmit"] = httpx.Response(201, json=resubmit_json())
     fake.responses["void"] = httpx.Response(
         200,
         json={
@@ -191,6 +192,38 @@ def test_client_resubmit_and_void_post_to_the_api_paths(api: FakeApi) -> None:
         f"POST /api/v1/invoices/{INVOICE_ID}/resubmit",
         f"POST /api/v1/invoices/{INVOICE_ID}/void",
     ]
+
+
+@pytest.mark.parametrize(("status", "replayed"), [(201, False), (200, True)])
+def test_client_treats_both_resubmit_success_statuses_as_success(
+    api: FakeApi, status: int, replayed: bool
+) -> None:
+    """API 首次成功回 201、冪等重試回 200；兩者都不能被當成異常。"""
+    api.responses["resubmit"] = httpx.Response(status, json=resubmit_json(replayed=replayed))
+
+    result = api.client().resubmit(INVOICE_ID, {"expected_round": 2})
+
+    assert result.replayed is replayed and result.submission_round == 3
+
+
+def test_client_still_rejects_other_resubmit_statuses(api: FakeApi) -> None:
+    api.responses["resubmit"] = httpx.Response(202, json=resubmit_json())
+
+    with pytest.raises(IntakeApiError):
+        api.client().resubmit(INVOICE_ID, {"expected_round": 2})
+
+
+def test_first_successful_resubmit_201_is_success_in_the_browser_response(
+    browser: TestClient, api: FakeApi
+) -> None:
+    """回歸：隔離整合測試發現 API 首次成功回 201 時，ADMIN 曾誤回 UPSTREAM_ERROR。"""
+    api.responses["resubmit"] = httpx.Response(201, json=resubmit_json())
+
+    response = browser.post(f"/invoices/{INVOICE_ID}/correct", headers=ORIGIN, json=_submit_body())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "error" not in data and data["submission_round"] == 3 and data["replayed"] is False
 
 
 def test_timeout_after_sending_a_write_is_ambiguous_but_a_read_is_not(api: FakeApi) -> None:
@@ -496,7 +529,7 @@ def test_submit_forwards_the_complete_payload_with_the_same_idempotency_key(
 ) -> None:
     response = browser.post(f"/invoices/{INVOICE_ID}/correct", headers=ORIGIN, json=_submit_body())
 
-    assert response.status_code == 200
+    assert response.status_code == 200  # API 回 201，ADMIN 視為成功
     data = response.json()
     assert data["status"] == "pending_accounting_review" and data["submission_round"] == 3
     assert data["status_label"] and data["replayed"] is False

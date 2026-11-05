@@ -22,7 +22,7 @@ import hashlib
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -103,6 +103,8 @@ class KnowledgeOverview:
     knowledge_bases: tuple[KnowledgeBase, ...]
     access_rows: tuple[DepartmentAccess, ...]
     files_to_index: dict[str, list[str]] = field(default_factory=dict)
+    # 近 NO_ANSWER_DAYS 天（含今天，台灣日期）各知識庫的查無資料次數；沒有紀錄的不在字典裡
+    no_answer_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -308,9 +310,19 @@ def load_overview() -> KnowledgeOverview:
             tuple(repository.list_knowledge_bases(db)),
             repository.list_department_access(db),
             repository.list_files_to_index(db),
+            repository.sum_no_answer_since(db, no_answer_since()),
         )
 
     return _run(operation, write=False)
+
+
+NO_ANSWER_DAYS = 30
+
+
+def no_answer_since(today: date | None = None) -> date:
+    """近 NO_ANSWER_DAYS 天統計的起始日（含今天，台灣日期）。"""
+    current = today or datetime.now(TAIPEI_TZ).date()
+    return current - timedelta(days=NO_ANSWER_DAYS - 1)
 
 
 def load_knowledge_base(

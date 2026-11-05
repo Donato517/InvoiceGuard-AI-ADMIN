@@ -11,6 +11,7 @@ import inspect
 import json
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 import pytest
@@ -123,6 +124,14 @@ def active_departments(monkeypatch: pytest.MonkeyPatch) -> list[DepartmentOption
     by_id = {department.department_id: department for department in departments}
     monkeypatch.setattr(qa.rag_repository, "get_department", lambda db, id: by_id.get(id))
     return departments
+
+
+@pytest.fixture(autouse=True)
+def no_answer_records(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """攔下查無資料計次（各測試不碰 DB）；記錄呼叫參數供下方測試檢查。"""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(qa, "record_no_answer", lambda open_session, **kw: calls.append(kw))
+    return calls
 
 
 @pytest.fixture
@@ -1569,3 +1578,219 @@ def test_no_relevant_passage_has_no_retrieved_titles(review_hits: list[SearchHit
     review_hits.append(hit(0.9))
     answer = _ask("問題", FakeChat("不會被呼叫 [1]"))
     assert not answer.grounded and answer.retrieved_titles == ()
+
+
+# ---- 查無資料次數（2026-11-05，rag_no_answer_stats）----
+
+
+def test_ask_test_counts_no_answer_for_the_checked_knowledge_bases(
+    review_hits: list[SearchHit], no_answer_records: list[dict[str, Any]]
+) -> None:
+    review_hits.append(hit(0.9))  # 太遠，沒有相關段落
+    answer = _ask("問題", FakeChat("不會被呼叫 [1]"))
+    assert answer.no_answer and not answer.failed
+    assert no_answer_records == [{"knowledge_base_ids": [KB]}]
+
+
+def test_model_insufficient_answer_is_counted(
+    review_hits: list[SearchHit], no_answer_records: list[dict[str, Any]]
+) -> None:
+    review_hits.append(hit(0.1))
+    answer = _ask("問題", FakeChat("NO_ANSWER"))
+    assert answer.no_answer and no_answer_records == [{"knowledge_base_ids": [KB]}]
+
+
+def test_grounded_answer_is_not_counted(
+    review_hits: list[SearchHit], no_answer_records: list[dict[str, Any]]
+) -> None:
+    review_hits.append(hit(0.1))
+    answer = _ask("問題", FakeChat("規定 [1]"))
+    assert answer.grounded and not answer.no_answer and no_answer_records == []
+
+
+def test_eval_runs_can_skip_the_count(
+    review_hits: list[SearchHit], no_answer_records: list[dict[str, Any]]
+) -> None:
+    review_hits.append(hit(0.9))
+    answer = qa.ask_test(
+        "問題",
+        IT,
+        [KB],
+        embedding_factory=FakeEmbedding,
+        chat_factory=lambda: FakeChat("x"),
+        open_session=FakeSession,
+        fallback_factory=lambda: FakeFallback(error=GeminiError("gemini_not_configured")),
+        record_no_answer_stats=False,
+    )
+    assert answer.no_answer and no_answer_records == []
+
+
+class _CountingSession:
+    def __init__(self, ids: list[str] | None = None, fail: bool = False) -> None:
+        self.ids = ids or []
+        self.fail = fail
+        self.writes: list[tuple[str, Any]] = []
+        self.committed = False
+        self.closed = False
+
+    def commit(self) -> None:
+        self.committed = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+# 模組載入時保留真正的 record_no_answer（autouse fixture 會把模組上的換成替身）
+_REAL_RECORD = qa.record_no_answer
+
+
+def _real_record() -> Any:
+    return _REAL_RECORD
+
+
+def test_record_no_answer_writes_each_knowledge_base_once_and_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _CountingSession()
+    record = _real_record()
+    monkeypatch.setattr(
+        qa.rag_repository,
+        "increment_no_answer",
+        lambda db, ids, day: db.writes.append(("increment", (list(ids), day))),
+    )
+    record(lambda: session, knowledge_base_ids=["kb-b", "kb-a"])
+    assert session.committed and session.closed
+    [(kind, (ids, day))] = session.writes
+    assert kind == "increment" and ids == ["kb-b", "kb-a"]
+    assert day == qa.datetime.now(qa.TAIPEI_TZ).date()
+
+
+def test_record_no_answer_uses_department_qa_knowledge_bases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _CountingSession()
+    record = _real_record()
+    monkeypatch.setattr(
+        qa.rag_repository, "list_qa_knowledge_base_ids", lambda db, department: ["kb-1"]
+    )
+    monkeypatch.setattr(
+        qa.rag_repository,
+        "increment_no_answer",
+        lambda db, ids, day: db.writes.append(("increment", list(ids))),
+    )
+    record(lambda: session, department_id="d1")
+    assert session.writes == [("increment", ["kb-1"])] and session.committed
+
+
+def test_record_no_answer_without_scope_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _CountingSession()
+    record = _real_record()
+    monkeypatch.setattr(qa.rag_repository, "list_qa_knowledge_base_ids", lambda db, d: [])
+    record(lambda: session, department_id="d1")
+    assert session.writes == [] and not session.committed and session.closed
+
+
+def test_record_no_answer_failure_is_swallowed_and_logged_without_content(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = _CountingSession()
+    record = _real_record()
+
+    def boom(db: Any, ids: Any, day: Any) -> None:
+        raise qa.rag_repository.SQLAlchemyError("SECRET question text")
+
+    monkeypatch.setattr(qa.rag_repository, "increment_no_answer", boom)
+    with caplog.at_level("WARNING"):
+        record(lambda: session, knowledge_base_ids=["kb-1"])
+    assert not session.committed and session.closed
+    assert "rag_no_answer_stats_write_failed error=SQLAlchemyError" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+# ---- 版本與段落多樣化（2026-11-05）----
+
+
+def _doc(
+    file_id: str, title: str, day: date | None, n: int = 0, distance: float = 0.1
+) -> SearchHit:
+    return replace(hit(distance, n), rag_file_id=file_id, file_title=title, effective_date=day)
+
+
+TODAY = date(2026, 11, 5)
+
+
+def test_older_version_of_the_same_title_is_superseded() -> None:
+    hits = [
+        _doc("old", "營業稅法（112年修正）", date(2023, 1, 1)),
+        _doc("new", "營業稅法（113年修正）", date(2024, 7, 1)),
+        _doc("other", "統一發票使用辦法", date(2020, 1, 1)),
+    ]
+    assert qa.superseded_file_ids(hits, TODAY) == {"old"}
+
+
+def test_future_version_does_not_replace_the_current_one() -> None:
+    hits = [
+        _doc("current", "營業稅法", date(2024, 7, 1)),
+        _doc("future", "營業稅法", date(2027, 1, 1)),
+    ]
+    assert qa.superseded_file_ids(hits, TODAY) == set()
+
+
+@pytest.mark.parametrize(
+    "hits",
+    [
+        # 生效日未知的不判斷
+        [_doc("a", "營業稅法", None), _doc("b", "營業稅法", date(2024, 7, 1))],
+        # 只有一份
+        [_doc("a", "營業稅法", date(2020, 1, 1)), _doc("a", "營業稅法", date(2020, 1, 1), n=1)],
+        # 標題不同（括號內不是年度或版次）
+        [_doc("a", "辦法（附件說明）", date(2020, 1, 1)), _doc("b", "辦法", date(2024, 1, 1))],
+    ],
+)
+def test_versions_are_kept_when_they_cannot_be_compared(hits: list[SearchHit]) -> None:
+    assert qa.superseded_file_ids(hits, TODAY) == set()
+
+
+def test_prompt_marks_not_yet_effective_documents() -> None:
+    prompt = qa._prompt(
+        "問題",
+        [_doc("a", "新法", date(2027, 1, 1)), _doc("b", "舊法", date(2024, 1, 1), n=1)],
+        today=TODAY,
+    )
+    assert "（生效日 2027-01-01，尚未生效）" in prompt
+    assert "（生效日 2024-01-01）" in prompt
+
+
+def test_superseded_passages_are_not_sent_to_the_model(review_hits: list[SearchHit]) -> None:
+    review_hits.extend(
+        [
+            _doc("old", "營業稅法", date(2020, 1, 1), distance=0.05),
+            _doc("new", "營業稅法", date(2024, 7, 1), distance=0.1),
+        ]
+    )
+    chat = FakeChat("規定 [1]")
+    answer = _ask("問題", chat)
+    assert answer.retrieved_titles == ("營業稅法",)
+    assert all("2020-01-01" not in str(call) for call in chat.calls)
+
+
+def test_vector_hits_are_limited_per_file_before_other_files() -> None:
+    same = [_doc("big", "大文件", None, n=i, distance=0.01 * i) for i in range(6)]
+    others = [_doc("small", "小文件", None, n=i, distance=0.2 + 0.01 * i) for i in range(2)]
+    merged = qa.merge_hits([], [*same, *others])
+    assert [(h.rag_file_id, h.chunk_index) for h in merged] == [
+        ("big", 0),
+        ("big", 1),
+        ("big", 2),
+        ("small", 0),
+        ("small", 1),
+        ("big", 3),
+        ("big", 4),
+        ("big", 5),
+    ]
+
+
+def test_keyword_hits_are_not_limited_per_file() -> None:
+    keyword = [_doc("law", "營業稅法", None, n=i, distance=0.0) for i in range(5)]
+    merged = qa.merge_hits(keyword, [_doc("other", "其他", None)])
+    assert [h.rag_file_id for h in merged] == ["law"] * 5 + ["other"]

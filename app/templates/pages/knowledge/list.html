@@ -6,6 +6,7 @@
   @context rows: list[dict]           [{id, title, badges, toggle_url, approval_status, approval_label,
                                       review_comment, qa_department_names, can_manage, to_index, file_count}]
                                       to_index：待建立索引的文件數（資訊部可在列表直接建立，一次一份）
+                                      no_answer_count：近 no_answer_days 天查無資料次數（只顯示給資訊部，提示要補哪些文件）
   @context current_department_name: str  目前選取部門（上傳部門）
   @context departments: list[dict]    [{id, name}] 供篩選下拉
   @context q: str                     名稱搜尋字串（只搜名稱，不搜文件全文）
@@ -98,6 +99,11 @@
           <tr>
             <th scope="col">知識庫名稱（編輯）</th>
             <th scope="col">檔案數</th>
+            {% if is_it_reviewer %}
+              <th scope="col" title="近 {{ no_answer_days }} 天問答回覆「查不到足夠資料」的次數，只記次數，不存問題">
+                近 {{ no_answer_days }} 天查無資料
+              </th>
+            {% endif %}
             <th scope="col">審核狀態</th>
             <th scope="col">開放部門（可切換）</th>
             <th scope="col">操作</th>
@@ -110,6 +116,15 @@
                 <a href="/knowledge/{{ kb.id }}/edit">{{ kb.title }}</a>
               </td>
               <td>{{ kb.file_count }}</td>
+              {% if is_it_reviewer %}
+                <td>
+                  {% if kb.no_answer_count %}
+                    <span class="badge badge--warning">{{ kb.no_answer_count }} 次</span>
+                  {% else %}
+                    <span class="muted">0</span>
+                  {% endif %}
+                </td>
+              {% endif %}
               <td>
                 <span class="badge {% if kb.approval_status == 'approved' %}badge--success{% elif kb.approval_status == 'rejected' %}badge--danger{% else %}badge--warning{% endif %}">{{ kb.approval_label }}</span>
                 {% if kb.review_comment %}<p class="muted small-text">退回原因：{{ kb.review_comment }}</p>{% endif %}
@@ -181,7 +196,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="5" class="empty-state">沒有符合條件的知識庫</td>
+              <td colspan="{{ 6 if is_it_reviewer else 5 }}" class="empty-state">沒有符合條件的知識庫</td>
             </tr>
           {% endfor %}
         </tbody>

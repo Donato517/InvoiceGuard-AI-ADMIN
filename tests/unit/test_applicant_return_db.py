@@ -1,6 +1,7 @@
 """測試目標：申請人端對資料庫案件的「退回補正（顯示）」與「終止」——讀寫資料庫，而不是記憶體示範資料。
 
-退回補正的線上修改與重送尚未提供：資料庫案件只顯示退回項目與終止，不顯示舊的示範修改表單。
+資料庫案件的步驟 3 只顯示退回項目並連到補正頁（/invoices/{id}/correct，由 API 補正與終止），不顯示舊的示範修改表單。
+舊的 POST /procurement/terminate 對資料庫案件改呼叫 API /void（不再直寫資料庫），其測試在 test_invoice_correction.py。
 全部離線，替身 finance_db 服務；不連資料庫。
 """
 
@@ -127,20 +128,16 @@ def client(admin_client: TestClient, fake: FakeDb) -> TestClient:
     return _as(APPLICANT, admin_client)
 
 
-def _terminate(client: TestClient, reason: str = "供應商將重開發票") -> Any:
-    return client.post(
-        f"/invoices/{INVOICE_ID}/procurement/terminate", headers=ORIGIN, data={"reason": reason}
-    )
-
-
 def test_step3_shows_the_returned_items_from_the_database_without_the_demo_form(
     client: TestClient,
 ) -> None:
     html = client.get(f"/invoices/{INVOICE_ID}/flow?step=3").text
 
     assert "請附折讓單" in html and "補上採購單" in html  # 欄位退回原因與歷程中的附件項目
-    assert "目前尚未提供線上修改被退回的案件" in html
-    assert f"/invoices/{INVOICE_ID}/procurement/terminate" in html
+    assert f'href="/invoices/{INVOICE_ID}/correct"' in html  # 補正與終止統一在補正頁（呼叫 API）
+    assert (
+        f"/invoices/{INVOICE_ID}/procurement/terminate" not in html
+    )  # 步驟 3 不再提供直寫資料庫的終止表單
     assert "procurement/resubmit" not in html  # 重送尚未提供
     assert "儲存補正內容" not in html and "flow-correct-form" not in html  # 舊的示範修改已停用
 
@@ -154,66 +151,6 @@ def test_step3_of_a_database_case_that_is_not_returned_has_no_demo_form(
 
     assert "此案件已由 API 建立，這裡不能修改欄位" in html
     assert "flow-correct-form" not in html and "procurement/terminate" not in html
-
-
-def test_terminate_writes_voided_to_the_database_without_touching_the_reviewer(
-    client: TestClient, fake: FakeDb
-) -> None:
-    response = _terminate(client)
-
-    assert response.status_code == 303 and response.headers["location"] == "/invoices"
-    change, record_reviewer = fake.commits[0]
-    assert (change.old_status, change.new_status) == (STATUS_RETURNED, STATUS_VOIDED)
-    assert (change.expected_status, change.changed_by, change.reason) == (
-        STATUS_RETURNED,
-        APPLICANT,
-        "供應商將重開發票",
-    )
-    assert record_reviewer is False  # 終止不是財務審核，不改 reviewed_by／reviewed_at
-    assert inv._FINANCE_HISTORY == {} and inv._FINANCE_CASES == {}  # 沒有寫進記憶體
-
-
-def test_terminate_requires_a_reason_and_writes_nothing(client: TestClient, fake: FakeDb) -> None:
-    response = _terminate(client, reason="  ")
-
-    assert response.status_code == 400 and "終止時須填寫原因" in response.text
-    assert fake.commits == []
-
-
-def test_only_a_returned_case_can_be_terminated(client: TestClient, fake: FakeDb) -> None:
-    fake.case = _case(STATUS_SUBMITTED)
-
-    response = _terminate(client)
-
-    assert response.status_code == 400 and "只有待補正的案件可以終止" in response.text
-    assert fake.commits == []
-
-
-def test_terminate_is_limited_to_the_current_department(client: TestClient, fake: FakeDb) -> None:
-    fake.department_id = "another-department"
-
-    response = _terminate(client)
-
-    assert response.status_code == 400 and "這張請款單不屬於目前部門" in response.text
-    assert fake.commits == []
-
-
-def test_terminate_reports_a_lost_race_and_database_outage(
-    client: TestClient, fake: FakeDb
-) -> None:
-    fake.error = svc.ReviewConflictError()
-    assert "剛被其他人改變" in _terminate(client).text
-
-    fake.error = svc.ReviewUnavailableError()
-    assert "資料庫目前無法使用" in _terminate(client).text
-    assert fake.commits == []
-
-
-def test_terminate_needs_a_real_account(admin_client: TestClient, fake: FakeDb) -> None:
-    response = _terminate(_as("applicant-1", admin_client))
-
-    assert response.status_code in (400, 403)
-    assert fake.commits == []
 
 
 def test_database_writes_require_same_origin(client: TestClient, fake: FakeDb) -> None:

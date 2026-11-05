@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import ValidationError
 
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
@@ -55,6 +56,7 @@ from app.schemas.intake import (
     IntakeNotConfiguredError,
     IntakeTransportError,
 )
+from app.schemas.invoice_correction import CorrectionVoid
 from app.schemas.procurement_case import (
     ATTACHMENT_FIELD,
     RESPONSE_ACTIONS,
@@ -65,6 +67,7 @@ from app.schemas.procurement_case import (
     TerminatePlan,
 )
 from app.services import finance_review_db_service as finance_db
+from app.services import invoice_correction_service as correction_service
 from app.services import invoice_intake_mapping as intake_mapping
 from app.services import invoice_intake_service as intake_service
 from app.services import invoice_review_service
@@ -851,6 +854,13 @@ def _render_invoice_list_view(
         status_code = _derive_invoice_status(i)
         i["display_status_code"] = status_code
         i["display_status_label"] = INVOICE_STATUS_MAP.get(status_code, "待審核")
+        # 「補正」按鈕：只給資料庫裡真正被退回申請人、且是本人提交的案件；示範資料沒有 db_status。
+        # 這只決定按鈕，真正的補正資格（原提交者、部門、輪次）進補正頁時仍由 API 判斷。
+        i["can_correct"] = (
+            i.get("db_status") == "returned_to_applicant"
+            and str(i.get("uploaded_by", "")) == current_user_id
+            and finance_db.is_uuid(str(i["id"]))
+        )
     invoices = list(base_invoices)
 
     if status:
@@ -2638,70 +2648,56 @@ def _apply_terminate(
 
 
 def _terminate_db_invoice(
-    request: Request, invoice: dict[str, Any], scope: CaseScope, reason: str
+    request: Request, invoice: dict[str, Any], reason: str, expected_round: int | None
 ) -> Response:
-    """資料庫發票：申請人終止被退回的請款單，寫入 invoices.status=voided 與審核歷程（同一交易）。
+    """資料庫發票：申請人終止被退回的請款單——一律呼叫 API /void，ADMIN 不直接寫資料庫。
 
-    規則（待補正才可終止、部門範圍、原因必填）沿用 prepare_terminate；寫入條件為狀態仍是待補正。
-    終止不是財務審核，不改 reviewed_by／reviewed_at。
+    以使用者自己的 API Session Token 呼叫，原提交者、部門、案件狀態與輪次（expected_round）全由 API 判斷；
+    缺少 expected_round 時拒絕，不替呼叫端猜一個輪次。圖片退件與一般退回都走這條（補正頁的終止是同一個 API）。
     """
     require_e_origin(request)
     invoice_id = str(invoice["id"])
-    loaded = _load_db_review(invoice_id)
-    if not finance_db.is_uuid(scope.user_id):
-        return _procurement_error_page(request, invoice, [_NEED_REAL_LOGIN_MESSAGE], loaded.case)
-    row = {
-        "invoice_id": invoice_id,
-        "status": loaded.case.status,
-        "department_id": loaded.department_id,
-    }
+    if expected_round is None:
+        return _terminate_failed(request, invoice, "缺少案件輪次，請從補正頁操作終止。", 400)
+    client = get_intake_client(request)  # 沒有 Token 時 401，要求重新登入
     try:
-        plan = prepare_terminate(row, scope, reason)
-    except ProcurementCaseError as error:
-        return _procurement_error_page(
-            request, invoice, [b.message for b in error.blockers], loaded.case, str(error)
-        )
-    change = StatusChange(
-        invoice_id=invoice_id,
-        old_status=plan.expected_status,
-        new_status=plan.target_status,
-        reason=plan.reason,
-        changed_by=scope.user_id,
-        changed_at=datetime.now(UTC),
-    )
-    try:
-        finance_db.commit_change(change, case=loaded.case, tax_type=None, record_reviewer=False)
-    except finance_db.ReviewConflictError:
-        return _procurement_error_page(request, invoice, [_CONFLICT_MESSAGE], loaded.case)
-    except finance_db.ReviewUnavailableError:
-        return _procurement_error_page(request, invoice, [_DB_UNAVAILABLE_MESSAGE], loaded.case)
+        payload = CorrectionVoid(expected_round=expected_round, reason=reason.strip() or None)
+        correction_service.void(client, invoice_id, payload)
+    except ValidationError:
+        return _terminate_failed(request, invoice, "終止原因或輪次格式不正確。", 400)
+    except IntakeApiError as error:
+        if error.status == 404:
+            raise HTTPException(status_code=404, detail="找不到指定發票") from None
+        status = 502 if error.status >= 500 else error.status
+        return _terminate_failed(request, invoice, correction_service.error_message(error), status)
+    except IntakeError as error:
+        return _terminate_failed(request, invoice, error.public_message, 502)
     return RedirectResponse("/invoices", status_code=303)
 
 
-def _procurement_error_page(
-    request: Request,
-    invoice: dict[str, Any],
-    messages: list[str],
-    case: ReviewCase,
-    header_error: str | None = None,
+def _terminate_failed(
+    request: Request, invoice: dict[str, Any], message: str, status_code: int
 ) -> Response:
-    """申請人端操作失敗：回步驟 3 並列出原因；不在待補正時頁面沒有退回補正區，改用頁首訊息。"""
-    response = _render_flow_page(
+    """終止失敗：顯示錯誤頁與原因。不重新讀取審核資料，所以資料庫暫時無法使用時也能顯示。"""
+    return templates.TemplateResponse(
         request,
-        invoice,
-        3,
-        error=None if case.status == STATUS_RETURNED else (header_error or "；".join(messages)),
-        procurement_errors=messages,
+        "pages/errors/error.html",
+        {"status_code": status_code, "message": message},
+        status_code=status_code,
     )
-    response.status_code = 400
-    return response
 
 
 @router.post("/{invoice_id}/procurement/terminate", response_model=None)
 def procurement_terminate(
-    request: Request, invoice_id: str, reason: Annotated[str, Form()] = ""
+    request: Request,
+    invoice_id: str,
+    reason: Annotated[str, Form()] = "",
+    expected_round: Annotated[int | None, Form()] = None,
 ) -> Response:
-    """步驟 3：申請人終止被退回的請款單（原因必填），終止後不能再重送。"""
+    """步驟 3：申請人終止被退回的請款單，終止後不能再重送。
+
+    示範發票沿用記憶體流程（原因必填）；資料庫發票改呼叫 API /void（需帶 expected_round），不直接寫資料庫。
+    """
     _validate_invoice_id(invoice_id)
     invoice = _find_invoice(invoice_id)
     if not invoice:
@@ -2709,7 +2705,7 @@ def procurement_terminate(
     _check_invoice_access(request, invoice, require_owner=True)
     scope = _case_scope(request)
     if _is_db_invoice(invoice):
-        return _terminate_db_invoice(request, invoice, scope, reason)
+        return _terminate_db_invoice(request, invoice, reason, expected_round)
     case = _finance_case(invoice)
     # 示範發票沒有部門欄位，轉 v1.5 欄位時部門與目前範圍相同
     row = {

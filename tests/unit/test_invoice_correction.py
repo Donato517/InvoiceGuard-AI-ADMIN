@@ -629,6 +629,69 @@ def test_void_timeout_is_ambiguous_and_does_not_claim_success(
     assert "status" not in response.json()
 
 
+# ---------------------------------------------------------------- 列表按鈕
+
+
+def _db_row(status: str, owner: str = APPLICANT, invoice_id: str = INVOICE_ID) -> dict[str, Any]:
+    row = dict(inv.DEMO_TEST_INVOICES[2])
+    row.update(
+        id=invoice_id,
+        uploaded_by=owner,
+        db_status=status,
+        review_status="returned" if status.startswith("returned") else "pending",
+        status="flagged",
+        is_completed=False,
+        stage=3,
+    )
+    return row
+
+
+@pytest.fixture
+def listing(monkeypatch: pytest.MonkeyPatch) -> Callable[[list[dict[str, Any]]], None]:
+    def install(rows: list[dict[str, Any]]) -> None:
+        monkeypatch.setattr(
+            inv.invoice_review_service, "fetch_invoices", lambda **kwargs: [dict(r) for r in rows]
+        )
+
+    return install
+
+
+def test_list_shows_correct_only_for_my_returned_database_case(
+    admin_client: TestClient, listing: Callable[[list[dict[str, Any]]], None]
+) -> None:
+    listing([_db_row("returned_to_applicant")])
+
+    html = _as(APPLICANT, admin_client).get("/invoices").text
+
+    assert f'href="/invoices/{INVOICE_ID}/correct"' in html
+    assert ">補正</a>" in html and "審核流程 →" not in html
+
+
+@pytest.mark.parametrize(
+    "status", ["returned_to_accounting", "pending_accounting_review", "voided"]
+)
+def test_list_does_not_offer_correct_for_other_states(
+    admin_client: TestClient, listing: Callable[[list[dict[str, Any]]], None], status: str
+) -> None:
+    listing([_db_row(status)])
+
+    html = _as(APPLICANT, admin_client).get("/invoices").text
+
+    assert "data-correct-action" not in html
+
+
+def test_list_does_not_offer_correct_to_someone_else_or_for_demo_rows(
+    admin_client: TestClient, listing: Callable[[list[dict[str, Any]]], None]
+) -> None:
+    demo = dict(inv.DEMO_TEST_INVOICES[0])
+    demo.update(review_status="returned", status="flagged", is_completed=False, stage=3)
+    listing([_db_row("returned_to_applicant", owner=STRANGER), demo])
+
+    html = _as(APPLICANT, admin_client).get("/invoices").text
+
+    assert "data-correct-action" not in html  # 非本人、沒有 db_status 的示範資料都不顯示
+
+
 # ---------------------------------------------------------------- 補正頁補強：圖片退件、部門／身分由 API 決定
 
 
@@ -673,3 +736,133 @@ def test_success_response_shows_the_state_the_api_returned(
     assert data["status"] == "pending_accounting_review"  # 由 API 決定，ADMIN 沒有寫死
     assert data["submission_round"] == 4 and data["tax_period"] == "11510"
     assert data["warnings"] == ["日期提醒"] and data["rereview_count"] == 1
+
+
+# ---------------------------------------------------------------- 舊的 POST /procurement/terminate 不得繞過 API
+
+
+def _legacy_terminate(client: TestClient, **data: Any) -> Any:
+    return client.post(f"/invoices/{INVOICE_ID}/procurement/terminate", headers=ORIGIN, data=data)
+
+
+@pytest.fixture
+def no_db_write(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """舊路徑任何資料庫寫入或審核資料讀取都視為失敗。"""
+    touched: list[str] = []
+
+    def forbid(name: str) -> Callable[..., None]:
+        def inner(*args: Any, **kwargs: Any) -> None:
+            touched.append(name)
+            raise AssertionError(f"舊終止路由不得直接使用 {name}")
+
+        return inner
+
+    monkeypatch.setattr(inv.finance_db, "commit_change", forbid("commit_change"))
+    return touched
+
+
+def test_legacy_terminate_of_a_database_case_goes_through_the_api_void(
+    browser: TestClient, api: FakeApi, no_db_write: list[str]
+) -> None:
+    response = _legacy_terminate(browser, reason="供應商將重開發票", expected_round="2")
+
+    assert response.status_code == 303 and response.headers["location"] == "/invoices"
+    assert api.paths() == [f"POST /api/v1/invoices/{INVOICE_ID}/void"]
+    assert api.bodies("/void") == [{"expected_round": 2, "reason": "供應商將重開發票"}]
+    assert api.requests[0].headers["authorization"] == f"Bearer {TOKEN}"  # 原提交者自己的憑證
+    assert no_db_write == []
+
+
+def test_legacy_terminate_without_a_round_is_refused_and_calls_nothing(
+    browser: TestClient, api: FakeApi, no_db_write: list[str]
+) -> None:
+    response = _legacy_terminate(browser, reason="x")
+
+    assert response.status_code == 400 and "缺少案件輪次" in response.text
+    assert api.requests == [] and no_db_write == []
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "expected"),
+    [
+        (409, "RESUBMIT_ROUND_STALE", "較新的輪次"),
+        (409, "INVOICE_NOT_RETURNED", "已不是待補正狀態"),
+        (503, "UNAVAILABLE", "暫時發生錯誤"),
+    ],
+)
+def test_legacy_terminate_shows_the_apis_rules_and_never_falls_back_to_the_database(
+    browser: TestClient,
+    api: FakeApi,
+    no_db_write: list[str],
+    status: int,
+    code: str,
+    expected: str,
+) -> None:
+    api.responses["void"] = httpx.Response(status, json=error_json(code))
+
+    response = _legacy_terminate(browser, reason="x", expected_round="2")
+
+    assert expected in response.text
+    assert response.status_code == (502 if status >= 500 else status)
+    assert no_db_write == []
+
+
+def test_legacy_terminate_by_someone_who_is_not_the_submitter_is_the_apis_404(
+    browser: TestClient, api: FakeApi, no_db_write: list[str]
+) -> None:
+    api.responses["void"] = httpx.Response(404, json=error_json("NOT_FOUND"))
+
+    response = _legacy_terminate(browser, reason="x", expected_round="2")
+
+    assert response.status_code == 404 and no_db_write == []
+
+
+def test_legacy_terminate_without_an_api_token_or_origin_does_nothing(
+    browser: TestClient, env: Env, api: FakeApi, no_db_write: list[str]
+) -> None:
+    no_origin = browser.post(
+        f"/invoices/{INVOICE_ID}/procurement/terminate", data={"reason": "x", "expected_round": "2"}
+    )
+    env.token_missing = True
+    no_token = _legacy_terminate(browser, reason="x", expected_round="2")
+
+    assert no_origin.status_code == 403 and no_token.status_code == 401
+    assert api.requests == [] and no_db_write == []
+
+
+def test_legacy_terminate_timeout_is_not_reported_as_success(
+    browser: TestClient, api: FakeApi, no_db_write: list[str]
+) -> None:
+    api.raises["void"] = httpx.ReadTimeout("t")
+
+    response = _legacy_terminate(browser, reason="x", expected_round="2")
+
+    assert response.status_code == 502 and response.headers.get("location") is None
+    assert no_db_write == []
+
+
+# ---------------------------------------------------------------- 「補正」按鈕的條件
+
+
+def test_finance_department_user_who_submitted_the_case_still_gets_the_correct_button(
+    admin_client: TestClient, listing: Callable[[list[dict[str, Any]]], None]
+) -> None:
+    """admin_client 的測試身分在財務工作區：本人被退回的案件仍顯示「補正」，資格由 API 在進頁面時判斷。"""
+    listing([_db_row("returned_to_applicant")])
+
+    html = _as(APPLICANT, admin_client).get("/invoices").text
+
+    assert "data-correct-action" in html and "data-self-upload-action" not in html
+
+
+def test_the_label_alone_does_not_grant_the_button(
+    admin_client: TestClient, listing: Callable[[list[dict[str, Any]]], None]
+) -> None:
+    """只有「待補正」顯示文字、沒有資料庫狀態 returned_to_applicant 的列（例如示範資料）不給按鈕。"""
+    row = _db_row("returned_to_applicant")
+    row.pop("db_status")
+    listing([row])
+
+    html = _as(APPLICANT, admin_client).get("/invoices").text
+
+    assert "待補正" in html and "data-correct-action" not in html

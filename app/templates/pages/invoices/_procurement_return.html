@@ -5,7 +5,7 @@
   @route POST /invoices/{invoice_id}/procurement/resubmit、POST /invoices/{invoice_id}/procurement/terminate、POST /invoices/{invoice_id}/flow/upload（重新上傳附件）
   @context invoice: dict              發票資料
   @context procurement_return: dict   {items: [{key, label, reason, is_changed}], actions, errors, submission_round, returned_at, db_backed}
-               db_backed 為 true（資料庫案件）時只顯示退回項目與終止；線上修改補正與重送尚未提供。
+               db_backed 為 true（資料庫案件）時只顯示退回項目並連到補正頁（/invoices/{id}/correct，由 API 補正與終止）。
 #}
 {% set pr = procurement_return %}
 <section class="fr-section" aria-label="退回補正">
@@ -43,9 +43,9 @@
       {% endfor %}
     </ul>
     <p class="alert alert--info">
-      目前尚未提供線上修改被退回的案件與重新送出。請與財務人員聯絡，或在下方終止這張請款單（終止後不能再重送）。
+      請到補正頁依財務指定的欄位修改並重新送審；圖片問題則在補正頁終止後重新上傳。
     </p>
-    {% include "pages/invoices/_procurement_terminate.html" %}
+    <a href="/invoices/{{ invoice.id }}/correct" class="btn btn--primary" data-correct-link>前往補正</a>
   {% else %}
     <form method="post"
           action="/invoices/{{ invoice.id }}/procurement/resubmit"

@@ -241,3 +241,19 @@ def test_terminate_rejected_when_not_returned(admin_client: TestClient) -> None:
     assert response.status_code == 400
     assert "只有待補正的案件可以終止" in response.text
     assert invoices_router._find_invoice(4)["review_status"] == "pending"
+
+
+def test_demo_terminate_never_calls_the_invoice_api(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """示範發票的終止仍在記憶體完成，不呼叫 API /void（只有資料庫案件才走 API）。"""
+
+    def forbidden(request: Request) -> None:
+        raise AssertionError("示範發票不應建立 API 用戶端")
+
+    monkeypatch.setattr(invoices_router, "get_intake_client", forbidden)
+
+    response = client.post("/invoices/3/procurement/terminate", data={"reason": "供應商將重開發票"})
+
+    assert response.status_code == 303
+    assert invoices_router._find_invoice(3)["review_status"] == "voided"

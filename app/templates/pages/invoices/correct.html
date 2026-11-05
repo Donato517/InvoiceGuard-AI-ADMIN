@@ -22,6 +22,27 @@
         href="{{ static_url('css/pages/invoice-correct.css') }}">
 {% endblock head %}
 {% block content %}
+  {#- 第 N 輪提示與財務退回原因：可補正時放在右欄最上方（分欄上方的版面高度固定，凍結窗格的高度才算得準）；
+      終止／不可補正時沒有分欄，仍放在卡片最上方。內容與 id 不變。 -#}
+  {% macro return_summary(info, labels) %}
+    <p class="muted small-text">第 {{ info.submission_round }} 輪提交被退回。只有財務指定的欄位可以修改，其他欄位唯讀。</p>
+    <section aria-label="財務退回原因">
+      <h2>財務退回原因</h2>
+      {% if info.return_items %}
+        <ul id="return-reasons">
+          {% for item in info.return_items %}
+            <li data-return-item-id="{{ item.return_item_id }}">
+              {% if item.target %}<strong>{{ labels.get(item.target.field_name, item.target.field_name) }}</strong>：{% endif %}{{ item.reason }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="alert alert--warning" data-no-return-items>
+          系統沒有留下可供補正的退件原因（可能是較早期的退回）。請聯絡財務人員確認。
+        </p>
+      {% endif %}
+    </section>
+  {% endmacro %}
   <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票管理</a>
   <h1>退回補正</h1>
   {% if error %}<p class="alert alert--danger" role="alert" data-correct-error>{{ error }}</p>{% endif %}
@@ -31,23 +52,9 @@
              id="correct-page"
              data-invoice-id="{{ invoice_id }}"
              data-expected-round="{{ info.submission_round }}">
-      <p class="muted small-text">第 {{ info.submission_round }} 輪提交被退回。只有財務指定的欄位可以修改，其他欄位唯讀。</p>
-      <section aria-label="財務退回原因">
-        <h2>財務退回原因</h2>
-        {% if info.return_items %}
-          <ul id="return-reasons">
-            {% for item in info.return_items %}
-              <li data-return-item-id="{{ item.return_item_id }}">
-                {% if item.target %}<strong>{{ labels.get(item.target.field_name, item.target.field_name) }}</strong>：{% endif %}{{ item.reason }}
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="alert alert--warning" data-no-return-items>
-            系統沒有留下可供補正的退件原因（可能是較早期的退回）。請聯絡財務人員確認。
-          </p>
-        {% endif %}
-      </section>
+      {% if page.mode == "void" or page.mode == "blocked" %}
+        {{ return_summary(info, labels) }}
+      {% endif %}
       {% if page.mode == "void" %}
         <p class="alert alert--warning" data-requires-void>
           這張發票有圖片問題，不能在原案件補正或申覆，也不能直接換圖重送。請終止這張案件後重新上傳，系統會建立新的案件。
@@ -68,9 +75,10 @@
           <p data-other-limit>這類退回（非欄位、非圖片問題）目前沒有核定的自助處理方式，不能在原案件補正或申覆。請聯絡財務人員確認處理方式。</p>
         {% endif %}
       {% else %}
-        <div class="invoice-correction-split">
+        <div class="invoice-correction-split correction-split--frozen correction-split--compact">
           {% include "pages/invoices/_invoice_original_pane.html" %}
           <section class="correction-field-column" aria-label="補正欄位">
+            {{ return_summary(info, labels) }}
             <div class="correction-panel-title">發票欄位（灰色為唯讀，只能修改財務指定的欄位）</div>
             <form id="correct-form" novalidate>
               {% for name in header_fields %}

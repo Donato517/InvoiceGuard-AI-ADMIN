@@ -28,17 +28,16 @@ _ORIGIN = {"Origin": "http://testserver"}
 FROZEN = "invoice-correction-split correction-split--frozen"
 
 
-def _frozen_media_blocks(css: str) -> list[tuple[int, int, str]]:
-    """回傳所有凍結 media query 區塊（起、訖位置與條件），以大括號配對。"""
-    blocks = []
-    for match in re.finditer(r"@media \(min-width: 1101px\) and \(min-height: [\d.]+rem\)", css):
-        depth = 0
-        for index in range(css.index("{", match.start()), len(css)):
-            depth += {"{": 1, "}": -1}.get(css[index], 0)
-            if depth == 0:
-                blocks.append((match.start(), index, match.group(0)))
-                break
-    return blocks
+def _frozen_media_block(css: str) -> tuple[int, int]:
+    """回傳凍結規則所在的 media query 區塊（寬 ≥ 1101px）的起訖位置，以大括號配對。"""
+    marker = css.index(".correction-split--frozen {")
+    start = css.rindex("@media (min-width: 1101px)", 0, marker)
+    depth = 0
+    for index in range(css.index("{", start), len(css)):
+        depth += {"{": 1, "}": -1}.get(css[index], 0)
+        if depth == 0:
+            return start, index
+    raise AssertionError("凍結 media query 沒有結尾")
 
 
 def test_api_step3_uses_the_frozen_class_and_keeps_form_and_discard(
@@ -106,27 +105,23 @@ def test_returned_case_step3_is_not_frozen(returned_client: TestClient) -> None:
     assert 'id="flow-correct-form"' in html
 
 
-def test_frozen_css_only_applies_on_wide_and_tall_viewports() -> None:
+def test_frozen_css_applies_on_wide_viewports_with_a_step5_style_height_floor() -> None:
     css = CSS.read_text(encoding="utf-8")
-    blocks = _frozen_media_blocks(css)
+    start, end = _frozen_media_block(css)
 
-    assert len(blocks) == 2  # 一般（47rem）與有提示（52rem）各一組門檻
     uses = [match.start() for match in re.finditer(r"correction-split--frozen", css)]
     assert uses, "找不到凍結規則"
-    assert all(
-        any(start < p < end for start, end, _ in blocks) for p in uses
-    )  # 手機版／矮視窗不受影響
-    heights = sorted(
-        float(re.search(r"min-height: ([\d.]+)rem", cond).group(1)) for *_, cond in blocks
-    )
-    assert heights == [47.0, 52.0]
-    for start, end, _ in blocks:
-        block = css[start:end]
-        assert "overflow-y: auto" in block
-        assert "min-height: 0" in block
-        assert "overflow: hidden" not in block  # 不用 hidden 掩蓋高度問題
-    # 提示版只在較高的視窗凍結；一般版排除提示版
-    assert ".correction-split--frozen:not(.correction-split--notice)" in css
+    assert all(start < position < end for position in uses)  # 窄螢幕（≤1100px）完全不受影響
+    block = css[start:end]
+    # 比照步驟 5：只看寬度，沒有高度門檻；矮視窗停在 32rem 下限（外層頁面多捲一段）
+    assert "(min-height:" not in css[start : css.index("{", start)]
+    assert "max(32rem, calc(100vh - var(--frozen-offset)))" in block
+    assert "max(32rem, calc(100dvh - var(--frozen-offset)))" in block  # dvh 有 vh 後備
+    assert "overflow-y: auto" in block
+    assert "min-height: 0" in block
+    assert "overflow: hidden" not in block  # 不用 hidden 掩蓋高度問題
+    assert "--frozen-offset: 31rem" in block  # 分欄上方有提示時多扣的高度
+    assert "--frozen-offset: 15rem" in block  # 退回補正頁（--compact）版面較少
     # 單欄規則仍在 1100px 以下，與凍結的 1101px 互補
     assert "@media (max-width: 1100px)" in css
 

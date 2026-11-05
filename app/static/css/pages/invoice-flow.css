@@ -785,79 +785,56 @@
   }
 }
 
-/* 步驟 3 人工核對：凍結窗格（專用 class，不共用 .fr-split，避免影響步驟 5）。
-   只在「寬 ≥ 1101px（與上方 max-width:1100px 單欄互補）且高度足夠」時啟用：整區高度 = 視窗高度 − 分欄以外的版面高度，
-   左側原檔不動，右側表單自行捲動，外層頁面不再另外捲動。視窗太矮時不套用，維持一般整頁捲動，所有欄位仍可到達。
-   --frozen-offset：分欄上下方版面（頁首、返回鈕、步驟列、卡片標題與內距、上一步列、內容區內距）合計高度，已用瀏覽器實測；
+/* 步驟 3 人工核對／退回補正頁：凍結窗格（專用 class，不共用 .fr-split，避免影響步驟 5）。
+   捲動方式比照步驟 5：寬 ≥ 1101px 一律凍結（沒有高度門檻），左側原檔不動，右側表單自行捲動；
+   視窗太矮時分欄高度停在下限 32rem（與步驟 5 的 min-height 相同），此時外層頁面會多一段捲動，才能看到完整分欄。
+   --frozen-offset：分欄上下方版面（頁首、返回鈕、標題／步驟列、卡片內距、上一步列、內容區內距）合計高度，已用正式頁面實測；
    --frozen-pane-chrome：左欄內原圖／PDF 以外（標題、檔名列、內距）的高度。
-   分欄上方多一則提示或錯誤訊息（--notice）時，版面多出約 5.5rem，凍結門檻同步提高（47rem → 52rem）：
-   高度不足時不凍結，而不是把分欄壓得太小或讓外層頁面多捲一段。 */
-@media (min-width: 1101px) and (min-height: 47rem) {
-  .correction-split--frozen:not(.correction-split--notice) {
+   分欄上方多一則提示或錯誤訊息（--notice）時，多扣約 5.5rem；退回補正頁（--compact）版面較少，只扣約 15rem。 */
+@media (min-width: 1101px) {
+  .correction-split--frozen {
     --frozen-offset: 25.5rem;
     --frozen-pane-chrome: 10.5rem;
-    height: calc(100vh - var(--frozen-offset));
-    height: calc(100dvh - var(--frozen-offset));
+    --frozen-height: max(32rem, calc(100vh - var(--frozen-offset)));
+    height: var(--frozen-height);
     grid-template-rows: minmax(0, 1fr);
     align-items: stretch;
   }
 
-  .correction-split--frozen:not(.correction-split--notice) > .correction-original-column {
-    position: static;
-    min-height: 0;
-    overflow-y: auto;
+  @supports (height: 100dvh) {
+    .correction-split--frozen {
+      --frozen-height: max(32rem, calc(100dvh - var(--frozen-offset)));
+    }
   }
 
-  .correction-split--frozen:not(.correction-split--notice) > .correction-field-column {
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  .correction-split--frozen:not(.correction-split--notice) .correction-original-image {
-    max-width: 100%;
-    max-height: calc(100vh - var(--frozen-offset) - var(--frozen-pane-chrome));
-    max-height: calc(100dvh - var(--frozen-offset) - var(--frozen-pane-chrome));
-  }
-
-  .correction-split--frozen:not(.correction-split--notice) .correction-original-pdf {
-    height: calc(100vh - var(--frozen-offset) - var(--frozen-pane-chrome));
-    height: calc(100dvh - var(--frozen-offset) - var(--frozen-pane-chrome));
-    min-height: 12rem;
-  }
-}
-
-@media (min-width: 1101px) and (min-height: 52rem) {
   .correction-split--frozen.correction-split--notice {
     --frozen-offset: 31rem;
-    --frozen-pane-chrome: 10.5rem;
-    height: calc(100vh - var(--frozen-offset));
-    height: calc(100dvh - var(--frozen-offset));
-    grid-template-rows: minmax(0, 1fr);
-    align-items: stretch;
   }
 
-  .correction-split--frozen.correction-split--notice > .correction-original-column {
+  /* 退回補正頁：沒有步驟列與卡片標題，分欄上下方版面較少（實測約 14rem） */
+  .correction-split--frozen.correction-split--compact {
+    --frozen-offset: 15rem;
+  }
+
+  .correction-split--frozen > .correction-original-column {
     position: static;
     min-height: 0;
     overflow-y: auto;
   }
 
-  .correction-split--frozen.correction-split--notice > .correction-field-column {
+  .correction-split--frozen > .correction-field-column {
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
 
-  .correction-split--frozen.correction-split--notice .correction-original-image {
+  .correction-split--frozen .correction-original-image {
     max-width: 100%;
-    max-height: calc(100vh - var(--frozen-offset) - var(--frozen-pane-chrome));
-    max-height: calc(100dvh - var(--frozen-offset) - var(--frozen-pane-chrome));
+    max-height: calc(var(--frozen-height) - var(--frozen-pane-chrome));
   }
 
-  .correction-split--frozen.correction-split--notice .correction-original-pdf {
-    height: calc(100vh - var(--frozen-offset) - var(--frozen-pane-chrome));
-    height: calc(100dvh - var(--frozen-offset) - var(--frozen-pane-chrome));
+  .correction-split--frozen .correction-original-pdf {
+    height: calc(var(--frozen-height) - var(--frozen-pane-chrome));
     min-height: 12rem;
   }
 }

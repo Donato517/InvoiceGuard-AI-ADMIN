@@ -211,6 +211,50 @@ def main() -> None:
         (output / "step3-legacy-return.html").write_text(
             rewrite(page.text, "png"), encoding="utf-8"
         )
+        # 退回補正頁（/invoices/{id}/correct）：可補正（含多筆退回原因）與不可補正（終止）兩種
+        corr = load("frozen_correction", root / "tests/unit/test_invoice_correction.py")
+        corr_api = corr.api.__wrapped__()
+        corr_env = corr.env.__wrapped__(corr_api, patch)
+        corr_env.invoice["file_bytes"], corr_env.invoice["file_media_type"] = png, "image/png"
+        browser = corr._as(corr.APPLICANT, client)
+        many = [
+            {
+                "return_item_id": f"0000000{n}-1111-4222-8333-444455556666",
+                "item_kind": "field",
+                "target": corr._ref("header", "total_amount"),
+                "reason": f"退回原因 {n}：總計與明細不符，請重新核對並補正" * 2,
+                "allowed_fields": [],
+                "status": "open",
+            }
+            for n in range(1, 6)
+        ]
+        for name, body in (
+            ("correct-editable", corr.return_items_json()),
+            ("correct-many-reasons", corr.return_items_json(return_items=many)),
+            (
+                "correct-void",
+                corr.return_items_json(
+                    can_resubmit=False,
+                    requires_void=True,
+                    editable_fields=[],
+                    return_items=[
+                        {
+                            "return_item_id": corr.OTHER_ID,
+                            "item_kind": "image",
+                            "target": None,
+                            "reason": "影像模糊",
+                            "allowed_fields": [],
+                            "status": "open",
+                        }
+                    ],
+                ),
+            ),
+        ):
+            corr_api.responses["return-items"] = httpx.Response(200, json=body)
+            page = browser.get(f"/invoices/{corr.INVOICE_ID}/correct")
+            if page.status_code != 200 or "return-reasons" not in page.text:
+                raise RuntimeError(f"{name}: unexpected page {page.status_code}")
+            (output / f"{name}.html").write_text(rewrite(page.text, "png"), encoding="utf-8")
         gen.close()
     finally:
         patch.undo()

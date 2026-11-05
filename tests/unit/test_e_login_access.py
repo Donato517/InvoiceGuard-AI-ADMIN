@@ -1,5 +1,6 @@
 """ADMIN 登入 UI 及四入口封閉驗收；合成 B／G 接點，不覆寫配置閘門。"""
 
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -190,6 +191,32 @@ def stores(monkeypatch: pytest.MonkeyPatch) -> list[MagicMock]:
     return spies
 
 
+# 登入頁不得殘留的示範身分與前端儲存字樣（舊示範密碼 1234／5678 等）
+FORBIDDEN_DEMO_TEXT = (
+    "sessionStorage",
+    "localStorage",
+    "1234",
+    "5678",
+    "ig_user",
+    "USERS",
+    "工程師：admin",
+)
+# 靜態檔網址的快取版本參數（?v=dev-<檔案 mtime 奈秒>）是隨機長數字，可能碰巧含 1234／5678，不是示範密碼
+_STATIC_CACHE_VERSION = re.compile(r'((?:src|href)="/static/[^"?]*)\?v=[A-Za-z0-9._-]+"')
+
+
+def strip_static_cache_versions(html: str) -> str:
+    """只移除 src／href 指向 /static/ 的「單一 ?v=<英數與 . _ ->」快取版本參數；其他 HTML 與其他查詢參數原樣保留。"""
+    return _STATIC_CACHE_VERSION.sub(r'\1"', html)
+
+
+def assert_no_demo_identity(html: str) -> None:
+    """登入頁不得含示範身分；比對前先忽略靜態檔的快取版本參數，其餘內容一律檢查。"""
+    checked = strip_static_cache_versions(html)
+    for forbidden in FORBIDDEN_DEMO_TEXT:
+        assert forbidden not in checked, f"登入頁含禁止字樣：{forbidden}"
+
+
 def test_login_ui_loads_without_b_and_has_no_demo_identity(browser: TestClient) -> None:
     page = browser.get("/login")
     assert page.status_code == 200 and "e-login.css" in page.text
@@ -200,17 +227,73 @@ def test_login_ui_loads_without_b_and_has_no_demo_identity(browser: TestClient) 
         and "value" not in fields["password"]
     )
     assert "忘記密碼" in page.text and "登入系統" in page.text
-    for forbidden in [
-        "sessionStorage",
-        "localStorage",
-        "1234",
-        "5678",
-        "ig_user",
-        "USERS",
-        "工程師：admin",
-    ]:
-        assert forbidden not in page.text
+    assert_no_demo_identity(page.text)
     assert page.headers["cache-control"] == "no-store" and "noindex" in page.headers["x-robots-tag"]
+
+
+@pytest.mark.parametrize(
+    "version", ["dev-1793886103000567838", "dev-1234567890123456789", "dev-0000123400005678"]
+)
+def test_static_cache_version_containing_demo_digits_is_not_a_false_positive(
+    browser: TestClient, monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    """CI 曾因 mtime 版本號碰巧含 5678 而失敗；用真實登入頁驗證版本參數不再誤判。"""
+    from app.core import templating
+
+    monkeypatch.setitem(
+        templating.templates.env.globals,
+        "static_url",
+        lambda path: f"/static/{path}?v={version}",
+    )
+
+    page = browser.get("/login")
+
+    assert page.status_code == 200 and f"main.js?v={version}" in page.text  # 注入確實生效
+    assert_no_demo_identity(page.text)
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<input type="password" value="5678">',
+        "<p>預設密碼 1234</p>",
+        '<script>sessionStorage.setItem("ig_user", "x")</script>',
+        "<p>工程師：admin</p>",
+        '<a href="/login?next=5678">連結</a>',  # 不是靜態檔網址
+        '<script src="/static/js/5678.js?v=dev-1"></script>',  # 路徑本身含 5678
+        '<script src="/static/js/main.js?token=5678"></script>',  # 只有 ?v= 才視為快取版本
+        '<script src="/static/js/main.js?v=dev-1&pw=5678"></script>',  # ?v= 之後夾帶其他參數
+        '<script src="/static/js/main.js?v=dev-1">5678</script>',  # 版本參數正常，但頁面有 5678 文字
+        '<div data-x="?v=dev-5678">x</div>',  # 非 src／href 屬性
+    ],
+)
+def test_real_demo_identity_is_still_rejected(html: str) -> None:
+    with pytest.raises(AssertionError):
+        assert_no_demo_identity(html)
+
+
+def test_real_login_page_with_injected_demo_password_still_fails(browser: TestClient) -> None:
+    page = browser.get("/login")
+
+    assert_no_demo_identity(page.text)  # 原頁面沒問題
+    with pytest.raises(AssertionError):
+        assert_no_demo_identity(page.text.replace("</form>", '<input value="5678"></form>', 1))
+
+
+def test_cache_version_stripping_only_touches_static_asset_urls() -> None:
+    html = (
+        '<link href="/static/css/a.css?v=dev-5678">'
+        '<script src="/static/js/b.js?v=dev-1234"></script>'
+        '<a href="/login?v=5678">x</a>'
+    )
+
+    stripped = strip_static_cache_versions(html)
+
+    assert stripped == (
+        '<link href="/static/css/a.css">'
+        '<script src="/static/js/b.js"></script>'
+        '<a href="/login?v=5678">x</a>'
+    )
 
 
 def test_responsive_styles_are_page_scoped(browser: TestClient) -> None:

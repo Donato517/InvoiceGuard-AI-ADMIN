@@ -801,6 +801,13 @@ def _build_voucher(invoice: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _purge_submitted_drafts_of(user_id: str) -> None:
+    """移除指定使用者「已提交」的草稿；未提交的草稿與別人的草稿一律不動。"""
+    for key, draft in list(_DRAFT_INVOICE_STORE.items()):
+        if draft.get("submitted_invoice_id") and str(draft.get("uploaded_by", "")) == user_id:
+            _DRAFT_INVOICE_STORE.pop(key, None)
+
+
 def _render_invoice_list_view(
     request: Request,
     *,
@@ -808,8 +815,10 @@ def _render_invoice_list_view(
     status: str | None = None,
     q: str = "",
 ) -> HTMLResponse:
-    _DRAFT_INVOICE_STORE.clear()
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
+    # 草稿只存在伺服器記憶體、所有使用者共用同一個字典：絕不能整個清空（會刪掉別人尚未提交的草稿）。
+    # 只順便清掉「自己、已提交」的草稿：案件已在資料庫、影像已移除，使用者離開步驟 4 前往清單後就不再需要。
+    _purge_submitted_drafts_of(current_user_id)
     is_finance = bool(getattr(request.state, "is_finance_workspace", False))
     section_config = {
         "invoices": (

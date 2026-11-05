@@ -8,7 +8,7 @@
 {% if intake %}
   {% with form=intake.form, errors=intake.errors, warnings=intake.warnings, missing=intake.missing, duplicate=intake.duplicate, checked=intake.checked, rows=intake.rows, tax_type_options=intake.tax_type_options, max_items=intake.max_items, review_action=intake.review_action, check_url=intake.check_url, discard_url=intake.discard_url, live_check=true, zh_suggestion_note=intake.zh_suggestion_note %}
     {% if intake.banner %}<p class="alert alert--danger" role="alert">{{ intake.banner }}</p>{% endif %}
-    <div class="invoice-correction-split">
+    <div class="invoice-correction-split correction-split--frozen{% if intake.banner %} correction-split--notice{% endif %}">
       {% include "pages/invoices/_invoice_original_pane.html" %}
       <section class="correction-field-column" aria-label="核對欄位">
         {#- 輸入時即時檢核：格式提示由前端規則即時顯示，必填／業務警示／查重由 API 檢核（停止輸入後自動執行），不需按鈕 -#}
@@ -42,7 +42,7 @@
     左側為原始發票，右側共有 14 項核對欄位。數量與單價會自動重算金額與銷售額合計；應稅稅額沿用 5% 規則，請依實際發票修正。完成核對修正並儲存後，系統將保存本次發票作業進度（基於資安考量不留存發票圖檔）。
   </p>
 {% endif %}
-<div class="invoice-correction-split">
+<div class="invoice-correction-split{% if not procurement_return %} correction-split--frozen correction-split--notice{% endif %}">
   {% include "pages/invoices/_invoice_original_pane.html" %}
   <section class="correction-field-column" aria-label="14 項核對欄位">
     <div class="correction-panel-title">核對欄位（14 項）</div>

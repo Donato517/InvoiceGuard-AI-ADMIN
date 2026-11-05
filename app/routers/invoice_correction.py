@@ -114,8 +114,7 @@ async def correction_page(request: Request, invoice_id: str) -> Response:
     try:
         page = await run_in_threadpool(service.load_page, client, str(invoice["id"]))
     except IntakeApiError as error:
-        if error.status == 404:
-            raise HTTPException(status_code=404, detail="找不到指定發票") from None
+        # API 回 404＝API 查不到「本人提交且屬於登入部門」的案件；ADMIN 不自己推論，只把原因說清楚（HTTP 狀態仍是 404）
         status = 409 if error.code == "INVOICE_NOT_RETURNED" else _http_status(error)
         return _render(
             request, invoice, None, error=service.error_message(error), status_code=status

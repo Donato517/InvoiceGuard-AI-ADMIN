@@ -663,7 +663,24 @@ def _create_draft_invoice(invoice_id: str, uploaded_by: str = "1") -> dict[str, 
     )
 
 
-def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
+def _step1_owner(request: Request) -> str:
+    """步驟 1 補出的空草稿的上傳者：目前登入的使用者（不是固定的 "1"）。"""
+    return str(getattr(request.state, "invoice_user_id", "1"))
+
+
+def _find_flow_invoice(
+    invoice_id: Any, *, owner: str | None = None, persist: bool = True
+) -> dict[str, Any] | None:
+    """依 id 找流程用的發票（草稿、清單或資料庫）。
+
+    草稿只存在單一實例的記憶體，下一個請求可能落在沒有這份草稿的實例。找不到草稿、也不是清單或資料庫的案件時，
+    若 id 是有效 UUID，就補一份空草稿（沒有任何內容）：
+    - owner：草稿的上傳者。只有步驟 1（選檔與上傳）傳入目前使用者，否則上傳者預設為 "1"，一般員工會被擋成 403。
+      已存在的草稿（含別人的）一律照原樣返回，不會被接手或覆寫；清單與資料庫的案件也不會被轉成草稿。
+    - persist：是否把補出的空草稿寫進 _DRAFT_INVOICE_STORE。步驟 1 的 GET 只需要顯示選檔頁，傳 False，
+      單純開頁不留下無用的空草稿；真正上傳（POST flow/upload）與其他呼叫端維持寫入（預設 True）。
+    其他呼叫端不傳這兩個參數，行為與以前完全相同。
+    """
     _validate_invoice_id(invoice_id)
     draft = _DRAFT_INVOICE_STORE.get(invoice_id)
     if draft is not None:
@@ -678,8 +695,9 @@ def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
     # 若為有效 UUID 但尚未寫入資料庫（如伺服器重啟或剛進入流程的草稿），自動建立記憶體草稿，避免 404
     try:
         UUID(str(invoice_id))
-        draft = _create_draft_invoice(str(invoice_id))
-        _DRAFT_INVOICE_STORE[str(invoice_id)] = draft
+        draft = _create_draft_invoice(str(invoice_id), uploaded_by=owner or "1")
+        if persist:
+            _DRAFT_INVOICE_STORE[str(invoice_id)] = draft
         return draft
     except (ValueError, TypeError, AttributeError):
         return None
@@ -1331,7 +1349,12 @@ def invoice_flow(
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
     if step > max_flow_step:
         raise DeniedError
-    invoice = _find_flow_invoice(invoice_id)
+    # 步驟 1：找不到草稿時只替本人暫時顯示選檔頁，不寫入草稿字典（真正上傳時才建立並保存）
+    invoice = (
+        _find_flow_invoice(invoice_id, owner=_step1_owner(request), persist=False)
+        if step == 1
+        else _find_flow_invoice(invoice_id)
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice)
@@ -1369,7 +1392,7 @@ async def upload_invoice_file(
     影像只暫存於記憶體供核對對照；API 另依其保留期限保存影像並寫入辨識紀錄（有成本與副作用）。
     已在發票清單的既有發票（退回補正的重新上傳附件）只更新附件，不重新辨識。
     """
-    invoice = _find_flow_invoice(invoice_id)
+    invoice = _find_flow_invoice(invoice_id, owner=_step1_owner(request))
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)

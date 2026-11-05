@@ -44,7 +44,10 @@ def test_passing_concept_answer() -> None:
     case = EvalCase(
         "x", "差在哪", sources_any=(ACT,), keywords_any=("非加值",), expected_format=FORMAT_CONCEPT
     )
-    result = rag_eval_service.evaluate(case, _answer("白話說明：\n加值與非加值… [1]", ACT))
+    # 畫面上的回答已拿掉「白話說明：」標題，概念格式改看「主要差別／重點」
+    result = rag_eval_service.evaluate(
+        case, _answer("加值與非加值是兩種計算方式。\n主要差別：\n・非加值… [1]", ACT)
+    )
     assert result.passed and [c.label for c in result.checks] == [
         "檢索命中",
         "有依文件回答",
@@ -59,11 +62,11 @@ def test_passing_concept_answer() -> None:
     [
         (
             _answer(
-                "白話說明：非加值 [1]", "統一發票使用辦法", retrieved=(ACT, "統一發票使用辦法")
+                "主要差別：非加值 [1]", "統一發票使用辦法", retrieved=(ACT, "統一發票使用辦法")
             ),
             "引用預期文件",
         ),
-        (_answer("白話說明：只講加值 [1]", ACT), "含關鍵字"),
+        (_answer("主要差別：只講加值 [1]", ACT), "含關鍵字"),
         (_answer("你可以這樣做：非加值 [1]", ACT), "概念格式"),
         (QaAnswer(NO_ANSWER, grounded=False, retrieved_titles=(ACT,)), "有依文件回答"),
     ],

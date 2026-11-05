@@ -20,6 +20,7 @@
     - ask（部門問答）與 ask_test（資訊部測試）走同一套流程：先以預設模型理解問題，再多查詢檢索。
       ask 依目前部門指派的知識庫、自動帶入目前部門名稱；ask_test 依勾選的知識庫與選填部門。
       部門影響問題理解與回答角度，不改變知識庫範圍；理解失敗仍以原問題繼續。
+    - 概念格式的「白話說明：」標題只供模型分段與程式檢查，顯示前拿掉（2026-11-05）。
     - 題型（2026-11-03）：定義題、比較題用「概念格式」（白話說明 → 主要差別／重點 → 跟你的工作有什麼關係
       → 依據），其他用「步驟格式」。白話說明可以用一般常識解釋名詞意思與制度目的，但不可寫數字、
       期限、義務、例外或條號；程式檢查白話說明有數字或條號卻沒有來源時丟棄回答。
@@ -100,10 +101,9 @@ UNVERIFIED_ANSWER = (
     "請再問一次；也可以直接問{contact}。"
 )
 SERVICE_UNAVAILABLE = "問答服務暫時無法使用，請稍後再試；若持續發生，請通知資訊部。"
-CLOSING = (
-    "\n\n以上依知識庫內容整理，實際處理前請以原文為準，不確定時請問{contact}。"
-    "還有其他問題隨時問我喔！"
-)
+# 2026-11-05 使用者核定縮短：原「以上依知識庫內容整理，實際處理前請以原文為準，不確定時請問{contact}。
+# 還有其他問題隨時問我喔！」太冗長
+CLOSING = "\n\n以上依知識庫整理，請以原文為準；不確定時可問{contact}。"
 _NO_INFO_MARK = "NO_ANSWER"
 # Groq 回 length，Vertex 回 MAX_TOKENS
 _TRUNCATED_REASONS = frozenset({"length", "MAX_TOKENS"})
@@ -130,6 +130,8 @@ _PLAIN_SECTION = re.compile(
     r"(?=^\s*(?:主要差別|重點|跟你的工作有什麼關係|[你您]可以這樣做|目前還需要確認|依據)\s*[：:]|\Z)",
     re.MULTILINE | re.DOTALL,
 )
+# 顯示給使用者前拿掉「白話說明：」標題（2026-11-05 使用者核定）；模型仍照格式寫、程式仍以此標題檢查內容
+_PLAIN_LABEL = re.compile(r"\A\s*白話說明\s*[：:][ \t]*\n?")
 # 白話說明只能解釋名詞與目的；出現數字、比例或條項款就必須有來源
 _PLAIN_FACT = re.compile(r"[0-9０-９%％]|百分之|第\s*[〇零一二三四五六七八九十百兩\d]+\s*[條項款]")
 # 理解步驟的題型；回答依題型選格式
@@ -772,11 +774,16 @@ def _check_reply(reply: ChatReply, hits: list[SearchHit], contact: str) -> QaAns
         for n in cited
     )
     return QaAnswer(
-        text + CLOSING.format(contact=contact),
+        hide_plain_label(text) + CLOSING.format(contact=contact),
         grounded=True,
         sources=sources,
         total_tokens=tokens,
     )
+
+
+def hide_plain_label(text: str) -> str:
+    """拿掉回答開頭的「白話說明：」標題，保留底下的說明文字；其他區塊標題不變。"""
+    return _PLAIN_LABEL.sub("", text, count=1)
 
 
 def _with_notes(answer: QaAnswer, *notes: str | None) -> QaAnswer:

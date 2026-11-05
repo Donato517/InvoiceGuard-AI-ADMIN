@@ -1084,3 +1084,14 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* 財務退回補正頁：未開放修改的欄位（disabled）反灰、游標顯示禁止，點擊不會出現輸入游標。
+   文字 #4b5a70 在底色 #e9edf3 上對比約 6:1（WCAG AA 需 4.5:1）；-webkit-text-fill-color 讓 Safari 也採用此文字色 */
+#correct-form input:disabled,
+#correct-form select:disabled {
+  background-color: #e9edf3;
+  color: #4b5a70;
+  -webkit-text-fill-color: #4b5a70;
+  cursor: not-allowed;
+  opacity: 1;
+}

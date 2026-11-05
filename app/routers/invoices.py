@@ -13,6 +13,7 @@
 
 import calendar
 import hashlib
+import logging
 import re
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -174,6 +175,8 @@ def require_invoice_access(request: Request, module: Module) -> None:
         return
     raise UnauthenticatedError
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/invoices",
@@ -1441,6 +1444,7 @@ def _intake_view(invoice: dict[str, Any]) -> dict[str, Any]:
         "submitted_invoice_id": invoice.get("submitted_invoice_id"),
         "review_action": f"/invoices/{invoice['id']}/flow/review",
         "check_url": f"/invoices/{invoice['id']}/flow/check",
+        "discard_url": f"/invoices/{invoice['id']}/flow/discard",
     }
 
 
@@ -1546,6 +1550,49 @@ async def check_invoice_intake(request: Request, invoice_id: str) -> JSONRespons
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+# 草稿裡的辨識結果、核對資料與暫存影像；放棄草稿時逐一清掉，避免別處還握著這份物件時殘留
+_DRAFT_PAYLOAD_KEYS = (
+    "file_bytes",
+    "file_media_type",
+    "file_name",
+    "recognition",
+    "intake_form",
+    "intake_state",
+)
+
+
+@router.post(
+    "/{invoice_id}/flow/discard", response_model=None, dependencies=[Depends(require_e_origin)]
+)
+def discard_invoice_draft(request: Request, invoice_id: str) -> RedirectResponse:
+    """核對頁的「重新上傳」（例如系統已有相同發票時放棄這次、改傳另一張）：刪除這份尚未成功提交的草稿，再進入新發票上傳流程。
+
+    只動伺服器記憶體裡這一份草稿（辨識結果、核對資料、暫存影像）；不呼叫 API、不碰資料庫與 Storage，
+    所以不會刪除或修改已存在的（重複）發票，也不會影響其他草稿；不碰登入 Session。
+    權限與整條上傳流程相同（所有已登入員工都能上傳）：有效登入＋發票檢視 inv.upload VIEW（router 層）＋同源，
+    另外要求草稿上傳者就是目前使用者（財務部也不能刪別人的草稿）。不要求 inv.intake。
+    已提交的草稿（結果頁還在）、清單或資料庫裡的案件、已不存在的草稿都不刪，直接導向新上傳流程（重複點擊安全）。
+    刪不掉時回 500，不假裝成功。注意：API 辨識時存入 Storage 的影像與辨識紀錄不在這裡處理（ADMIN 沒有刪除權限），由 API 的保留期限管理。
+    """
+    _validate_invoice_id(invoice_id)
+    # 不用 _find_flow_invoice：它會替未知的 id 自動建立空草稿
+    draft = _DRAFT_INVOICE_STORE.get(invoice_id)
+    if draft is None or draft.get("submitted_invoice_id"):
+        return RedirectResponse("/invoices/new", status_code=303)
+    if str(draft.get("uploaded_by", "")) != str(getattr(request.state, "invoice_user_id", "")):
+        raise DeniedError
+    try:
+        _DRAFT_INVOICE_STORE.pop(invoice_id, None)
+        for key in _DRAFT_PAYLOAD_KEYS:
+            draft.pop(key, None)
+    except Exception as exc:
+        logger.error("discard draft failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="無法清除草稿，請稍後再試") from None
+    if invoice_id in _DRAFT_INVOICE_STORE:
+        raise HTTPException(status_code=500, detail="無法清除草稿，請稍後再試")
+    return RedirectResponse("/invoices/new", status_code=303)
 
 
 def _user_uuid(request: Request) -> UUID:

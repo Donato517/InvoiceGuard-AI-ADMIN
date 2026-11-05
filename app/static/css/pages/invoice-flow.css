@@ -908,3 +908,18 @@
 
 /* 財務清單：本人上傳（無權審核）列，淡灰底但文字清楚；整列仍可點擊 */
 .row--self-upload { background: rgba(120, 120, 120, 0.08); }
+
+/* 看起來和一般連結相同的按鈕（核對頁「重新上傳」：需要 POST 刪除草稿，所以是 button 而不是 a） */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--color-primary-hover);
+}

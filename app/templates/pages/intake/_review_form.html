@@ -34,7 +34,7 @@
         {% if live_check %}id="flow-review-form" data-live-check-url="{{ check_url }}"{% endif %}>
     <input type="hidden" name="recognition_id" value="{{ form.recognition_id }}">
     <section class="card">
-      <h3>核對欄位（14 項）</h3>
+      <h3>核對欄位（表頭 10 項；第 6～9 項見下方品名明細）</h3>
       <div class="invoice14-grid">
         {# 1 發票聯式／識別 #}
         <div class="invoice14-field">
@@ -72,11 +72,7 @@
         {# 5 買受人統編 #}
         {{ field("buyer_tax_id", "5", "買受人統編", form.buyer_tax_id) }}
 
-        {# 6～9 品名明細摘要 #}
-        <div class="invoice14-field">
-          <label><span>6～9</span>品名／數量／單價／金額</label>
-          <input value="請見下方「品名明細」" readonly disabled class="muted">
-        </div>
+        {# 6～9 品名／數量／單價／金額：只在下方「品名明細」填寫與保存（不再重複顯示佔位列；API／Schema／檢核對應不變） #}
 
         {# 10 銷售額合計 #}
         {{ field("sales_amount", "10", "銷售額合計", form.sales_amount, true) }}

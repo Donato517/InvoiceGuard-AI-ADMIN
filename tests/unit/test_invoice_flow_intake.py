@@ -741,3 +741,18 @@ def test_restart_route_still_does_not_exist(browser_as: Any) -> None:
         404,
         405,
     )
+
+
+def test_step3_has_no_duplicate_6_to_9_placeholder_but_keeps_item_table(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+
+    assert "請見下方" not in html and "<span>6～9</span>" not in html
+    # 品名明細完整保留：欄位 name 不變，仍可新增／刪除、送出
+    for name in ("item_item_name", "item_quantity", "item_unit_price", "item_line_amount"):
+        assert f'name="{name}"' in html
+    assert 'value="add_item"' in html and 'value="remove_item:0"' in html
+    assert "品名明細（第 6～9 項" in html

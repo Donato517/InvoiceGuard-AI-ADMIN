@@ -239,6 +239,7 @@ def _row_to_invoice_dict(
         "stage": stage,
         "status": view_status,
         "review_status": review_status,
+        "db_status": status_raw,  # 資料庫的原始簽核狀態（列表判斷是否顯示「補正」用；示範資料沒有此欄位）
         "is_completed": is_completed,
         "file_name": row.get("original_filename"),
         "file_media_type": row.get("mime_type") or "image/jpeg",

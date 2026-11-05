@@ -1513,7 +1513,9 @@ def test_concept_answer_passes_checks(review_hits: list[SearchHit]) -> None:
         "跟你的工作有什麼關係：\n・可扣抵 [1]\n\n依據：\n・文件 [1]"
     )
     answer = _ask("甲和乙差在哪？", FakeChat(text))
-    assert answer.grounded and answer.text.startswith("白話說明：")
+    # 顯示時拿掉「白話說明：」標題，說明文字保留在最前面
+    assert answer.grounded and answer.text.startswith("加值型就是對每一手增加的價值課稅。")
+    assert "白話說明" not in answer.text and "主要差別：" in answer.text
 
 
 def test_concept_answer_with_uncited_difference_is_discarded(review_hits: list[SearchHit]) -> None:
@@ -1794,3 +1796,25 @@ def test_keyword_hits_are_not_limited_per_file() -> None:
     keyword = [_doc("law", "營業稅法", None, n=i, distance=0.0) for i in range(5)]
     merged = qa.merge_hits(keyword, [_doc("other", "其他", None)])
     assert [h.rag_file_id for h in merged] == ["law"] * 5 + ["other"]
+
+
+# ---- 回答文字（2026-11-05）----
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("白話說明：\n一句常識。\n主要差別：\n・甲 [1]", "一句常識。\n主要差別：\n・甲 [1]"),
+        ("白話說明：一句常識。\n重點：\n・甲 [1]", "一句常識。\n重點：\n・甲 [1]"),
+        ("適用情況。\n你可以這樣做：\n1、做 [1]", "適用情況。\n你可以這樣做：\n1、做 [1]"),
+        ("主要差別：\n・白話說明：不是開頭 [1]", "主要差別：\n・白話說明：不是開頭 [1]"),
+    ],
+)
+def test_hide_plain_label_only_removes_the_leading_heading(text: str, expected: str) -> None:
+    assert qa.hide_plain_label(text) == expected
+
+
+def test_closing_is_short_and_names_the_contact() -> None:
+    closing = qa.CLOSING.format(contact=CONTACT)
+    assert closing.strip() == f"以上依知識庫整理，請以原文為準；不確定時可問{CONTACT}。"
+    assert "隨時問我" not in closing

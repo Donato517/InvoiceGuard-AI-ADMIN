@@ -17,8 +17,11 @@ from app.schemas.rag_eval_cases import CASES, FORMAT_CONCEPT, FORMAT_STEPS, Eval
 from app.services import rag_admin_service, rag_qa_service
 from app.services.rag_qa_service import QaAnswer
 
-# 格式判斷：概念格式以「白話說明」開頭的區塊，步驟格式以「你可以這樣做」
-_FORMAT_MARKS = {FORMAT_CONCEPT: ("白話說明",), FORMAT_STEPS: ("你可以這樣做", "您可以這樣做")}
+# 格式判斷：概念格式有「主要差別」或「重點」區塊（「白話說明：」標題顯示前已拿掉），步驟格式有「你可以這樣做」
+_FORMAT_MARKS = {
+    FORMAT_CONCEPT: ("主要差別", "重點"),
+    FORMAT_STEPS: ("你可以這樣做", "您可以這樣做"),
+}
 
 
 @dataclass(frozen=True)

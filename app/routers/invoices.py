@@ -1428,6 +1428,7 @@ def _intake_view(invoice: dict[str, Any]) -> dict[str, Any]:
     return {
         "form": form,
         "recognition": invoice.get("recognition"),
+        "zh_suggestion_note": intake_mapping.zh_suggestion_note(invoice.get("recognition"), form),
         "rows": intake_mapping.FIELD_ROWS,
         "tax_type_options": intake_mapping.TAX_TYPE_OPTIONS,
         "max_items": intake_mapping.MAX_ITEMS,

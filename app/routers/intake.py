@@ -112,6 +112,7 @@ def _review(
             "missing": missing or {},
             "duplicate": duplicate,
             "recognition": recognition,
+            "zh_suggestion_note": mapping.zh_suggestion_note(recognition, form),
             "original": original,
             "original_note": original_note,
             "checked": checked,

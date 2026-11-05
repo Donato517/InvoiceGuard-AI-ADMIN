@@ -189,7 +189,9 @@ def test_submit_body_matches_api_shape() -> None:
     body = mapping.submit_body(form)
 
     assert body["recognition_id"] == RID and body["changes"] == []
-    assert body["buyer_tax_id"] is None and body["total_amount_zh"] is None  # 空白 → null
+    assert body["buyer_tax_id"] is None  # 空白 → null
+    # AI 國字空白且總計 3150 有效 → 辨識當下帶入標準國字（見 test_intake_zh_suggestion.py）
+    assert body["total_amount_zh"] == "參仟壹佰伍拾元整"
     assert body["items"][0] == {
         "source_line_no": 1,
         "item_name": "辦公文具",

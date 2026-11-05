@@ -8,6 +8,9 @@
       去千分位逗號），整理後的值才送出，AI 原值由 API 以 recognition_id 對照，不在 ADMIN 保存或比較。
     - 空白一律送 null（API 的選填欄位視為未提供，必填欄位由 API 回報缺漏／422）。
     - changes（逐次修改紀錄）留空：API 會把「與 AI 原值不同卻沒有紀錄」的欄位補一筆，代價是沒有中間修改歷程。
+    - 國字大寫建議值（2026-11-05 業務決定）：辨識當下，API 回報 total_amount_zh_unreadable 或 AI 國字空白，且數字總計是合法整數，
+      才把總計轉成標準國字帶入表單（form_from_recognition，只發生這一次）；可解析但不符、容錯解析一致都不處理。判斷只依 API 警示，
+      ADMIN 不解析國字；AI 原值不被改寫（RecognitionView 不變，API 以 recognition_id 對照）。
     - API 目前沒有「備註」欄位，14 項表格中的備註只顯示、不送出（見 FIELD_ROWS）。
 """
 
@@ -24,6 +27,7 @@ from app.schemas.intake import (
     MissingFieldView,
     RecognitionView,
 )
+from app.utils.chinese_amount import amount_to_chinese
 
 MAX_ITEMS = 50
 TAX_TYPE_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -133,9 +137,57 @@ def _text(value: object) -> str:
     return "" if value is None else str(value)
 
 
-def form_from_recognition(recognition: RecognitionView) -> IntakeForm:
-    """把 API 辨識結果轉成可編輯表單（逐欄直接對應，不改值）。"""
+_ZH_ORIGINAL_MAX = 60  # 提醒中顯示 AI 原始國字的長度上限
+
+
+@dataclass(frozen=True)
+class ZhSuggestion:
+    """辨識當下依總計帶入的標準國字，與 AI 原始國字（空白為 ""）。"""
+
+    value: str
+    original: str
+
+
+def zh_suggestion(recognition: RecognitionView) -> ZhSuggestion | None:
+    """國字大寫是否需要自動帶入建議值。
+
+    條件：API 回報 total_amount_zh_unreadable（無法判讀），或 AI 國字空白；且數字總計是合法整數。
+    可解析但與總計不符（mismatch）、容錯解析一致（API 無警示）、總計空白／非法／有小數都回 None。
+    """
     invoice = recognition.invoice
+    original = (invoice.total_amount_zh or "").strip()
+    unreadable = any(
+        w.field == "total_amount_zh" and w.code == "total_amount_zh_unreadable"
+        for w in recognition.warnings
+    )
+    if original and not unreadable:
+        return None
+    value = amount_to_chinese(invoice.total_amount)
+    return ZhSuggestion(value, original) if value else None
+
+
+def zh_suggestion_text(suggestion: ZhSuggestion) -> str:
+    """自動帶入後給上傳者的核對提醒（與手機前台同文案）；原值過長只顯示前段。"""
+    original = suggestion.original
+    shown = original[:_ZH_ORIGINAL_MAX] + "…" if len(original) > _ZH_ORIGINAL_MAX else original
+    head = f"AI 辨識的國字大寫「{shown}」無法判讀，" if original else "AI 沒有辨識到國字大寫金額，"
+    return f"{head}已依總計自動帶入「{suggestion.value}」，請對照原始發票核對。"
+
+
+def zh_suggestion_note(recognition: RecognitionView | None, form: IntakeForm) -> str:
+    """畫面上的核對提醒；只有表單的國字仍是自動帶入的建議值時才有（使用者改過就沒有）。每次渲染重算，不保存狀態。"""
+    if recognition is None:
+        return ""
+    suggestion = zh_suggestion(recognition)
+    if suggestion is None or form.total_amount_zh.strip() != suggestion.value:
+        return ""
+    return zh_suggestion_text(suggestion)
+
+
+def form_from_recognition(recognition: RecognitionView) -> IntakeForm:
+    """把 API 辨識結果轉成可編輯表單（逐欄直接對應，不改值；唯一例外是國字大寫建議值，見 zh_suggestion）。"""
+    invoice = recognition.invoice
+    suggestion = zh_suggestion(recognition)
     return IntakeForm(
         recognition_id=str(recognition.recognition_id),
         invoice_track=_text(invoice.invoice_track),
@@ -149,7 +201,7 @@ def form_from_recognition(recognition: RecognitionView) -> IntakeForm:
         sales_amount=_text(invoice.sales_amount),
         tax_amount=_text(invoice.tax_amount),
         total_amount=_text(invoice.total_amount),
-        total_amount_zh=_text(invoice.total_amount_zh),
+        total_amount_zh=suggestion.value if suggestion else _text(invoice.total_amount_zh),
         items=tuple(
             IntakeItemForm(
                 source_line_no=item.line_no,

@@ -69,10 +69,11 @@
       {% else %}
         <button type="submit" form="flow-correct-form" class="btn btn--primary">儲存並進入系統檢核 →</button>
       {% endif %}
+    {% elif step == 4 and is_self_upload | default(false) and (max_flow_step | default(9)) >= 5 %}
+      {#- 財務部的本人上傳者：不得進入步驟 5（財務審核）；改回發票管理列表，不呼叫 /flow/advance、不改狀態 -#}
+      <a href="/invoices" class="btn btn--primary" data-view-my-invoice>檢視我的發票</a>
     {% elif step == 4 and is_first_four_readonly and (max_flow_step | default(9)) >= 5 %}
       <a href="/invoices/{{ invoice.id }}/flow?step=5" class="btn btn--primary">前往步驟 5 財務審核 →</a>
-    {% elif step >= 5 and is_self_upload | default(false) %}
-      <span class="muted small-text" data-self-upload-no-advance>本人上傳的發票不能自行繼續審核流程，請交由其他財務人員處理。</span>
     {% elif step < (max_flow_step | default(9)) %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
         <input type="hidden" name="from_step" value="{{ step }}">

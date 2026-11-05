@@ -1,5 +1,13 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 本人上傳的發票不得查看步驟 5、6；步驟 4 改「檢視我的發票」
+
+- 需求（使用者確認，取代同日前一筆與主線 `bb6dc42` 的「本人可檢視步驟 5、只是不能操作」設計）：本人上傳的發票，本人不得執行財務審核動作，也不得查看步驟 5、6；步驟 4 的「確認並繼續」改為「檢視我的發票」，點擊後回發票管理列表（`/invoices`）。
+- 後端：`invoice_flow` 與 `_render_flow_page` 對本人上傳且 `step >= 5` 一律 403（`DeniedError`，錯誤重繪路徑也一併擋住）；`/flow/advance` 從 `from_step >= 4` 起對本人上傳 403，不改案件狀態；`/flow/complete` 維持 403；`_deny_self_review` 不再重繪步驟 5 審核頁，改回 403 錯誤頁（訊息不變）。判斷沿用主線 `_is_self_upload`（只比對真實 User ID，大小寫與 UUID 物件皆可）。
+- 畫面：財務工作區的本人上傳者在步驟 4 只顯示導覽連結「檢視我的發票」（不呼叫 `/flow/advance`、不改狀態）；步驟列只列到步驟 4；發票管理列表本人那列的「檢視詳情」最多連到步驟 4。非財務部門的「完成前四步，返回待處理發票」不變。
+- 未改：`_flow_step_review.html` 內主線的本人唯讀區塊現在到不了（保留，避免擴大範圍）；`/filing`、`/import-confirm`、匯出與批次申報的本人限制仍待另行協調。
+- 驗證：新增／改寫 `test_self_upload_flow_gates.py`（26 項，改回舊程式時 11 項失敗），更新 `test_finance_self_upload.py` 與 `test_department_login.py` 對步驟 5 的舊斷言；ADMIN 全套 3167 passed、41 skipped；Ruff、djLint、check_project、`git diff --check` 通過。離線測試，未連資料庫與正式站，未做瀏覽器實測。
+
 ## 2026-11-06 本人上傳的發票不得自行推進財務流程（補主線缺口）
 
 - 問題與原因：主線已擋本人上傳的核准、退回、儲存會計欄位與舊 `/review`，但步驟 5 起的「確認並繼續」（`/flow/advance`）與「確認完成」（`/flow/complete`）沒有本人限制，本人上傳者仍可直接 POST 把發票推進到步驟 6 或標記完成。

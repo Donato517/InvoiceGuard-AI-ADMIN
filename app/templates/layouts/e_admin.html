@@ -30,8 +30,8 @@
           <span class="app-sidebar__emoji" aria-hidden="true">👤</span>
           <span>本人資訊</span>
         </a>
-        {% for item in e_menu %}
-          {% if item.code not in ["sys.department-permissions", "suppliers"] %}
+        {% for item in e_menu|sidebar_order %}
+          {% if item.code != "sys.department-permissions" %}
             {% include "partials/sidebar_entry.html" %}
           {% endif %}
           {% if item.code == "sys.accounts" %}

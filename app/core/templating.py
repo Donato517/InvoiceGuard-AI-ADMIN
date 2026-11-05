@@ -23,6 +23,7 @@ from app.constants import (
 from app.core.config import BASE_DIR, settings
 from app.core.constants import ROBOTS_POLICY, SITE_ICON
 from app.utils.format import TAIPEI_TZ, format_currency, format_date, format_datetime
+from app.utils.sidebar_order import order_sidebar
 
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
@@ -70,4 +71,5 @@ templates.env.filters.update(
     currency=format_currency,
     taipei_date=format_date,
     taipei_datetime=format_datetime,
+    sidebar_order=order_sidebar,
 )

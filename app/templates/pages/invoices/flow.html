@@ -71,6 +71,8 @@
       {% endif %}
     {% elif step == 4 and is_first_four_readonly and (max_flow_step | default(9)) >= 5 %}
       <a href="/invoices/{{ invoice.id }}/flow?step=5" class="btn btn--primary">前往步驟 5 財務審核 →</a>
+    {% elif step >= 5 and is_self_upload | default(false) %}
+      <span class="muted small-text" data-self-upload-no-advance>本人上傳的發票不能自行繼續審核流程，請交由其他財務人員處理。</span>
     {% elif step < (max_flow_step | default(9)) %}
       <form method="post" action="/invoices/{{ invoice.id }}/flow/advance">
         <input type="hidden" name="from_step" value="{{ step }}">

@@ -1353,6 +1353,7 @@ def _render_flow_page(
             "is_first_four_readonly": is_first_four_readonly,
             "intake": _intake_view(invoice),
             "db_invoice": _is_db_invoice(invoice),
+            "is_self_upload": _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)),
         },
     )
 
@@ -1835,6 +1836,9 @@ def advance_flow_step(
     invoice = _find_flow_invoice(invoice_id)
     if invoice is not None:
         _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
+        # 步驟 5（財務審核）起不得由本人上傳者往後推進，否則等於自行放行
+        if from_step >= 5 and _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)):
+            raise DeniedError
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
 
@@ -1873,6 +1877,8 @@ def complete_invoice_flow(request: Request, invoice_id: str) -> RedirectResponse
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    if _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)):
+        raise DeniedError
 
     invoice["is_completed"] = True
     invoice["stage"] = 9

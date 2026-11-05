@@ -826,7 +826,12 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         step4_page = browser.get("/invoices/1/flow?step=4")
         assert step4_page.status_code == 200
         assert "系統自動檢核" in step4_page.text
-        assert "完成前四步，返回待處理發票" in step4_page.text
+        # 本人上傳者（真實 Session 的 UUID）：統一顯示「檢視我的發票」，仍走 finish-first-four 保存前四步標記
+        assert (
+            "檢視我的發票" in step4_page.text
+            and "完成前四步，返回待處理發票" not in step4_page.text
+        )
+        assert 'action="/invoices/1/flow/finish-first-four"' in step4_page.text
         for finance_step_label in [
             "財務審核",
             "產生申報檔",

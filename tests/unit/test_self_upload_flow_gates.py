@@ -4,6 +4,7 @@
 相依模組：app.routers.invoices
 注意事項：
     - 2026-11-06 使用者確認的正式需求，取代先前「本人可進入步驟 5 檢視、只是不能操作」的設計。
+    - 只有步驟 5、6 的限制已確認；步驟 7～9 的本人規則待會計確認，這裡不新增（見 test_steps_7_to_9_follow_main_until_accounting_decides）。
     - 核准、退回、儲存會計欄位與舊 /review 的本人限制由 test_finance_self_upload 涵蓋。
     - 只用合成 UUID 與示範資料，不連資料庫；離線測試，不是正式環境驗收。
 """
@@ -60,9 +61,9 @@ def _invoice(invoice_id: int = 3, *, uploader: str, stage: int = 5) -> dict:
     return invoice
 
 
-# ---- 本人：不得查看步驟 5、6 起的財務頁 ----
-@pytest.mark.parametrize("step", [5, 6, 7, 8, 9])
-def test_self_upload_cannot_view_finance_steps(finance_me: TestClient, step: int) -> None:
+# ---- 本人：不得查看步驟 5、6 ----
+@pytest.mark.parametrize("step", [5, 6])
+def test_self_upload_cannot_view_review_and_filing_steps(finance_me: TestClient, step: int) -> None:
     _invoice(uploader=ME, stage=9)
     assert finance_me.get(f"/invoices/3/flow?step={step}").status_code == 403
 
@@ -73,9 +74,9 @@ def test_self_upload_can_still_view_steps_up_to_four(finance_me: TestClient) -> 
         assert finance_me.get(f"/invoices/3/flow?step={step}").status_code == 200
 
 
-# ---- 本人：不得往後推進 ----
-@pytest.mark.parametrize("from_step", [4, 5, 6, 7, 8])
-def test_self_upload_cannot_advance_from_step_four_or_later(
+# ---- 本人：不得從步驟 4 進入步驟 5，也不得在步驟 5、6 推進 ----
+@pytest.mark.parametrize("from_step", [4, 5, 6])
+def test_self_upload_cannot_advance_into_or_through_review(
     finance_me: TestClient, from_step: int
 ) -> None:
     invoice = _invoice(uploader=ME, stage=from_step)
@@ -85,10 +86,17 @@ def test_self_upload_cannot_advance_from_step_four_or_later(
     assert invoice["review_status"] == "pending" and invoice["status"] == "flagged"
 
 
-def test_self_upload_cannot_complete_flow(finance_me: TestClient) -> None:
-    invoice = _invoice(uploader=ME, stage=8)
-    assert finance_me.post("/invoices/3/flow/complete").status_code == 403
-    assert invoice["is_completed"] is False and invoice["stage"] == 8
+def test_steps_7_to_9_follow_main_until_accounting_decides(finance_me: TestClient) -> None:
+    """【待決】本人是否可操作步驟 7～9 等會計確認。目前不新增規則、也不放寬主線：行為與主線相同。
+
+    若會計決議禁止或允許，請修改這個測試與 invoices.py 的 _SELF_BLOCKED_STEPS，不要只改其中一邊。
+    """
+    invoice = _invoice(uploader=ME, stage=9)
+    for step in (7, 8, 9):
+        assert finance_me.get(f"/invoices/3/flow?step={step}").status_code == 200
+    assert finance_me.post("/invoices/3/flow/advance", data={"from_step": 7}).status_code == 303
+    assert finance_me.post("/invoices/3/flow/complete").status_code == 303
+    assert invoice["is_completed"] is True
 
 
 def test_self_review_post_error_does_not_render_review_step(finance_me: TestClient) -> None:
@@ -102,15 +110,62 @@ def test_self_review_post_error_does_not_render_review_step(finance_me: TestClie
 
 
 # ---- 本人：步驟 4 的按鈕與導覽 ----
-def test_self_upload_step4_shows_view_my_invoice_to_invoice_list(finance_me: TestClient) -> None:
+def _as_non_finance(user_id: str) -> None:
+    """非財務部門的使用者（只開放前四步），直接替身路由層的存取依賴。"""
+    from app.main import app
+
+    def access(request: Request) -> None:
+        request.state.invoice_user_id = user_id
+        request.state.is_finance_workspace = False
+        request.state.invoice_max_step = 4
+
+    app.dependency_overrides[invoices_router.require_invoice_access] = access
+
+
+def test_self_upload_step4_shows_view_my_invoice_without_review_entry(
+    finance_me: TestClient,
+) -> None:
     _invoice(uploader=ME, stage=4)
     html = finance_me.get("/invoices/3/flow?step=4").text
-    assert "檢視我的發票" in html
-    assert 'href="/invoices" class="btn btn--primary" data-view-my-invoice' in html
+    assert "檢視我的發票" in html and "data-view-my-invoice" in html
     assert "確認並繼續" not in html
     assert 'action="/invoices/3/flow/advance"' not in html
     assert "前往步驟 5 財務審核" not in html
     assert "/flow?step=5" not in html
+
+
+def test_non_finance_self_upload_step4_shows_the_same_button(admin_client: TestClient) -> None:
+    _as_non_finance(ME)
+    _invoice(uploader=ME, stage=4)
+    html = admin_client.get("/invoices/3/flow?step=4").text
+    assert "檢視我的發票" in html and "完成前四步，返回待處理發票" not in html
+    assert 'action="/invoices/3/flow/advance"' not in html
+
+
+def test_view_my_invoice_keeps_first_four_persistence_and_returns_to_list(
+    finance_me: TestClient,
+) -> None:
+    """按鈕仍走 finish-first-four（寫入「前四步已核對」標記），再導回發票管理列表；不進步驟 5。"""
+    invoice = _invoice(uploader=ME, stage=4)
+    html = finance_me.get("/invoices/3/flow?step=4").text
+    assert 'action="/invoices/3/flow/finish-first-four"' in html
+    response = finance_me.post("/invoices/3/flow/finish-first-four")
+    assert (response.status_code, response.headers["location"]) == (303, "/invoices")
+    assert invoice["first_four_checked"] is True and invoice["stage"] == 4
+    assert invoice["review_status"] == "pending"
+
+
+def test_unsubmitted_draft_gets_a_plain_link_not_the_409_endpoint(finance_me: TestClient) -> None:
+    """暫存草稿的 finish-first-four 會回 409，所以改用一般連結（不寫入、不進步驟 5）。"""
+    draft = deepcopy(_invoice(uploader=ME, stage=4))
+    draft["id"] = "5b0f8b0e-6c7a-4c55-9a1e-0a1b2c3d4e5f"
+    invoices_router._DRAFT_INVOICE_STORE[draft["id"]] = draft
+    try:
+        html = finance_me.get(f"/invoices/{draft['id']}/flow?step=4").text
+    finally:
+        invoices_router._DRAFT_INVOICE_STORE.clear()
+    assert 'href="/invoices" class="btn btn--primary" data-view-my-invoice' in html
+    assert "finish-first-four" not in html and "/flow/advance" not in html
 
 
 def test_view_my_invoice_target_is_the_invoice_management_list(finance_me: TestClient) -> None:
@@ -121,17 +176,17 @@ def test_view_my_invoice_target_is_the_invoice_management_list(finance_me: TestC
     assert "/invoices/3" in response.text
 
 
-def test_self_upload_stepper_has_no_finance_steps(finance_me: TestClient) -> None:
+def test_self_upload_stepper_does_not_link_to_steps_5_and_6(finance_me: TestClient) -> None:
     _invoice(uploader=ME, stage=9)
     html = finance_me.get("/invoices/3/flow?step=4").text
     assert "/flow?step=5" not in html and "/flow?step=6" not in html
 
 
-def test_list_link_for_self_upload_stops_at_step_four(finance_me: TestClient) -> None:
-    _invoice(uploader=ME, stage=7)
+def test_list_link_for_self_upload_avoids_blocked_steps(finance_me: TestClient) -> None:
+    _invoice(uploader=ME, stage=6)
     html = finance_me.get("/invoices").text
     assert "/invoices/3/flow?step=4" in html
-    assert "/invoices/3/flow?step=5" not in html and "/invoices/3/flow?step=7" not in html
+    assert "/invoices/3/flow?step=5" not in html and "/invoices/3/flow?step=6" not in html
 
 
 # ---- 其他審核者：照常 ----
@@ -215,4 +270,3 @@ def test_database_invoice_with_uppercase_uploader_uuid_is_denied(
     assert (
         finance_me.post(f"/invoices/{db_id}/flow/advance", data={"from_step": 4}).status_code == 403
     )
-    assert finance_me.post(f"/invoices/{db_id}/flow/complete").status_code == 403

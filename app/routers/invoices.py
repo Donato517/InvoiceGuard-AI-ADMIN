@@ -714,6 +714,7 @@ def _build_flow_steps(
     max_stage: int = 9,
     has_file_bytes: bool = False,
     allowed_max_step: int = 9,
+    blocked_steps: frozenset[int] = frozenset(),
 ) -> list[dict[str, Any]]:
     """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9；步驟 2「AI OCR 辨識」已整合至步驟 3 故自步驟列移除）。"""
     steps = []
@@ -733,7 +734,10 @@ def _build_flow_steps(
 
         # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1 僅顯示完成勾號不再連結返回
         can_navigate = (
-            state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
+            state != "locked"
+            and idx <= allowed_max_step
+            and idx not in blocked_steps
+            and (has_file_bytes or idx >= 3)
         )
         steps.append(
             {
@@ -1275,9 +1279,15 @@ def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
     )
 
 
+# 使用者已確認本人上傳者不得查看／推進的步驟；步驟 7～9 的本人規則待會計確認，這裡不新增（沿用主線）
+_SELF_BLOCKED_STEPS = frozenset({5, 6})
+
+
 def _deny_self_finance_view(request: Request, invoice: dict[str, Any], step: int) -> None:
-    """本人上傳者不得查看步驟 5、6 起的財務流程頁（2026-11-06 使用者確認，取代「可檢視」的舊設計）。"""
-    if step >= 5 and _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)):
+    """本人上傳者不得查看步驟 5、6（2026-11-06 使用者確認，取代「可檢視」的舊設計）。"""
+    if step in _SELF_BLOCKED_STEPS and _is_self_upload(
+        invoice.get("uploaded_by"), _reviewer_id(request)
+    ):
         raise DeniedError
 
 
@@ -1316,7 +1326,8 @@ def _render_flow_page(
         invoice["is_completed"],
         max_stage=int(invoice.get("stage", step)),
         has_file_bytes=bool(invoice.get("file_bytes") or invoice.get("file_name")),
-        allowed_max_step=min(max_flow_step, 4) if is_self_upload else max_flow_step,
+        allowed_max_step=max_flow_step,
+        blocked_steps=_SELF_BLOCKED_STEPS if is_self_upload else frozenset(),
     )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
@@ -1362,6 +1373,7 @@ def _render_flow_page(
             "intake": _intake_view(invoice),
             "db_invoice": _is_db_invoice(invoice),
             "is_self_upload": is_self_upload,
+            "persist_first_four": invoice_id not in _DRAFT_INVOICE_STORE,
         },
     )
 
@@ -1845,8 +1857,10 @@ def advance_flow_step(
     invoice = _find_flow_invoice(invoice_id)
     if invoice is not None:
         _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
-        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得往後推進
-        if from_step >= 4 and _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)):
+        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得在步驟 5、6 推進；步驟 7 起待會計確認，沿用主線
+        if from_step in {4, *_SELF_BLOCKED_STEPS} and _is_self_upload(
+            invoice.get("uploaded_by"), _reviewer_id(request)
+        ):
             raise DeniedError
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
@@ -1886,8 +1900,6 @@ def complete_invoice_flow(request: Request, invoice_id: str) -> RedirectResponse
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
-    if _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)):
-        raise DeniedError
 
     invoice["is_completed"] = True
     invoice["stage"] = 9

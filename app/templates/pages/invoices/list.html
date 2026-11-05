@@ -149,8 +149,8 @@
                 <td>
                   {% set raw_step = 9 if inv.is_completed else (inv.stage if inv.stage else 4) %}
                   {% set target_step = max_flow_step if (max_flow_step is defined and raw_step > max_flow_step) else raw_step %}
-                  {#- 本人上傳者不得查看步驟 5 以後，連結最多到步驟 4 -#}
-                  {% if inv.is_self_upload and target_step > 4 %}{% set target_step = 4 %}{% endif %}
+                  {#- 本人上傳者不得查看步驟 5、6，連結改到步驟 4；步驟 7 起待會計確認，沿用主線 -#}
+                  {% if inv.is_self_upload and target_step in (5, 6) %}{% set target_step = 4 %}{% endif %}
                   {% set step_done = inv.is_completed or (max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.stage >= max_flow_step)) %}
                   {% if inv.can_correct %}
                     {#- 被退回申請人的本人案件：先補正（含財務部門的本人案件）；真正的補正資格進頁面時由 API 判斷 -#}

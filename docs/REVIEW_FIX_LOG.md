@@ -1121,6 +1121,17 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 - 處理檔案：app/static/js/intake-amounts.js、app/utils/chinese_amount.py、app/services/invoice_intake_mapping.py、app/routers/intake.py、app/routers/invoices.py、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests/js/test_intake_amounts.cjs、tests/unit/test_intake_amount_alignment.py、tests/unit/test_intake_zh_suggestion.py、tests/unit/test_invoice_flow_intake.py、tests/unit/test_invoice_intake_mapping.py、tests/fixtures/amount_to_chinese_vectors.json、docs/DEVELOPMENT_STATUS.md、docs/REVIEW_FIX_LOG.md。
 
 
+## 2026-11-05 發票清單頁不再清空所有人的草稿
+
+- 問題：草稿只存在伺服器程序的記憶體，所有使用者共用同一個字典 `_DRAFT_INVOICE_STORE`；`_render_invoice_list_view`（`GET /invoices`、`/invoices/review`、`/invoices/voucher`）與 `GET /dashboard` 一進入就 `_DRAFT_INVOICE_STORE.clear()`（2026-10-28 示範版遺留，用意是丟掉未完成的示範草稿）。同一個實例上乙打開清單，甲正在核對的草稿就消失，甲的檢核與提交都回 404；自己打開清單也會丟掉自己的草稿。離線重現：兩位使用者、同一個記憶體實例。
+- 處理：兩處 `clear()` 都移除。清單頁改為只清掉「目前使用者自己、已提交」的草稿（`uploaded_by` 等於本人且有 `submitted_invoice_id`；案件已在資料庫、影像已在提交時移除，使用者離開步驟 4 後不再需要）；未提交的草稿與別人的草稿（含已提交的）一律不動。沒有新增任何跨使用者讀寫權限；`discard` 維持只能刪本人指定的未提交草稿。
+- 驗證（離線；假 API、假部門模組）：新增 `tests/unit/test_list_pages_keep_drafts.py` 8 項，先對未修正的程式確認 8 項全部失敗，修正後全部通過；突變驗證：清單頁 `clear()` 加回（7 項失敗）、儀表板 `clear()` 加回（1 項）、清除不看擁有者（1 項）、清除不看已提交（4 項）都會被抓到。
+- 未解決的限制：
+  1. 草稿仍只在單一實例的記憶體：實例回收、或上傳與核對被不同實例處理（核對回 404），草稿仍會遺失；真正的解法是共享草稿保存，需要與 API／架構負責人決定（API 沒有讀取辨識紀錄的端點；`ai_recognition_logs` 只保存 AI 辨識結果與影像 1 小時，使用者的修改沒有任何地方保存）。
+  2. 移除 `clear()` 後，被放棄的未提交草稿（每份最多 4 MB 影像）會留到實例回收，沒有數量或時間上限；需要另案設計上限或 TTL。
+  3. 正式環境同一個實例是否常同時服務多位使用者、`/dashboard` 在正式環境是否可達，尚無證據。
+
+
 ## 2026-11-05 人工驗收修正：重新上傳、國字寫法不標準、統編檢查碼提示
 
 - 問題 D（重新上傳）：核對頁「重新上傳」原本是 `<a href="/intake">`，`/intake` 要求部門的 `inv.intake` 新增權限，只有發票上傳權限的人得到 403。業務定義（2026-11-05 使用者確認）：系統發現資料庫已有相同發票時，使用者放棄這次、改傳另一張新發票；按「重新上傳」要刪除本次尚未成功提交的原草稿（辨識結果、核對資料、暫存影像），不刪除或修改資料庫中已存在的重複發票，不影響其他使用者或其他草稿，保留登入 Session，回到新發票上傳頁。處理：流程頁的按鈕改為 `POST /invoices/{id}/flow/discard`（有副作用所以不用 GET）→ 303 `/invoices/new`（建立全新草稿、步驟 1 選檔）。准入沿用整條上傳流程：有效登入＋inv.upload VIEW（router 層）＋同源＋草稿上傳者本人（財務部也不能刪別人的草稿）；不要求 inv.intake。只刪 `_DRAFT_INVOICE_STORE` 裡這一份草稿並清空其中的辨識結果、核對資料、暫存影像等欄位（避免別處仍握著物件時殘留）；已提交的草稿（結果頁還在）、清單或資料庫的案件、已不存在的 id（重複點擊）都不刪，直接導向 `/invoices/new`，且不會為未知 id 自動建立空草稿；刪不掉時回 500，不假裝成功。不呼叫 API、不碰資料庫與 Storage。舊 `/intake` 頁沒有草稿，連結改為 `/invoices/new`。曾評估並放棄 POST `…/flow/restart`（重設同一份草稿，與業務定義不符）與純 GET `/invoices/new` 連結（不刪原草稿）。

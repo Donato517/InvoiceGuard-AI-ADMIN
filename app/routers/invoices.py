@@ -714,6 +714,7 @@ def _build_flow_steps(
     max_stage: int = 9,
     has_file_bytes: bool = False,
     allowed_max_step: int = 9,
+    blocked_steps: frozenset[int] = frozenset(),
 ) -> list[dict[str, Any]]:
     """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9；步驟 2「AI OCR 辨識」已整合至步驟 3 故自步驟列移除）。"""
     steps = []
@@ -733,7 +734,10 @@ def _build_flow_steps(
 
         # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1 僅顯示完成勾號不再連結返回
         can_navigate = (
-            state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
+            state != "locked"
+            and idx <= allowed_max_step
+            and idx not in blocked_steps
+            and (has_file_bytes or idx >= 3)
         )
         steps.append(
             {
@@ -1275,6 +1279,18 @@ def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
     )
 
 
+# 使用者已確認本人上傳者不得查看／推進的步驟；步驟 7～9 的本人規則待會計確認，這裡不新增（沿用主線）
+_SELF_BLOCKED_STEPS = frozenset({5, 6})
+
+
+def _deny_self_finance_view(request: Request, invoice: dict[str, Any], step: int) -> None:
+    """本人上傳者不得查看步驟 5、6（2026-11-06 使用者確認，取代「可檢視」的舊設計）。"""
+    if step in _SELF_BLOCKED_STEPS and _is_self_upload(
+        invoice.get("uploaded_by"), _reviewer_id(request)
+    ):
+        raise DeniedError
+
+
 def _render_flow_page(
     request: Request,
     invoice: dict[str, Any],
@@ -1284,10 +1300,12 @@ def _render_flow_page(
     procurement_errors: list[str] | None = None,
     period: str | None = None,
 ) -> HTMLResponse:
+    _deny_self_finance_view(request, invoice, step)  # 錯誤重繪等內部路徑也不得呈現本人不可看的步驟
     _ensure_invoice_14_fields(invoice)
     fields_14 = _build_14_fields_rows(invoice)
     invoice_id = str(invoice["id"])
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
+    is_self_upload = _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request))
     if (
         invoice.get("review_status") == "returned"
         or invoice.get("status") in ("returned", "returned_to_applicant", "returned_to_accounting")
@@ -1309,6 +1327,7 @@ def _render_flow_page(
         max_stage=int(invoice.get("stage", step)),
         has_file_bytes=bool(invoice.get("file_bytes") or invoice.get("file_name")),
         allowed_max_step=max_flow_step,
+        blocked_steps=_SELF_BLOCKED_STEPS if is_self_upload else frozenset(),
     )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
@@ -1353,6 +1372,8 @@ def _render_flow_page(
             "is_first_four_readonly": is_first_four_readonly,
             "intake": _intake_view(invoice),
             "db_invoice": _is_db_invoice(invoice),
+            "is_self_upload": is_self_upload,
+            "persist_first_four": invoice_id not in _DRAFT_INVOICE_STORE,
         },
     )
 
@@ -1377,6 +1398,7 @@ def invoice_flow(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice)
+    _deny_self_finance_view(request, invoice, step)
 
     if not invoice.get("file_bytes"):
         fetched = _fetch_storage_file_bytes(invoice_id)
@@ -1835,6 +1857,11 @@ def advance_flow_step(
     invoice = _find_flow_invoice(invoice_id)
     if invoice is not None:
         _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
+        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得在步驟 5、6 推進；步驟 7 起待會計確認，沿用主線
+        if from_step in {4, *_SELF_BLOCKED_STEPS} and _is_self_upload(
+            invoice.get("uploaded_by"), _reviewer_id(request)
+        ):
+            raise DeniedError
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
 
@@ -2208,21 +2235,16 @@ _SELF_REVIEW_MESSAGE = (
 )
 
 
-def _deny_self_review(request: Request, invoice: dict[str, Any]) -> HTMLResponse | None:
-    """三項財務操作（核准、退回、儲存會計欄位）共用的本人限制；須在任何寫入前呼叫。
+def _deny_self_review(request: Request, invoice: dict[str, Any]) -> None:
+    """三項財務操作（核准、退回、儲存會計欄位）與舊 /review 共用的本人限制；須在任何寫入前呼叫。
 
     以案件的 submitted_by 與登入者真實 User ID 比對，不採用請求內容；
-    拒絕時回 403 與清楚訊息，不寫資料庫、不改記憶體，也與資料庫故障訊息分開。
+    拒絕時丟 403 與清楚訊息，不寫資料庫、不改記憶體。本人不得查看步驟 5，
+    所以這裡不再重繪審核頁，只回錯誤頁。
     """
     case = _finance_case(invoice)
     if _is_self_upload(case.submitted_by, _reviewer_id(request)):
-        return _review_error(
-            request,
-            invoice,
-            FinanceReviewError([ReviewBlocker("SELF_REVIEW", _SELF_REVIEW_MESSAGE)]),
-            status_code=403,
-        )
-    return None
+        raise HTTPException(status_code=403, detail=_SELF_REVIEW_MESSAGE)
 
 
 @router.post("/{invoice_id}/finance-review/accounting", response_model=None)
@@ -2239,8 +2261,7 @@ def finance_update_accounting(
     先選費用大項再選會計科目，科目須屬於該大項；扣抵代號為獨立選項，不與會計科目連動。
     """
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     category = expense_category.strip()
     account = account_code.strip()
     current = _finance_case(invoice)
@@ -2291,8 +2312,7 @@ def _save_db_accounting(
 def finance_approve(request: Request, invoice_id: str) -> Response:
     """步驟 5：核准；有任何未處理項目時列出原因並擋下。"""
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     case = _finance_case(invoice)
     db_backed = _is_db_invoice(invoice)
     if db_backed and not finance_db.is_uuid(_reviewer_id(request)):
@@ -2327,8 +2347,7 @@ def finance_return(
     return_allowed 的值為「列序號:相依欄位名稱」（例如 0:total_amount），表示財務一併授權申請人修改的相依表頭欄位。
     """
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     allowed: dict[int, list[str]] = {}
     for raw in return_allowed or []:
         index, _, name = raw.partition(":")
@@ -2781,8 +2800,7 @@ def review_invoice(
         raise HTTPException(status_code=404, detail="找不到指定發票")
     # 舊入口只處理記憶體示範案件；資料庫案件不會被它寫入，回成功會誤導，與其他舊示範寫入一致地拒絕
     _refuse_legacy_demo_write(invoice_id, invoice)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
+    _deny_self_review(request, invoice)  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
     # 以下全部檢核都在修改任何資料之前完成
     case = _finance_case(invoice)
     blockers: list[ReviewBlocker] = []

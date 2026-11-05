@@ -1,5 +1,19 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 本人上傳的發票不得查看步驟 5、6；步驟 4 統一「檢視我的發票」
+
+- 需求（使用者確認，取代同日前一筆與主線 `bb6dc42` 的「本人可檢視步驟 5、只是不能操作」設計）：本人上傳的發票，本人不得執行財務審核動作，也不得查看步驟 5、6；不論財務部或非財務部門，本人在步驟 4 完成後顯示「檢視我的發票」並回發票管理列表（`/invoices`）。
+- 後端：`invoice_flow` 與 `_render_flow_page` 對本人上傳且 `step in {5, 6}`（`_SELF_BLOCKED_STEPS`）回 403（`DeniedError`，錯誤重繪路徑也一併擋住）；`/flow/advance` 對 `from_step in {4, 5, 6}` 的本人上傳回 403，不改案件狀態；`_deny_self_review` 不再重繪步驟 5 審核頁，改回 403 錯誤頁（訊息不變）。判斷沿用主線 `_is_self_upload`（只比對真實 User ID）。
+- 步驟 4 按鈕：本人上傳者不再看到「確認並繼續」或「前往步驟 5」。非暫存草稿的案件，「檢視我的發票」仍以 POST 送到原本的 `/flow/finish-first-four`（資料庫案件只轉址，舊記憶體示範發票寫入「前四步已核對」標記），再導回 `/invoices`；暫存草稿因該端點回 409，改用一般連結。不呼叫 `/flow/advance`，不改審核狀態。步驟列只停用步驟 5、6 的連結；列表本人那列的「檢視詳情」若會連到步驟 5、6 則改連步驟 4。
+- 【待決】步驟 7～9 的本人規則等會計確認，本次不新增、也不放寬主線：本人 GET 步驟 7～9、`/flow/advance`（from_step 7 起）與 `/flow/complete` 的行為與主線相同。上一版（`19e7d8c`）曾一併封鎖 `step >= 5`、`from_step >= 4` 與 `/flow/complete`，已縮回到使用者確認的步驟 5、6。風險：目前本人若取得步驟 7～9 的連結或直接 POST，仍可操作（與主線相同）；會計決議後只需調整 `_SELF_BLOCKED_STEPS` 與 `test_steps_7_to_9_follow_main_until_accounting_decides`。
+- 未改：`_flow_step_review.html` 內主線的本人唯讀區塊現在到不了（保留）；`/filing`、`/import-confirm`、匯出與批次申報的本人限制待另行協調。
+- 驗證：`test_self_upload_flow_gates.py`（24 項）、更新 `test_finance_self_upload.py` 與 `test_department_login.py` 的舊斷言；ADMIN 全套 3165 passed、41 skipped（含需要隔離資料庫的整合測試被略過）；Ruff、djLint、check_project、`git diff --check` 通過。離線測試，未連資料庫與正式站，未做瀏覽器實測。
+
+## 2026-11-06 本人上傳的發票不得自行推進財務流程（補主線缺口）
+
+- 問題與原因：主線已擋本人上傳的核准、退回、儲存會計欄位與舊 `/review`，但步驟 5 起的「確認並繼續」（`/flow/advance`）沒有本人限制。
+- 處理：已由下一筆（步驟 5、6 不得查看／推進）取代並縮小範圍；原本一併加在 `/flow/complete` 的本人限制已移除（步驟 9 的本人規則待會計確認，沿用主線）。
+
 ## 2026-11-06 步驟 3 與退回補正頁：凍結分欄改為比照步驟 5 的捲動
 
 - 問題與原因：PR #44 的凍結分欄有高度門檻（47rem／52rem），常見筆電視窗（約 640～750px 高）低於門檻，步驟 3 看起來沒有凍結；使用者要求捲動比照步驟 5（只看寬度，矮視窗停在 32rem 下限）。另外 PR #45 新增的退回補正頁（`/invoices/{id}/correct`）沒有套用凍結。

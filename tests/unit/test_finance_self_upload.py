@@ -80,20 +80,13 @@ def test_list_marks_own_upload(finance_me: TestClient) -> None:
     assert ">me<" in html and "@example.com" not in html.split("<tbody>")[1]
 
 
-def test_detail_self_upload_is_view_only(finance_me: TestClient) -> None:
+def test_self_upload_cannot_view_review_step(finance_me: TestClient) -> None:
+    """2026-11-06 使用者確認：本人上傳者不得查看步驟 5（取代先前「可檢視、不可操作」的設計）。"""
     _set_uploader(3, ME, "me@example.com")
-    html = finance_me.get("/invoices/3/flow?step=5").text
-    assert "本人上傳／無權審核" in html
-    assert (
-        "此發票由您本人提交，依權限規則不得由您自行核准、退回或儲存會計欄位，請交由其他具備權限的財務人員處理。"
-        in html
-    )
-    assert 'action="/invoices/3/finance-review/approve"' not in html
-    assert 'action="/invoices/3/finance-review/return"' not in html
-    assert html.count("data-self-upload-disabled") == 3  # 核准、退回、儲存會計欄位皆停用
-    assert "返回發票列表" in html
-    assert "上傳者帳號" in html and ">me<" in html
-    assert "核對欄位（14 項）" in html  # 欄位仍可檢視
+    response = finance_me.get("/invoices/3/flow?step=5")
+    assert response.status_code == 403
+    assert "核對欄位（14 項）" not in response.text
+    assert 'action="/invoices/3/finance-review/approve"' not in response.text
 
 
 def test_self_approve_post_is_rejected_by_server(finance_me: TestClient) -> None:

@@ -826,7 +826,12 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         step4_page = browser.get("/invoices/1/flow?step=4")
         assert step4_page.status_code == 200
         assert "系統自動檢核" in step4_page.text
-        assert "完成前四步，返回待處理發票" in step4_page.text
+        # 本人上傳者（真實 Session 的 UUID）：統一顯示「檢視我的發票」，仍走 finish-first-four 保存前四步標記
+        assert (
+            "檢視我的發票" in step4_page.text
+            and "完成前四步，返回待處理發票" not in step4_page.text
+        )
+        assert 'action="/invoices/1/flow/finish-first-four"' in step4_page.text
         for finance_step_label in [
             "財務審核",
             "產生申報檔",
@@ -868,7 +873,10 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         assert browser.get("/invoices/review").status_code == 200
         assert browser.get("/invoices/filing").status_code == 200
         assert browser.get("/invoices/voucher").status_code == 200
-        fin_step5 = browser.get("/invoices/1/flow?step=5")
+        # 本人上傳的發票（1）不得查看步驟 5、6；他人上傳的發票（2）可以
+        assert browser.get("/invoices/1/flow?step=5").status_code == 403
+        assert browser.get("/invoices/1/flow?step=6").status_code == 403
+        fin_step5 = browser.get("/invoices/2/flow?step=5")
         assert fin_step5.status_code == 200
         assert "財務審核" in fin_step5.text and "匯出結果" in fin_step5.text
         # 步驟 5 財務審核需顯示 14 項核對欄位，但不含發票原圖／PDF 原始文件
@@ -883,7 +891,7 @@ def test_procurement_department_invoice_upload_landing_and_four_step_limit(
         assert "/invoices/2" in fin_list.text
 
         # 步驟 6 產生申報檔：單張檢核 81 字元格式 21 預覽 + 批次產生申報檔卡片
-        fin_step6 = browser.get("/invoices/1/flow?step=6")
+        fin_step6 = browser.get("/invoices/2/flow?step=6")
         assert fin_step6.status_code == 200
         assert "本張發票檢核" in fin_step6.text
         assert "格式 21 單行預覽（81 字元" in fin_step6.text

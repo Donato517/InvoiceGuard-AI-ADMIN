@@ -6,17 +6,29 @@ API 以 httpx.MockTransport 的假 API 替身（沿用 test_intake_routes）；�
 
 import copy
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from test_intake_routes import INV, RECOGNITION, RID, FakeApi, api, review_data  # noqa: F401
+from test_intake_routes import (  # noqa: F401
+    INV,
+    RECOGNITION,
+    RID,
+    SUBMITTED,
+    FakeApi,
+    api,
+    review_data,
+)
 
 from app.routers import invoices as invoices_router
+from app.schemas.e_admin import Action
 
 _ORIGIN = {"Origin": "http://testserver"}  # 流程頁的上傳／核對 POST 需同源
 
+ME = "11111111-1111-4111-8111-111111111111"
+OTHER = "22222222-2222-4222-8222-222222222222"
 PNG = ("invoice.png", b"fake-png-bytes", "image/png")
 
 
@@ -336,3 +348,396 @@ def test_mismatch_and_tolerant_zh_are_left_alone(
     _upload(admin_client, draft)
     html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
     assert _zh_input_value(html) == "壹萬肆仟捌佰伍拾玖元整" and "field-suggestion" not in html
+
+
+# ---- 重新上傳（系統已有相同發票時，放棄這次、改傳另一張新發票）----
+# 業務定義（2026-11-05 使用者確認）：按下「重新上傳」→ 刪除本次尚未成功提交的原草稿（辨識結果、核對資料、暫存影像），
+# 不刪除或修改資料庫中已存在的重複發票，不影響其他使用者或其他草稿，保留登入 Session，回到新發票上傳頁。
+# 操作：POST /invoices/{id}/flow/discard（有副作用，所以不用 GET）→ 303 /invoices/new → 全新草稿的步驟 1。
+# 准入：登入＋inv.upload VIEW（router 層）＋草稿上傳者本人＋同源；不要求 inv.intake CREATE。
+# 下列測試走真正的 require_invoice_access 與路由，只替身部門模組與 API；是記憶體內、假 API 的離線驗證，
+# 不是資料庫、Storage、真實瀏覽器或正式環境的驗收。
+
+DUPLICATE_409 = {
+    "error": {"code": "INVOICE_DUPLICATED", "message": "此發票已存在於系統中，禁止重複上傳"}
+}
+
+
+class _Module:
+    """假 E 模組：只允許 inv.upload VIEW；其餘功能（含 inv.intake CREATE）一律拒絕，證明流程不依賴它。"""
+
+    access = object()
+
+    def __init__(self, user_id: str, department: str = "採購部", *, expired: bool = False) -> None:
+        self.user_id = user_id
+        self.department = department
+        self.expired = expired
+        self.checks: list[tuple[str, Any]] = []
+
+    def identity(self, token: Any) -> SimpleNamespace:
+        if token is None or self.expired:
+            from app.schemas.e_admin import UnauthenticatedError
+
+            raise UnauthenticatedError
+        return SimpleNamespace(user_id=self.user_id, selected_department_id=self.user_id)
+
+    def check(self, identity: Any, code: str, action: Any, target: Any) -> None:
+        from app.schemas.e_admin import DeniedError
+
+        self.checks.append((code, action))
+        if code != "inv.upload" or action != Action.VIEW:
+            raise DeniedError
+
+    def departments(self, identity: Any) -> tuple[Any, ...]:
+        from app.schemas.e_access import EffectiveDepartment
+
+        return (EffectiveDepartment(self.user_id, "t", self.department),)
+
+    def sidebar_menu(self, identity: Any) -> tuple[()]:
+        return ()
+
+
+@pytest.fixture
+def browser_as(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """以某員工登入的瀏覽器（真正的登入與權限檢查，只替身部門模組與 API）；app 層級一次只有一個身分，換人就重新建立。"""
+    from app.constants import SESSION_COOKIE_NAME
+    from app.main import app
+    from app.services.e_admin_service import get_e_module
+
+    monkeypatch.setattr(invoices_router, "get_intake_client", lambda request: api.client())
+
+    def build(
+        user_id: str, department: str = "採購部", *, cookie: bool = True, expired: bool = False
+    ) -> tuple[TestClient, _Module]:
+        module = _Module(user_id, department, expired=expired)
+        app.dependency_overrides.clear()
+        app.dependency_overrides[get_e_module] = lambda: module
+        client = TestClient(app, follow_redirects=False)
+        if cookie:
+            client.cookies.set(SESSION_COOKIE_NAME, "synthetic-session")
+        return client, module
+
+    yield build
+    app.dependency_overrides.clear()
+
+
+def _start_draft(client: TestClient) -> str:
+    response = client.get("/invoices/new")
+    assert response.status_code == 303
+    return response.headers["location"].split("/")[2]
+
+
+def _duplicate_submit(client: TestClient, api: FakeApi, draft_id: str) -> Any:
+    """上傳、辨識，再提交：API 回 409 重複發票（沒有建立任何案件）。"""
+    _upload(client, draft_id)
+    api.routes["/api/v1/invoices"] = httpx.Response(409, json=DUPLICATE_409)
+    return client.post(
+        f"/invoices/{draft_id}/flow/review",
+        headers=_ORIGIN,
+        data=review_data("submit", recognition_id=RID),
+    )
+
+
+def _discard(client: TestClient, draft_id: str, *, origin: bool = True) -> Any:
+    return client.post(f"/invoices/{draft_id}/flow/discard", headers=_ORIGIN if origin else {})
+
+
+def _memory_snapshot() -> dict[str, Any]:
+    """草稿以外的記憶體資料（案件清單與各式快取）；重新上傳不得改動它們。"""
+    return {
+        "cases": copy.deepcopy(invoices_router._INVOICE_STORE),
+        "finance_cases": dict(invoices_router._FINANCE_CASES),
+        "history": copy.deepcopy(dict(invoices_router._FINANCE_HISTORY)),
+        "returns": copy.deepcopy(dict(invoices_router._RETURN_SNAPSHOTS)),
+        "accounting": copy.deepcopy(invoices_router._ACCOUNTING_DRAFT),
+    }
+
+
+def test_duplicate_page_offers_a_discard_button_not_a_plain_link(
+    browser_as: Any, api: FakeApi
+) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+
+    response = _duplicate_submit(client, api, draft_id)
+
+    assert response.status_code == 200  # 沒有 403、沒有導向登入頁
+    assert "此發票已存在於系統中" in response.text  # 既有的重複發票提示（API 拒絕後的橫幅）
+    html = response.text
+    assert f'formaction="/invoices/{draft_id}/flow/discard"' in html
+    button = html[html.rindex("<button", 0, html.index("flow/discard")) :].split("</button>")[0]
+    assert 'type="submit"' in button and "name=" not in button  # 不帶 action，不會被當成提交或檢核
+    assert "data-reupload" in button
+    assert "/flow/restart" not in html and 'href="/intake"' not in html
+    assert "/cases/" not in html  # 沒有建立案件，也不連到既有案件
+
+
+def test_check_reports_duplicate_and_page_still_offers_the_discard_button(
+    browser_as: Any, api: FakeApi
+) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _upload(client, draft_id)
+    api.routes["/api/v1/invoices/check-duplicate"] = httpx.Response(
+        200, json={"is_duplicate": True}
+    )
+
+    live = client.post(
+        f"/invoices/{draft_id}/flow/check", headers=_ORIGIN, data=review_data("check")
+    )
+    paged = client.post(
+        f"/invoices/{draft_id}/flow/review", headers=_ORIGIN, data=review_data("check")
+    )
+
+    assert live.status_code == 200 and live.json()["duplicate"] is True
+    assert "系統內已有相同字軌、號碼與賣方統編的發票" in paged.text  # 整頁檢核摘要的查重提示
+    assert f'formaction="/invoices/{draft_id}/flow/discard"' in paged.text
+
+
+def test_discard_deletes_the_unsubmitted_draft_and_everything_in_it(
+    browser_as: Any, api: FakeApi
+) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _duplicate_submit(client, api, draft_id)
+    held = invoices_router._DRAFT_INVOICE_STORE[
+        draft_id
+    ]  # 若別處還握著這份草稿，內容也必須已被清空
+    assert held.get("file_bytes") and held.get("intake_form") and held.get("recognition")
+
+    response = _discard(client, draft_id)
+
+    assert response.status_code == 303 and response.headers["location"] == "/invoices/new"
+    assert draft_id not in invoices_router._DRAFT_INVOICE_STORE
+    for key in ("file_bytes", "file_media_type", "recognition", "intake_form", "intake_state"):
+        assert key not in held, key  # 辨識結果、核對資料、暫存影像都不再留在舊物件裡
+    # 用舊草稿 id 取不回任何東西：本人（非財務）看到的是 403／404，而且不會有辨識結果或影像
+    for path in (f"/invoices/{draft_id}/flow?step=3", f"/invoices/{draft_id}/file"):
+        assert client.get(path).status_code in (403, 404), path
+    leftover = invoices_router._DRAFT_INVOICE_STORE.get(draft_id) or {}
+    assert not leftover.get("intake_form") and not leftover.get("file_bytes")
+
+
+def test_discard_keeps_the_login_and_lands_on_a_new_upload_page(
+    browser_as: Any, api: FakeApi
+) -> None:
+    client, module = browser_as(ME)
+    first = _start_draft(client)
+    _duplicate_submit(client, api, first)
+    cookies_before = dict(client.cookies)
+
+    response = _discard(client, first)
+
+    assert "set-cookie" not in response.headers  # 沒有清除或改寫任何 Cookie
+    new_flow = client.get(response.headers["location"])
+    assert new_flow.status_code == 303
+    second = new_flow.headers["location"].split("/")[2]
+    assert new_flow.headers["location"] == f"/invoices/{second}/flow?step=1" and second != first
+    page = client.get(new_flow.headers["location"])
+    assert page.status_code == 200 and 'type="file"' in page.text  # 回到選檔步驟，仍登入
+    assert dict(client.cookies) == cookies_before
+    assert not [c for c in module.checks if c[0] == "inv.intake"]  # 沒有要求 inv.intake
+
+
+def test_a_new_image_can_be_uploaded_after_discarding(browser_as: Any, api: FakeApi) -> None:
+    client, _ = browser_as(ME)
+    first = _start_draft(client)
+    _duplicate_submit(client, api, first)
+    _discard(client, first)
+    api.routes["/api/v1/invoices"] = httpx.Response(201, json=SUBMITTED)
+    before = len(api.requests)
+
+    second = client.get("/invoices/new").headers["location"].split("/")[2]
+    upload = _upload(client, second)
+
+    assert (
+        upload.status_code == 303
+        and upload.headers["location"] == f"/invoices/{second}/flow?step=3"
+    )
+    assert api.paths()[before:] == ["/api/v1/invoices/recognize"]  # 只有新影像的辨識
+    assert 'value="辦公文具"' in client.get(f"/invoices/{second}/flow?step=3").text
+    assert first not in invoices_router._DRAFT_INVOICE_STORE  # 新影像沒有寫進舊草稿
+
+
+def test_discard_never_calls_the_api_or_touches_cases(browser_as: Any, api: FakeApi) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _duplicate_submit(client, api, draft_id)
+    calls = len(api.requests)
+    snapshot = _memory_snapshot()
+
+    _discard(client, draft_id)
+
+    assert len(api.requests) == calls  # 沒有任何 API 呼叫，更不會有刪除正式發票的呼叫
+    assert all(r.method in ("POST", "GET") for r in api.requests)
+    assert _memory_snapshot() == snapshot  # 案件清單、財務與退回快取都沒變
+
+
+def test_discard_leaves_other_drafts_untouched_even_when_repeated(
+    browser_as: Any, api: FakeApi
+) -> None:
+    mine, _ = browser_as(ME)
+    keep = _start_draft(mine)
+    _upload(mine, keep)
+    target = _start_draft(mine)
+    _duplicate_submit(mine, api, target)
+    other, _ = browser_as(OTHER)
+    others = _start_draft(other)
+    invoices_router._DRAFT_INVOICE_STORE[others]["intake_form"] = "other-users-form"
+    mine, _ = browser_as(ME)
+    keep_snapshot = dict(invoices_router._DRAFT_INVOICE_STORE[keep])
+    others_snapshot = dict(invoices_router._DRAFT_INVOICE_STORE[others])
+
+    first = _discard(mine, target)
+    second = _discard(mine, target)  # 重複點擊：草稿已不存在
+
+    assert first.status_code == second.status_code == 303
+    assert first.headers["location"] == second.headers["location"] == "/invoices/new"
+    assert target not in invoices_router._DRAFT_INVOICE_STORE
+    assert dict(invoices_router._DRAFT_INVOICE_STORE[keep]) == keep_snapshot
+    assert dict(invoices_router._DRAFT_INVOICE_STORE[others]) == others_snapshot
+
+
+def test_discard_of_a_missing_or_foreign_id_creates_and_deletes_nothing(
+    browser_as: Any,
+) -> None:
+    client, _ = browser_as(ME)
+    drafts_before = set(invoices_router._DRAFT_INVOICE_STORE)
+    snapshot = _memory_snapshot()
+
+    unknown = _discard(client, "cccccccc-0000-4000-8000-000000000003")  # 沒有這份草稿
+    demo = _discard(client, "3")  # 發票清單裡的示範案件，不是草稿
+
+    assert unknown.status_code == demo.status_code == 303
+    assert unknown.headers["location"] == demo.headers["location"] == "/invoices/new"
+    assert (
+        set(invoices_router._DRAFT_INVOICE_STORE) == drafts_before
+    )  # 沒有自動建立空草稿，也沒有刪除
+    assert _memory_snapshot() == snapshot  # 示範案件還在
+
+
+def test_discard_never_removes_a_submitted_draft(browser_as: Any, api: FakeApi) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _upload(client, draft_id)
+    client.post(f"/invoices/{draft_id}/flow/review", headers=_ORIGIN, data=review_data("submit"))
+    calls = len(api.requests)
+
+    response = _discard(client, draft_id)
+
+    assert response.status_code == 303 and response.headers["location"] == "/invoices/new"
+    kept = invoices_router._DRAFT_INVOICE_STORE.get(draft_id)
+    assert kept is not None and kept.get("submitted_invoice_id")  # 已提交案件的結果頁資料保留
+    assert len(api.requests) == calls  # 不呼叫 API：案件在資料庫，不動它
+
+
+@pytest.mark.parametrize("intruder_department", ["採購部", "財務部"])
+def test_another_users_draft_cannot_be_discarded(
+    browser_as: Any, api: FakeApi, intruder_department: str
+) -> None:
+    owner, _ = browser_as(ME)
+    draft_id = _start_draft(owner)
+    _upload(owner, draft_id)
+    intruder, _ = browser_as(OTHER, intruder_department)
+
+    response = _discard(intruder, draft_id)
+
+    assert response.status_code == 403
+    draft = invoices_router._DRAFT_INVOICE_STORE.get(draft_id)
+    assert draft is not None and draft.get("intake_form") is not None and draft.get("file_bytes")
+
+
+@pytest.mark.parametrize("state", ["no_cookie", "expired"])
+def test_discard_requires_a_valid_login(browser_as: Any, api: FakeApi, state: str) -> None:
+    owner, _ = browser_as(ME)
+    draft_id = _start_draft(owner)
+    _upload(owner, draft_id)
+    client, _ = browser_as(ME, cookie=state != "no_cookie", expired=state == "expired")
+
+    response = _discard(client, draft_id)
+
+    assert response.status_code in (303, 401)
+    if response.status_code == 303:
+        assert response.headers["location"].startswith("/login")
+    draft = invoices_router._DRAFT_INVOICE_STORE.get(draft_id)
+    assert draft is not None and draft.get("intake_form") is not None
+
+
+def test_discard_requires_same_origin_and_post(browser_as: Any, api: FakeApi) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _upload(client, draft_id)
+
+    assert _discard(client, draft_id, origin=False).status_code == 403
+    assert (
+        client.get(f"/invoices/{draft_id}/flow/discard").status_code == 405
+    )  # 有副作用，只接受 POST
+    draft = invoices_router._DRAFT_INVOICE_STORE.get(draft_id)
+    assert draft is not None and draft.get("intake_form") is not None
+
+
+def test_a_failed_discard_is_reported_and_not_shown_as_success(
+    browser_as: Any, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+    _upload(client, draft_id)
+
+    class _Broken(type(invoices_router._DRAFT_INVOICE_STORE)):  # type: ignore[misc]
+        def pop(self, key: Any, *args: Any) -> Any:
+            raise RuntimeError("boom")
+
+    broken = _Broken(invoices_router._DRAFT_INVOICE_STORE)
+    monkeypatch.setattr(invoices_router, "_DRAFT_INVOICE_STORE", broken)
+    response = _discard(client, draft_id)
+    assert response.status_code == 500 and "location" not in response.headers
+    assert broken[draft_id].get("intake_form") is not None  # 沒刪成就原樣保留，不假裝成功
+
+    class _Stuck(type(invoices_router._DRAFT_INVOICE_STORE)):  # type: ignore[misc]
+        def pop(self, key: Any, *args: Any) -> Any:
+            return dict.get(self, key)  # 假裝刪了，其實還在
+
+    stuck = _Stuck(broken)
+    monkeypatch.setattr(invoices_router, "_DRAFT_INVOICE_STORE", stuck)
+    response = _discard(client, draft_id)
+    assert response.status_code == 500 and "location" not in response.headers
+
+
+def test_reupload_flow_never_forbids_an_employee_without_intake_create(
+    browser_as: Any, api: FakeApi
+) -> None:
+    client, module = browser_as(ME)
+    draft_id = _start_draft(client)
+    _duplicate_submit(client, api, draft_id)
+
+    statuses = [
+        _discard(client, draft_id).status_code,
+        client.get("/invoices/new").status_code,
+    ]
+
+    assert statuses == [303, 303]  # 沒有任何 403
+    assert client.get("/intake").status_code == 403  # /intake 本身的權限不變
+    assert ("inv.upload", Action.VIEW) in module.checks
+
+
+def test_new_drafts_never_collide_even_with_numeric_demo_ids(browser_as: Any) -> None:
+    assert any(str(i["id"]).isdigit() for i in invoices_router._INVOICE_STORE)
+    mine, _ = browser_as(ME)
+    first = _start_draft(mine)
+    other, _ = browser_as(OTHER)
+    other_id = _start_draft(other)
+    mine, _ = browser_as(ME)
+    second = _start_draft(mine)
+
+    assert len({first, other_id, second}) == 3
+    assert invoices_router._DRAFT_INVOICE_STORE[other_id]["uploaded_by"] == OTHER
+
+
+def test_restart_route_still_does_not_exist(browser_as: Any) -> None:
+    client, _ = browser_as(ME)
+    draft_id = _start_draft(client)
+
+    assert client.post(f"/invoices/{draft_id}/flow/restart", headers=_ORIGIN).status_code in (
+        404,
+        405,
+    )

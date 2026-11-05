@@ -3,6 +3,7 @@
   @description 核對表單（14 項表頭欄位＋多筆品名明細＋檢核／提交按鈕）；/intake 核對頁與發票作業流程步驟 3 共用；金額連動（國字大寫、總計核對提醒）由 static/js/intake-amounts.js 提供。
   @context live_check: bool    流程頁為 true：輸入時即時檢核（不顯示「檢核」按鈕），並用 check_url 呼叫伺服器檢核
   @context check_url: str      即時檢核端點（live_check 時使用）
+  @context discard_url: str    流程頁「重新上傳」的 POST 端點（刪除未提交的草稿；空白＝舊 /intake 頁，改用連結）
   @context review_action: str   表單送出位置（預設 /intake/review；流程頁為 /invoices/{id}/flow/review）
   @context form, errors, warnings, missing, rows, tax_type_options, max_items: 同 pages/intake/review.html
   @context zh_suggestion_note: str  國字大寫自動帶入的核對提醒（可空；空白表示沒有自動帶入或使用者已改過）
@@ -194,7 +195,14 @@
     <p>
       {% if not live_check %}<button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>{% endif %}
       <button type="submit" name="action" value="submit" class="btn btn--primary">確認提交</button>
-      <a href="/intake">重新上傳</a>
+      {#- 重新上傳（例如系統已有相同發票時放棄這次、改傳另一張）：流程頁用 POST 刪除這份未提交的草稿（辨識結果、核對資料、暫存影像）
+          再進入新發票上傳流程（formaction 只改這顆按鈕的送出位置，沒有 name，不會被當成檢核或提交）；
+          舊 /intake 頁沒有草稿，直接連到新上傳流程。兩者都不經 /intake 的 inv.intake 授權 -#}
+      {% if discard_url | default("") %}
+        <button type="submit" formaction="{{ discard_url }}" formnovalidate class="link-button" data-reupload>重新上傳</button>
+      {% else %}
+        <a href="/invoices/new" data-reupload>重新上傳</a>
+      {% endif %}
     </p>
   </form>
   <script src="{{ static_url('js/intake-amounts.js') }}" defer></script>

@@ -2,13 +2,14 @@
 
 規則（業務決定 2026-11-05）：
     - 判斷只依 API 的警示（total_amount_zh_unreadable）或 AI 國字空白；ADMIN 不自行解析國字。
-    - 可解析但與總計不符（mismatch）、容錯解析一致（API 無警示）都不自動覆寫。
+    - 可解析但與總計不符（mismatch）不自動覆寫；容錯解析一致但寫法不標準時帶入標準國字並保留原字串於提醒。
     - 總計空白、非法、非整數時不產生建議。
     - 只在辨識當下填一次；之後重新渲染不再填值，人工修改不被覆寫。
 替身測試：不連 DB、Storage、AI 或真實 API。
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -96,11 +97,34 @@ def test_blank_zh_with_valid_total_is_filled(blank: str | None) -> None:
     assert suggestion is not None and suggestion.original == ""
 
 
-def test_tolerant_string_that_matches_is_left_untouched_without_a_note() -> None:
-    rec = recognition(TOLERANT)  # API 容錯解析為 14858 → 沒有警示
-    assert mapping.form_from_recognition(rec).total_amount_zh == TOLERANT
+def test_tolerant_nonstandard_string_is_standardized_and_original_kept_in_the_note() -> None:
+    """人工驗收案例：API 容錯解析為 14858（無警示），但畫面仍留著預印單位殘留的 OCR 字串。"""
+    rec = recognition(TOLERANT)
+    form = mapping.form_from_recognition(rec)
+    assert form.total_amount_zh == "壹萬肆仟捌佰伍拾捌元整"
+    suggestion = mapping.zh_suggestion(rec)
+    assert suggestion is not None and suggestion.kind == "nonstandard"
+    assert suggestion.original == TOLERANT
+    note = mapping.zh_suggestion_note(rec, form)
+    assert TOLERANT in note and "壹萬肆仟捌佰伍拾捌元整" in note and "寫法不標準" in note
+    # AI 原值保留在辨識結果，不被改寫
+    assert rec.invoice.total_amount_zh == TOLERANT
+
+
+@pytest.mark.parametrize(
+    "same", ["壹萬肆仟捌佰伍拾捌元整", "壹萬肆仟捌佰伍拾捌元", " 壹萬肆仟 捌佰伍拾捌元整 "]
+)
+def test_standard_spelling_up_to_the_final_zheng_or_spaces_is_not_touched(same: str) -> None:
+    rec = recognition(same)
     assert mapping.zh_suggestion(rec) is None
+    assert mapping.form_from_recognition(rec).total_amount_zh == same
     assert mapping.zh_suggestion_note(rec, mapping.form_from_recognition(rec)) == ""
+
+
+def test_nonstandard_suggestion_never_overrides_a_manual_edit_on_rerender() -> None:
+    rec = recognition(TOLERANT)
+    form = replace(mapping.form_from_recognition(rec), total_amount_zh="我自己改的")
+    assert mapping.zh_suggestion_note(rec, form) == ""
 
 
 def test_mismatch_is_only_a_warning_never_overwritten() -> None:

@@ -9,8 +9,10 @@
     - 空白一律送 null（API 的選填欄位視為未提供，必填欄位由 API 回報缺漏／422）。
     - changes（逐次修改紀錄）留空：API 會把「與 AI 原值不同卻沒有紀錄」的欄位補一筆，代價是沒有中間修改歷程。
     - 國字大寫建議值（2026-11-05 業務決定）：辨識當下，API 回報 total_amount_zh_unreadable 或 AI 國字空白，且數字總計是合法整數，
-      才把總計轉成標準國字帶入表單（form_from_recognition，只發生這一次）；可解析但不符、容錯解析一致都不處理。判斷只依 API 警示，
-      ADMIN 不解析國字；AI 原值不被改寫（RecognitionView 不變，API 以 recognition_id 對照）。
+      才把總計轉成標準國字帶入表單（form_from_recognition，只發生這一次）；可解析但不符（mismatch）不處理，只由 API 警示。
+      2026-11-05 人工驗收補充：API 容錯解析一致（例如保留空位單位「億仟佰拾壹萬…」）但寫法與標準國字不同時，同樣帶入標準國字，
+      提醒中保留 AI 原字串（只差「整」字或空白不算不標準）。判斷只依 API 警示與字串比對，ADMIN 不解析國字金額；
+      AI 原值不被改寫（RecognitionView 不變，API 以 recognition_id 對照）。
     - API 目前沒有「備註」欄位，14 項表格中的備註只顯示、不送出（見 FIELD_ROWS）。
 """
 
@@ -146,31 +148,48 @@ class ZhSuggestion:
 
     value: str
     original: str
+    kind: str = "unreadable"  # unreadable（API 無法判讀）｜blank（AI 沒辨識到）｜nonstandard（可解析且與總計一致，但寫法不標準）
+
+
+def _zh_core(text: str) -> str:
+    """比較國字是否「同一寫法」：去空白與結尾的「整」，其餘逐字不變。"""
+    compact = "".join(text.split())
+    return compact[:-1] if compact.endswith("整") else compact
 
 
 def zh_suggestion(recognition: RecognitionView) -> ZhSuggestion | None:
-    """國字大寫是否需要自動帶入建議值。
+    """國字大寫是否需要自動帶入標準值。
 
-    條件：API 回報 total_amount_zh_unreadable（無法判讀），或 AI 國字空白；且數字總計是合法整數。
-    可解析但與總計不符（mismatch）、容錯解析一致（API 無警示）、總計空白／非法／有小數都回 None。
+    總計必須是合法整數；API 回報 total_amount_zh_mismatch（可解析但與總計不符）時絕不覆寫，只留警示。
+    帶入條件：API 回報 unreadable、AI 國字空白，或 AI 字串可解析且與總計一致但寫法與標準國字不同（nonstandard）。
     """
     invoice = recognition.invoice
     original = (invoice.total_amount_zh or "").strip()
-    unreadable = any(
-        w.field == "total_amount_zh" and w.code == "total_amount_zh_unreadable"
-        for w in recognition.warnings
-    )
-    if original and not unreadable:
+    codes = {w.code for w in recognition.warnings if w.field == "total_amount_zh"}
+    if "total_amount_zh_mismatch" in codes:
         return None
     value = amount_to_chinese(invoice.total_amount)
-    return ZhSuggestion(value, original) if value else None
+    if not value:
+        return None
+    if "total_amount_zh_unreadable" in codes:
+        return ZhSuggestion(value, original, "unreadable")
+    if not original:
+        return ZhSuggestion(value, original, "blank")
+    if _zh_core(original) == _zh_core(value):
+        return None
+    return ZhSuggestion(value, original, "nonstandard")
 
 
 def zh_suggestion_text(suggestion: ZhSuggestion) -> str:
     """自動帶入後給上傳者的核對提醒（與手機前台同文案）；原值過長只顯示前段。"""
     original = suggestion.original
     shown = original[:_ZH_ORIGINAL_MAX] + "…" if len(original) > _ZH_ORIGINAL_MAX else original
-    head = f"AI 辨識的國字大寫「{shown}」無法判讀，" if original else "AI 沒有辨識到國字大寫金額，"
+    if suggestion.kind == "blank":
+        head = "AI 沒有辨識到國字大寫金額，"
+    elif suggestion.kind == "nonstandard":
+        head = f"AI 辨識的國字大寫「{shown}」寫法不標準（可對應總計），"
+    else:
+        head = f"AI 辨識的國字大寫「{shown}」無法判讀，"
     return f"{head}已依總計自動帶入「{suggestion.value}」，請對照原始發票核對。"
 
 

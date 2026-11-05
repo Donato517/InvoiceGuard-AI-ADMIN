@@ -259,21 +259,25 @@ def test_new_invoice_is_not_saved_to_list_until_api_submit(
 
     new_res = admin_client.get("/invoices/new")
     assert new_res.status_code == 303
-    assert new_res.headers["location"] == "/invoices/6/flow?step=1"
+    draft_id = new_res.headers["location"].split("/")[
+        2
+    ]  # 新草稿一律是 UUID，不再從清單的數字 id 推算
+    assert new_res.headers["location"] == f"/invoices/{draft_id}/flow?step=1"
+    assert draft_id not in {str(i["id"]) for i in _INVOICE_STORE}
 
     upload_res = admin_client.post(
-        "/invoices/6/flow/upload",
+        f"/invoices/{draft_id}/flow/upload",
         headers=_ORIGIN,
         files={"file": ("invoice.png", b"fake-png-bytes", "image/png")},
     )
     assert upload_res.status_code == 303
-    assert upload_res.headers["location"] == "/invoices/6/flow?step=3"
-    assert admin_client.get("/invoices/6/file").status_code == 200
+    assert upload_res.headers["location"] == f"/invoices/{draft_id}/flow?step=3"
+    assert admin_client.get(f"/invoices/{draft_id}/file").status_code == 200
 
     # 舊的示範核對（flow/correct）不可用來儲存 API 辨識的草稿，否則會把示範預設值寫進發票清單
     assert (
         admin_client.post(
-            "/invoices/6/flow/correct",
+            f"/invoices/{draft_id}/flow/correct",
             data={"invoice_number": "CD87654321", "invoice_date": "113/08/20", "net_amount": "1"},
         ).status_code
         == 400
@@ -281,10 +285,10 @@ def test_new_invoice_is_not_saved_to_list_until_api_submit(
     assert {int(i["id"]) for i in _INVOICE_STORE} == initial_ids
 
     submit_res = admin_client.post(
-        "/invoices/6/flow/review", headers=_ORIGIN, data=review_data("submit")
+        f"/invoices/{draft_id}/flow/review", headers=_ORIGIN, data=review_data("submit")
     )
     assert submit_res.status_code == 303
-    assert admin_client.get("/invoices/6/file").status_code == 404  # 提交後清除暫存圖檔
+    assert admin_client.get(f"/invoices/{draft_id}/file").status_code == 404  # 提交後清除暫存圖檔
     assert {int(i["id"]) for i in _INVOICE_STORE} == initial_ids  # 案件在 API／DB，不寫示範清單
 
 

@@ -244,3 +244,9 @@ ADMIN 核對表單金額功能移植到 PR #22 之後的 `/intake`＋流程頁�
 - **轉換器**：`app/utils/chinese_amount.py` 與 `routers/invoices.py` 的 `_invoice_chinese_amount`（舊示範流程與財務儲存路徑使用，含角分、兆，放在別人的 router 層）並存，未重構；整數輸出相同，由 `test_intake_zh_suggestion.py` 的對照測試守住（技術債：日後由該檔改引用 util）。
 - **離線測試**：`pytest -q tests/unit` 2864 passed、9 skipped；`node --test tests/js/test_intake_amounts.cjs` 36 passed（含直接執行 `invoice-flow-review.js` 實際 `clearLive()`／`add()` 原始碼的共存測試）；ruff、format、`check_project`、djlint 通過。
 - **未驗證**：真實瀏覽器（含新舊兩支腳本同頁互動與 Safari 輸入法）、真實 API；`total_amount_zh_unreadable` 由上游 API 產生；`tests/js/test_sidebar_logout.cjs`（缺 Playwright）、`test_e_department_permissions.cjs`（4 項失敗，`origin/main` 未修改即如此）與本功能無關。舊的 `POST /intake/review` 暫留路徑重新渲染時沒有保存辨識結果，建議提醒在該路徑檢核後不再顯示。
+
+ADMIN 人工驗收修正（2026-11-05，分支 `fix/admin-bdc-acceptance`；細節見 `docs/REVIEW_FIX_LOG.md`）：
+- **國字大寫**：API 容錯解析一致但寫法不標準（例如 `億仟佰拾壹萬肆仟捌佰伍拾捌元`，總計 14858）時，辨識當下自動帶入標準國字 `壹萬肆仟捌佰伍拾捌元整`，提醒顯示 AI 原字串；可解析但與總計不符只由 API 警示、不覆寫；人工修改不被覆寫；AI 原值仍由 API 保存。
+- **統編檢查碼**：`static/js/tax-id.js`（與 API、前台同演算法與共用向量）；檢查碼不符顯示 ⚠ 警示，不顯示綠勾或綠框，不阻擋送出；買受人與銷貨人都檢查。
+- **重新上傳**：核對頁的「重新上傳」改為 `POST /invoices/{id}/flow/discard`：刪除這份尚未提交的草稿（辨識結果、核對資料、暫存影像），再導向 `/invoices/new` 開全新草稿回到選檔步驟；准入為登入＋inv.upload VIEW＋同源＋草稿上傳者本人，不要求 inv.intake；不呼叫 API、不碰資料庫與 Storage（API 端已存的影像與辨識紀錄不在此刪除）；已提交的草稿、清單或資料庫案件、已不存在的 id 一律不刪、直接導向新流程。新草稿 id 一律 `uuid4()`（原本由清單數字 id 推算，會撞號覆蓋草稿）。
+- **未驗證**：真實瀏覽器與真實 API 端到端；`inv.upload`／`inv.intake` 的 CREATE 是否另用於上傳准入待團隊確認。

@@ -526,3 +526,24 @@ def test_uncommitted_uuid_draft_recovers_without_404(admin_client: TestClient) -
     assert "invoice-correction-split" in res.text
     assert "AI OCR 辨識" not in res.text
     assert '<h2 class="card__title">採購核對修正</h2>' in res.text
+
+
+def test_filing_export_form_skips_the_busy_overlay() -> None:
+    """產生申報檔成功時是檔案下載、不換頁；表單必須關閉處理中遮罩，否則畫面會一直卡在處理中。"""
+    from pathlib import Path
+
+    card = (
+        Path(__file__).resolve().parents[2] / "app/templates/pages/invoices/_batch_filing_card.html"
+    ).read_text(encoding="utf8")
+    form = card[card.index('<form id="batch-filing-form"') :]
+    form = form[: form.index(">")]
+    assert 'action="/invoices/filing/export"' in form and 'data-busy=""' in form
+
+
+def test_busy_overlay_is_cleared_when_returning_from_history() -> None:
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "app/static/js/main.js").read_text(
+        encoding="utf8"
+    )
+    assert "addEventListener('pageshow'" in script and "event.persisted" in script

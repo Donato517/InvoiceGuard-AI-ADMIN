@@ -125,6 +125,13 @@ document.addEventListener('submit', (event) => {
   }
 })
 
+// 按「上一頁」從瀏覽器快取還原頁面時，送出前留下的遮罩一併清掉
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    setBusy('')
+  }
+})
+
 // 會換頁的連結（例如上傳完成後重新整理清單）加上 data-busy 也顯示遮罩；新分頁或修飾鍵開啟時不顯示
 document.addEventListener('click', (event) => {
   const link = event.target.closest('a[data-busy]')

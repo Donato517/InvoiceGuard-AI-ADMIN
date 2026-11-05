@@ -415,6 +415,35 @@ def test_correct_page_stays_in_admin_and_only_the_api_allowed_fields_are_editabl
     assert "/invoices/" + INVOICE_ID + "/file" in html  # 沿用原圖窗格
 
 
+def test_page_hides_the_retry_button_with_scoped_css_and_scrolls_the_item_table(
+    browser: TestClient,
+) -> None:
+    """回歸：真實瀏覽器發現 .btn 的 display 蓋過 hidden（重試按鈕一直顯示）、明細表被欄位容器截斷。
+
+    這裡只檢查樣板與 CSS 的結構；實際是否可見／可捲動要用真實瀏覽器驗證（isolated_e2e/browser_scenarios.py）。
+    """
+    html = _page(browser).text
+    css = browser.get("/static/css/pages/invoice-correct.css")
+
+    assert "css/pages/invoice-correct.css" in html
+    retry = _input_tag(html, 'id="correct-retry"')
+    assert " hidden" in retry and "btn" in retry  # 初始帶 hidden，靠本頁 CSS 才真的隱藏
+    assert css.status_code == 200 and "#correct-page .btn[hidden]" in css.text
+    assert "display: none" in css.text
+    # 規則只限定在補正頁容器內，不是全站 .btn[hidden]
+    selectors = [
+        line.split("{")[0].strip()
+        for line in css.text.splitlines()
+        if "{" in line and not line.strip().startswith("/*")
+    ]
+    assert selectors and all(sel.startswith("#correct-page") for sel in selectors)
+    # 明細表包在全站既有的 .table-wrap（overflow: auto）裡，可局部水平捲動
+    wrap_at = html.index('class="table-wrap"')
+    assert html.index('<table class="table">') > wrap_at
+    assert 'aria-label="明細（可左右捲動）"' in html and html.count("<table") == 1
+    assert "overflow: auto" in browser.get("/static/css/components.css").text
+
+
 def test_a_different_user_cannot_open_or_submit_the_case(
     admin_client: TestClient, env: Env, api: FakeApi
 ) -> None:

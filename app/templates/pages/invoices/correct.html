@@ -18,6 +18,8 @@
 {% block head %}
   <link rel="stylesheet"
         href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-correct.css') }}">
 {% endblock head %}
 {% block content %}
   <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票管理</a>
@@ -95,36 +97,39 @@
                 </div>
               {% endfor %}
               <h3>明細（不可新增、刪除或重排）</h3>
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th scope="col">#</th>
-                    <th scope="col">品名</th>
-                    <th scope="col">數量</th>
-                    <th scope="col">單價</th>
-                    <th scope="col">金額</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for row in previous["items"] %}
-                    <tr data-item-id="{{ row.item_id }}" data-line-no="{{ row.line_no }}">
-                      <td>{{ row.line_no }}</td>
-                      {% for name in item_fields %}
-                        {% set key = "item|" ~ row.item_id ~ "|" ~ name %}
-                        <td>
-                          <input aria-label="{{ labels[name] }} 第 {{ row.line_no }} 列"
-                                 data-scope="item"
-                                 data-line-no="{{ row.line_no }}"
-                                 data-item-id="{{ row.item_id }}"
-                                 data-field="{{ name }}"
-                                 value="{{ row[name] if row[name] is not none else '' }}"
-                                 {% if key not in page.editable %}readonly aria-readonly="true"{% endif %}>
-                        </td>
-                      {% endfor %}
+              {#- 明細表比右欄寬：用全站既有的 .table-wrap（overflow: auto）做局部水平捲動，欄位容器的 overflow-x: hidden 不動 -#}
+              <div class="table-wrap" role="region" aria-label="明細（可左右捲動）" tabindex="0">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th scope="col">#</th>
+                      <th scope="col">品名</th>
+                      <th scope="col">數量</th>
+                      <th scope="col">單價</th>
+                      <th scope="col">金額</th>
                     </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {% for row in previous["items"] %}
+                      <tr data-item-id="{{ row.item_id }}" data-line-no="{{ row.line_no }}">
+                        <td>{{ row.line_no }}</td>
+                        {% for name in item_fields %}
+                          {% set key = "item|" ~ row.item_id ~ "|" ~ name %}
+                          <td>
+                            <input aria-label="{{ labels[name] }} 第 {{ row.line_no }} 列"
+                                   data-scope="item"
+                                   data-line-no="{{ row.line_no }}"
+                                   data-item-id="{{ row.item_id }}"
+                                   data-field="{{ name }}"
+                                   value="{{ row[name] if row[name] is not none else '' }}"
+                                   {% if key not in page.editable %}readonly aria-readonly="true"{% endif %}>
+                          </td>
+                        {% endfor %}
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
               <h3>逐項回覆</h3>
               {% for item in page.field_items %}
                 <fieldset class="response" data-return-item-id="{{ item.return_item_id }}">

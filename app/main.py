@@ -29,6 +29,7 @@ from app.routers import (
     e_function_settings,
     health,
     intake,
+    invoice_correction,
     invoices,
     knowledge,
     robots,
@@ -61,6 +62,7 @@ app.include_router(health.router)
 app.include_router(robots.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(invoice_correction.router)
 app.include_router(invoices.router)
 app.include_router(cases.router)
 app.include_router(intake.router)

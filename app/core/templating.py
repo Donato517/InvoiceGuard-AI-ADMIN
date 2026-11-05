@@ -23,7 +23,7 @@ from app.constants import (
 from app.core.config import BASE_DIR, settings
 from app.core.constants import ROBOTS_POLICY, SITE_ICON
 from app.utils.format import TAIPEI_TZ, format_currency, format_date, format_datetime
-from app.utils.sidebar_order import order_sidebar
+from app.utils.sidebar_order import group_sidebar, is_active_route, order_sidebar
 
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
@@ -64,6 +64,7 @@ templates.env.globals.update(
     JOB_STATUS_LABEL=JOB_STATUS_LABEL,
     static_url=static_url,
     current_year=current_year,
+    sidebar_active=is_active_route,
 )
 
 # ---- 樣板 filter：{{ value | currency }} ----
@@ -72,4 +73,5 @@ templates.env.filters.update(
     taipei_date=format_date,
     taipei_datetime=format_datetime,
     sidebar_order=order_sidebar,
+    sidebar_groups=group_sidebar,
 )

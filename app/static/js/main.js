@@ -691,3 +691,134 @@ document.addEventListener('click', async (event) => {
     runAll.disabled = false
   }
 })
+
+/**
+ * 側欄手風琴與圖示列（partials/sidebar_groups.html、sidebar_head.html，2026-11-05）
+ * - 展開時：點群組標題展開／收合；目前頁面所在群組由伺服器預設展開，其他群組的開合記在這台瀏覽器。
+ * - 收合成圖示列（按 Logo 旁的按鈕；手機寬度固定是圖示列）：點群組圖示在右側跳出功能清單，點其他地方或 Esc 關閉。
+ * - 瀏覽器儲存只是個人偏好；讀寫失敗（無痕、封鎖）時照預設顯示，不影響功能。
+ */
+const SIDEBAR_COLLAPSED_KEY = 'ig-admin-sidebar-collapsed'
+const SIDEBAR_OPEN_KEY = 'ig-admin-sidebar-open-groups'
+
+function readSidebarPreference(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key)
+    return value === null ? fallback : JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function writeSidebarPreference(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // 無法儲存時只是不記住偏好
+  }
+}
+
+function isSidebarRail() {
+  const narrow = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches
+  return narrow || document.documentElement.classList.contains('sidebar-collapsed')
+}
+
+function closeSidebarFlyouts(except) {
+  document.querySelectorAll('.app-sidebar__group-items[data-flyout]').forEach((items) => {
+    if (items === except) {
+      return
+    }
+    items.removeAttribute('data-flyout')
+    const group = items.closest('[data-sidebar-group]')
+    const expanded = group?.querySelector('.app-sidebar__group-toggle')?.getAttribute('aria-expanded') === 'true'
+    items.hidden = !expanded
+  })
+}
+
+function setSidebarGroupOpen(group, open) {
+  const toggle = group.querySelector('.app-sidebar__group-toggle')
+  const items = group.querySelector('.app-sidebar__group-items')
+  if (!toggle || !items) {
+    return
+  }
+  toggle.setAttribute('aria-expanded', String(open))
+  items.hidden = !open
+}
+
+function setSidebarCollapsed(collapsed) {
+  document.documentElement.classList.toggle('sidebar-collapsed', collapsed)
+  document.querySelectorAll('[data-sidebar-collapse]').forEach((button) => {
+    const label = collapsed ? '展開側欄' : '收合側欄'
+    button.setAttribute('aria-label', label)
+    button.setAttribute('title', label)
+  })
+}
+
+function initSidebar() {
+  if (!document.documentElement?.classList || typeof document.querySelectorAll !== 'function') {
+    return
+  }
+  setSidebarCollapsed(readSidebarPreference(SIDEBAR_COLLAPSED_KEY, false) === true)
+  const saved = readSidebarPreference(SIDEBAR_OPEN_KEY, [])
+  const openGroups = new Set(Array.isArray(saved) ? saved : [])
+  document.querySelectorAll('[data-sidebar-group]').forEach((group) => {
+    if (openGroups.has(group.dataset.sidebarGroup)) {
+      setSidebarGroupOpen(group, true)
+    }
+  })
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target
+  if (typeof target?.closest !== 'function') {
+    return
+  }
+  const collapse = target.closest('[data-sidebar-collapse]')
+  if (collapse) {
+    const collapsed = !document.documentElement.classList.contains('sidebar-collapsed')
+    closeSidebarFlyouts()
+    setSidebarCollapsed(collapsed)
+    writeSidebarPreference(SIDEBAR_COLLAPSED_KEY, collapsed)
+    return
+  }
+  const toggle = target.closest('.app-sidebar__group-toggle')
+  const group = toggle?.closest('[data-sidebar-group]')
+  if (!group) {
+    if (!target.closest('.app-sidebar__group-items[data-flyout]')) {
+      closeSidebarFlyouts()
+    }
+    return
+  }
+  const items = group.querySelector('.app-sidebar__group-items')
+  if (isSidebarRail()) {
+    const opening = !items.hasAttribute('data-flyout')
+    closeSidebarFlyouts()
+    if (opening) {
+      items.setAttribute('data-flyout', '')
+      items.hidden = false
+    }
+    return
+  }
+  const open = toggle.getAttribute('aria-expanded') !== 'true'
+  setSidebarGroupOpen(group, open)
+  const stored = readSidebarPreference(SIDEBAR_OPEN_KEY, [])
+  const openGroups = new Set(Array.isArray(stored) ? stored : [])
+  if (open) {
+    openGroups.add(group.dataset.sidebarGroup)
+  } else {
+    openGroups.delete(group.dataset.sidebarGroup)
+  }
+  writeSidebarPreference(SIDEBAR_OPEN_KEY, [...openGroups])
+})
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeSidebarFlyouts()
+  }
+})
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initSidebar)
+} else {
+  initSidebar()
+}

@@ -1,0 +1,19 @@
+{#
+  @template partials/sidebar_head.html
+  @description 側欄頂端：Logo 與「收合／展開側欄」按鈕（收合成圖示列，狀態由 main.js 記在瀏覽器）。
+#}
+<div class="app-sidebar__head">
+  <div class="app-sidebar__logo">
+    <span class="app-sidebar__logo-full">InvoiceGuard <span class="app-sidebar__logo-accent">AI</span></span>
+    <span class="app-sidebar__logo-short" aria-hidden="true">IG</span>
+  </div>
+  <button class="app-sidebar__collapse"
+          type="button"
+          data-sidebar-collapse
+          aria-label="收合側欄"
+          title="收合側欄">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </button>
+</div>

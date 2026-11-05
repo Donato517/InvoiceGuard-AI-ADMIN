@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from app.core.templating import templates
 from app.schemas.e_access import SidebarEntry
-from app.utils.sidebar_order import order_sidebar
+from app.utils.sidebar_order import group_sidebar, is_active_route, order_sidebar
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -73,7 +75,92 @@ def test_suppliers_are_no_longer_pinned_next_to_logout() -> None:
     logout = (ROOT / "app/templates/partials/sidebar_logout.html").read_text(encoding="utf8")
     assert "suppliers" not in logout
     for path in ("app/templates/partials/sidebar.html", "app/templates/layouts/e_admin.html"):
-        assert "|sidebar_order" in (ROOT / path).read_text(encoding="utf8")
+        assert 'include "partials/sidebar_groups.html"' in (ROOT / path).read_text(encoding="utf8")
+
+
+# ---- 手風琴群組（2026-11-05）----
+
+
+def _names(groups: list) -> list[tuple[str, list[str]]]:
+    return [(g.title, [e.name for e in g.entries]) for g in groups]
+
+
+def test_entries_are_grouped_in_the_approved_groups() -> None:
+    entries = [
+        _entry("rag_qa", "RAG知識庫問答"),
+        _entry("inv.voucher", "會計傳票"),
+        _entry("inv.upload", "發票上傳"),
+        _entry("supplier_examples", "範例發票"),
+        _entry("company.profile", "公司基本資料"),
+        _entry("inv.review", "財會檢核"),
+        _entry("suppliers", "供應商管理"),
+        _entry("inv.manage", "發票管理"),
+        _entry("rag.manager", "RAG知識庫管理"),
+        _entry("inv.filing", "申報資料"),
+    ]
+    assert _names(group_sidebar(entries)) == [
+        ("企業基本作業", ["公司基本資料"]),
+        ("供應商作業", ["供應商管理", "範例發票"]),
+        ("發票作業", ["發票上傳", "發票管理"]),
+        ("財會作業", ["財會檢核", "申報資料", "會計傳票"]),
+        ("RAG 知識庫作業", ["RAG知識庫管理", "RAG知識庫問答"]),
+    ]
+
+
+def test_empty_groups_are_hidden_and_unknown_and_system_entries_go_last() -> None:
+    entries = [
+        _entry("sys.accounts", "帳號管理"),
+        _entry("sys.department-permissions", "部門功能設定"),
+        _entry("x1", "其他一"),
+        _entry("inv.upload", "發票上傳"),
+        _entry("sys.departments", "部門管理"),
+    ]
+    groups = group_sidebar(entries)
+    assert [(g.key, [e.code for e in g.entries]) for g in groups] == [
+        ("invoice", ["inv.upload"]),
+        ("other", ["x1"]),
+        ("system", ["sys.departments", "sys.accounts"]),
+    ]
+
+
+def test_no_entries_means_no_groups() -> None:
+    assert group_sidebar([]) == []
+
+
+@pytest.mark.parametrize(
+    ("route", "path", "active", "expected"),
+    [
+        ("/invoices", "/invoices", None, True),
+        ("/invoices", "/invoices/abc", None, True),
+        ("/invoices", "/invoices-x", None, False),
+        ("/invoices", "/invoices/upload", "/invoices/upload", False),
+        ("/invoices/upload", "/invoices/upload", "/invoices/upload", True),
+        (None, "/invoices", None, False),
+    ],
+)
+def test_is_active_route_matches_the_previous_sidebar_rule(
+    route: str | None, path: str, active: str | None, expected: bool
+) -> None:
+    assert is_active_route(route, path, active) is expected
+
+
+def test_group_partial_has_accordion_and_collapse_markup() -> None:
+    groups = (ROOT / "app/templates/partials/sidebar_groups.html").read_text(encoding="utf8")
+    head = (ROOT / "app/templates/partials/sidebar_head.html").read_text(encoding="utf8")
+    assert (
+        "aria-expanded" in groups and "aria-controls" in groups and "data-sidebar-group" in groups
+    )
+    assert 'include "partials/sidebar_logout.html"' in groups
+    assert "data-sidebar-collapse" in head and 'aria-label="收合側欄"' in head
+    assert "/welcome" not in groups
+
+
+def test_main_js_keeps_sidebar_preferences_optional() -> None:
+    script = (ROOT / "app/static/js/main.js").read_text(encoding="utf8")
+    assert "ig-admin-sidebar-collapsed" in script and "ig-admin-sidebar-open-groups" in script
+    # 讀寫瀏覽器儲存都包在 try／catch：無痕或封鎖時照預設顯示
+    assert script.count("window.localStorage") == 2
+    assert script.count("} catch {") >= 2
 
 
 def test_login_form_does_not_show_the_busy_overlay() -> None:

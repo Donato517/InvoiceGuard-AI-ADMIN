@@ -9,17 +9,8 @@
 {% block body %}
   <div class="admin-layout">
     <aside class="app-sidebar">
-      <div class="app-sidebar__logo">
-        InvoiceGuard <span class="app-sidebar__logo-accent">AI</span>
-      </div>
+      {% include "partials/sidebar_head.html" %}
       <nav aria-label="後台選單">
-        <div class="app-sidebar__caption">管理站工作台</div>
-        {% set logout_entry = namespace(rendered=false) %}
-        <a class="app-sidebar__link {% if request.url.path == '/welcome' %}app-sidebar__link--active{% endif %}"
-           href="/welcome">
-          <span class="app-sidebar__emoji" aria-hidden="true">🏠</span>
-          <span>歡迎頁</span>
-        </a>
         <a class="app-sidebar__link {% if request.url.path == '/workspace' %}app-sidebar__link--active{% endif %}"
            href="/workspace">
           <span class="app-sidebar__emoji" aria-hidden="true">📊</span>
@@ -30,16 +21,8 @@
           <span class="app-sidebar__emoji" aria-hidden="true">👤</span>
           <span>本人資訊</span>
         </a>
-        {% for item in e_menu|sidebar_order %}
-          {% if item.code != "sys.department-permissions" %}
-            {% include "partials/sidebar_entry.html" %}
-          {% endif %}
-          {% if item.code == "sys.accounts" %}
-            {% include "partials/sidebar_logout.html" %}
-            {% set logout_entry.rendered = true %}
-          {% endif %}
-        {% endfor %}
-        {% if not logout_entry.rendered %}{% include "partials/sidebar_logout.html" %}{% endif %}
+        {% set menu = e_menu %}
+        {% include "partials/sidebar_groups.html" %}
       </nav>
     </aside>
     <div class="admin-layout__main">

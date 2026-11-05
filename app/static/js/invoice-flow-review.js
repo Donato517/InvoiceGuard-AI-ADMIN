@@ -19,7 +19,7 @@
   var AMOUNT_RE = /^\d{1,16}(\.\d{1,2})?$/;
   var QUANTITY_RE = /^\d{1,14}(\.\d{1,4})?$/;
   var DEBOUNCE_MS = 800;
-  var HINT_ICONS = { ok: "✓", compatible: "≈", error: "✗" };
+  var HINT_ICONS = { ok: "✓", compatible: "≈", warning: "⚠", error: "✗" };
 
   function halfWidth(value) {
     return String(value || "").replace(/[０-９．／－，]/g, function (c) {
@@ -67,8 +67,10 @@
   };
   function taxId(raw) {
     var v = compact(raw);
-    if (EIGHT_DIGITS_RE.test(raw)) return ["ok", "格式正確"];
-    return EIGHT_DIGITS_RE.test(v) ? ["compatible", "格式相容，可送出"] : ["error", "統一編號需為 8 碼數字"];
+    if (!EIGHT_DIGITS_RE.test(v)) return ["error", "統一編號需為 8 碼數字"];
+    // 格式通過後再看檢查碼（tax-id.js，與 API 同演算法）：不符不顯示綠勾，改為警示；只提醒、不阻擋送出
+    if (window.TaxId && !window.TaxId.validTaxId(v)) return ["warning", "檢查碼不符，請確認（檢查碼通過不代表公司真實存在）"];
+    return [EIGHT_DIGITS_RE.test(raw) ? "ok" : "compatible", EIGHT_DIGITS_RE.test(raw) ? "格式正確" : "格式相容，可送出"];
   }
   function amount(raw) {
     var v = money(raw);
@@ -113,6 +115,8 @@
     if (result[0] === "error") {
       input.classList.add("is-invalid");
       input.setAttribute("aria-invalid", "true");
+    } else if (result[0] === "warning") {
+      input.removeAttribute("aria-invalid"); // 警示不套綠框也不套紅框
     } else {
       input.classList.add("is-valid");
       input.removeAttribute("aria-invalid");

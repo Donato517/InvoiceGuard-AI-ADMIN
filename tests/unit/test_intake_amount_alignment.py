@@ -160,3 +160,23 @@ def test_amounts_script_never_marks_its_notes_with_data_live() -> None:
     assert 'querySelectorAll("[data-live]")' in flow
     assert not re.search(r"""setAttribute\(\s*['"]data-live['"]""", amounts)
     assert "data-amounts-note" in amounts
+
+
+# ---- 人工驗收：統編檢查碼不符不得顯示綠色「格式正確」 ----
+
+
+def test_flow_review_uses_checksum_before_green_hint_and_loads_tax_id_script() -> None:
+    flow = _js("invoice-flow-review.js")
+    assert "window.TaxId.validTaxId" in flow
+    assert '"warning"' in flow
+    assert 'warning: "⚠"' in flow
+
+    template = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "templates"
+        / "pages"
+        / "invoices"
+        / "_flow_step_correct.html"
+    ).read_text(encoding="utf-8")
+    assert template.index("js/tax-id.js") < template.index("js/invoice-flow-review.js")

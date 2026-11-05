@@ -194,7 +194,9 @@
     <p>
       {% if not live_check %}<button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>{% endif %}
       <button type="submit" name="action" value="submit" class="btn btn--primary">確認提交</button>
-      <a href="/intake">重新上傳</a>
+      {#- 重新上傳（例如系統已有相同發票時改傳另一張）：直接進發票作業流程入口 /invoices/new，開一份全新的草稿回到選檔步驟；
+          不修改、不清除目前這份草稿或任何案件，也不繞經 /intake（需另外的 inv.intake 授權，會對僅有上傳權限者回 403） -#}
+      <a href="/invoices/new" data-reupload>重新上傳</a>
     </p>
   </form>
   <script src="{{ static_url('js/intake-amounts.js') }}" defer></script>

@@ -1205,8 +1205,8 @@ def invoice_voucher_list(
 @router.get("/new")
 def create_new_invoice(request: Request) -> RedirectResponse:
     """建立暫存發票草稿並進入步驟 1（上傳發票）；未完成步驟 3 採購核對修正前不寫入發票清單。"""
-    numeric_ids = [int(i["id"]) for i in _INVOICE_STORE if str(i["id"]).isdigit()]
-    new_id = str(max(numeric_ids) + 1) if numeric_ids else str(uuid4())
+    # 一律用新的 UUID：不從發票清單的數字 id 推算，連續建立草稿（或清單有數字 id 的示範資料）時才不會撞號、覆蓋別人的草稿
+    new_id = str(uuid4())
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
     new_invoice = _create_draft_invoice(new_id, uploaded_by=current_user_id)
     _DRAFT_INVOICE_STORE[new_id] = new_invoice

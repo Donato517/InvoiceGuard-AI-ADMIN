@@ -819,6 +819,11 @@
   color: var(--color-warning-soft-text);
 }
 
+.field-hint--warning {
+  font-weight: 600;
+  color: var(--color-warning-soft-text);
+}
+
 .field-hint--error {
   font-weight: 600;
   color: var(--color-danger);

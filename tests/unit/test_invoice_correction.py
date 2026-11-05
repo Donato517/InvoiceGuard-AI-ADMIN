@@ -403,12 +403,18 @@ def test_correct_page_stays_in_admin_and_only_the_api_allowed_fields_are_editabl
     assert "總計與明細不符" in html and "財務退回原因" in html
     assert "InvoiceGuard-AI" not in html and "vercel.app" not in html  # 沒有導向前台
     # editable_fields 只有 total_amount 與第 1 列 line_amount
-    assert "readonly" not in _input_tag(html, 'id="f-total_amount"')
-    assert "readonly" in _input_tag(html, 'id="f-invoice_number"')
-    assert "readonly" in _input_tag(html, 'id="f-seller_tax_id"')
-    assert "disabled" in _input_tag(html, 'id="f-tax_type"')
-    assert "readonly" in _input_tag(html, 'aria-label="品名 第 1 列"')
-    assert "readonly" not in _input_tag(html, 'aria-label="金額 第 1 列"')
+    # 開放修改的欄位不加 disabled／readonly；未開放的欄位 disabled（反灰、不可點選），不再用 readonly
+    for editable in ('id="f-total_amount"', 'aria-label="金額 第 1 列"'):
+        tag = _input_tag(html, editable)
+        assert "disabled" not in tag and "readonly" not in tag
+    for locked in (
+        'id="f-invoice_number"',
+        'id="f-seller_tax_id"',
+        'id="f-tax_type"',
+        'aria-label="品名 第 1 列"',
+    ):
+        tag = _input_tag(html, locked)
+        assert "disabled" in tag and "readonly" not in tag
     assert 'value="1050"' in _input_tag(html, 'id="f-total_amount"')  # 上一輪提交值，不是 AI 原值
     assert "add_item" not in html and "remove_item" not in html  # 沒有新增／刪除明細的控制項
     assert html.count("data-item-id=") >= 1 and "<button" in html and "新增一列" not in html
@@ -928,3 +934,18 @@ def test_the_label_alone_does_not_grant_the_button(
     html = _as(APPLICANT, admin_client).get("/invoices").text
 
     assert "待補正" in html and "data-correct-action" not in html
+
+
+def test_locked_fields_are_greyed_and_disabled_values_are_still_submitted() -> None:
+    """未開放欄位 disabled 反灰；送出內容由 JS 讀欄位值組 JSON（不是表單序列化），disabled 欄位的值照常帶回。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "app" / "static"
+    script = (root / "js" / "invoice-correct.js").read_text(encoding="utf-8")
+    css = (root / "css" / "pages" / "invoice-flow.css").read_text(encoding="utf-8")
+    assert "FormData" not in script and "new URLSearchParams" not in script
+    assert ".value" in script and "JSON.stringify" in script
+    assert "#correct-form input:disabled" in css and "cursor: not-allowed" in css
+    # 文字 #4b5a70 在底色 #e9edf3 上對比約 6:1（WCAG AA 需 4.5:1），Safari 另需 -webkit-text-fill-color
+    assert "color: #4b5a70" in css and "-webkit-text-fill-color: #4b5a70" in css
+    assert "background-color: #e9edf3" in css

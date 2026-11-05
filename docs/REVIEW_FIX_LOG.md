@@ -1,5 +1,14 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 財務退回補正頁：未開放欄位改為反灰、不可點選
+
+- 問題：`/invoices/{id}/correct`（財務退回原因頁）把 API `editable_fields` 以外的文字欄位設為 `readonly`，游標仍可點進去；只有 `tax_type` 下拉用 `disabled`。
+- 處理：表頭與明細的未開放欄位一律改為 `disabled`（不再用 `readonly`），並在 `invoice-flow.css` 以 `#correct-form input:disabled, select:disabled` 反灰、游標 `not-allowed`。開放欄位、API、Schema、驗證與逐項回覆不變。
+- 為何不影響送出：`invoice-correct.js` 的 `buildBody` 直接讀欄位 `.value` 組 JSON，沒有表單序列化，disabled 欄位的上一輪值照常帶回；`change` 事件本來就略過 disabled 欄位。
+- 可讀性：灰色欄位文字 `#4b5a70`、底色 `#e9edf3`，對比約 6:1（WCAG AA 需 4.5:1；原先用 `--color-text-muted` 只有約 3.8:1，已改掉）；另加 `-webkit-text-fill-color` 讓 Safari 套用同一文字色。
+- 權限不變：欄位白名單由 API 的 `invoice_resubmit_rules`（`RESUBMIT_FIELD_NOT_ALLOWED`）在 origin/main 上驗證，ADMIN 只轉送並顯示錯誤訊息；disabled 只是畫面保護，不是權限控制。
+- 驗證：更新 `test_invoice_correction.py` 的斷言並新增一項（JS 不使用 FormData、CSS 規則與顏色存在）；相關測試離線通過。瀏覽器：用 TestClient 輸出的靜態 HTML 以內建瀏覽器開啟（fetch 以替身攔截、未連 API）——16 個欄位中只有 2 個開放；未開放欄位無法聚焦、點擊並輸入後值不變；修改「總計」後送出，送出內容含未開放欄位的原值（銷售額 1000 等）且 `changes` 只有總計一筆。這不是端到端驗收，未連真實 API、資料庫與正式站。
+
 ## 2026-11-06 本人上傳的發票不得查看步驟 5、6；步驟 4 統一「檢視我的發票」
 
 - 需求（使用者確認，取代同日前一筆與主線 `bb6dc42` 的「本人可檢視步驟 5、只是不能操作」設計）：本人上傳的發票，本人不得執行財務審核動作，也不得查看步驟 5、6；不論財務部或非財務部門，本人在步驟 4 完成後顯示「檢視我的發票」並回發票管理列表（`/invoices`）。

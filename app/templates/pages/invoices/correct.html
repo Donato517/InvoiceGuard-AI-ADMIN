@@ -1,6 +1,6 @@
 {#
   @template pages/invoices/correct.html
-  @description 採購在 ADMIN 補正被財務退回的案件：左側原圖、右側上一輪提交值；只有 API 回傳的 editable_fields 可修改，
+  @description 採購在 ADMIN 補正被財務退回的案件：左側原圖、右側上一輪提交值；只有 API 回傳的 editable_fields 可修改（其餘欄位 disabled 反灰、不可點選；送出內容由 invoice-correct.js 讀欄位值組成 JSON，不依賴表單序列化，所以 disabled 欄位的上一輪值照常帶回），
                其餘欄位唯讀。逐項回覆（已補正／申覆）後由 invoice-correct.js 經 ADMIN 伺服器送到 API。
                圖片退件不顯示欄位表單，只能終止（API /void）後重新上傳。
   @route GET /invoices/{invoice_id}/correct
@@ -100,7 +100,7 @@
                            data-scope="header"
                            data-field="{{ name }}"
                            value="{{ value if value is not none else '' }}"
-                           {% if key not in page.editable %}readonly aria-readonly="true"{% endif %}>
+                           {% if key not in page.editable %}disabled{% endif %}>
                   {% endif %}
                 </div>
               {% endfor %}
@@ -130,7 +130,7 @@
                                    data-item-id="{{ row.item_id }}"
                                    data-field="{{ name }}"
                                    value="{{ row[name] if row[name] is not none else '' }}"
-                                   {% if key not in page.editable %}readonly aria-readonly="true"{% endif %}>
+                                   {% if key not in page.editable %}disabled{% endif %}>
                           </td>
                         {% endfor %}
                       </tr>

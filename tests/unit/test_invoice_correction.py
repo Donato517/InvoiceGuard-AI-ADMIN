@@ -499,7 +499,80 @@ def test_api_404_and_not_returned_are_reported_without_a_form(
     assert "correct-form" not in response.text
 
     api.responses["return-items"] = httpx.Response(404, json=error_json("NOT_FOUND"))
-    assert _page(browser).status_code == 404
+    not_found = _page(browser)
+    assert not_found.status_code == 404
+    assert "correct-form" not in not_found.text
+
+
+def test_api_404_explains_possible_causes_without_asserting_one(
+    browser: TestClient, api: FakeApi
+) -> None:
+    """API 查不到案件時，補正頁留在 ADMIN 版面並列出可能性（不是已確定原因），狀態碼仍是 404。"""
+    api.responses["return-items"] = httpx.Response(404, json=error_json("NOT_FOUND"))
+
+    response = _page(browser)
+
+    assert response.status_code == 404
+    assert "data-correct-error" in response.text
+    assert "找不到這張發票，或目前登入帳號無法存取該案件" in response.text
+    assert "若案件屬於其他部門，或您不是原提交者，也可能無法開啟" in response.text
+    assert "請聯絡管理員協助查詢" in response.text
+    assert "找不到頁面" not in response.text  # 不是通用 404 頁
+    assert "correct-form" not in response.text
+    assert "InvoiceGuard-AI" not in response.text and "vercel.app" not in response.text
+    # 不下定論、不建議無法同步 API Session 的 ADMIN 部門切換
+    assert "切換部門" not in response.text.split("data-correct-error", 1)[1].split("</p>", 1)[0]
+    assert "這張發票屬於其他部門" not in response.text
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_api_401_and_403_are_not_reported_as_not_found(
+    browser: TestClient, api: FakeApi, status: int
+) -> None:
+    api.responses["return-items"] = httpx.Response(status, json=error_json("UNAUTHORIZED"))
+
+    response = _page(browser)
+
+    assert response.status_code == status
+    assert "授權失敗，請重新登入後再試" in response.text
+    assert "找不到這張發票" not in response.text
+
+
+def test_api_5xx_and_other_statuses_keep_their_own_messages(
+    browser: TestClient, api: FakeApi
+) -> None:
+    api.responses["return-items"] = httpx.Response(500, json=error_json("INTERNAL_ERROR"))
+    server = _page(browser)
+    assert server.status_code == 502 and "找不到這張發票" not in server.text
+    api.responses["return-items"] = httpx.Response(409, json=error_json("INVOICE_NOT_RETURNED"))
+    conflict = _page(browser)
+    assert conflict.status_code == 409 and "找不到這張發票" not in conflict.text
+
+
+def test_submit_and_void_404_keep_the_json_error_shape(browser: TestClient, api: FakeApi) -> None:
+    """提交與終止的 404 JSON 格式不變：{"error": {"code", "message"}}，訊息同一段說明。"""
+    api.responses["resubmit"] = httpx.Response(404, json=error_json("NOT_FOUND"))
+    api.responses["void"] = httpx.Response(404, json=error_json("NOT_FOUND"))
+
+    submit = browser.post(f"/invoices/{INVOICE_ID}/correct", headers=ORIGIN, json=_submit_body())
+    void = browser.post(
+        f"/invoices/{INVOICE_ID}/correct/void", headers=ORIGIN, json={"expected_round": 2}
+    )
+
+    for response in (submit, void):
+        assert response.status_code == 404
+        body = response.json()
+        assert set(body) == {"error"} and set(body["error"]) == {"code", "message"}
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert "找不到這張發票，或目前登入帳號無法存取該案件" in body["error"]["message"]
+
+
+def test_own_check_failures_in_admin_stay_a_generic_404(browser: TestClient, api: FakeApi) -> None:
+    """ADMIN 自己的本人／存在檢查不通過（他人或不存在的案件）不透露原因，仍是通用 404，也不呼叫 API。"""
+    response = _page(browser, "not-a-uuid")
+    assert response.status_code == 404 and "找不到頁面" in response.text
+    assert "可能屬於其他部門" not in response.text
+    assert api.requests == []
 
 
 def test_image_return_shows_no_field_form_and_offers_only_void(

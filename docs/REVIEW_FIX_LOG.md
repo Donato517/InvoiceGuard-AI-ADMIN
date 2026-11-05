@@ -1134,6 +1134,17 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 - 處理檔案：app/static/js/intake-amounts.js、app/utils/chinese_amount.py、app/services/invoice_intake_mapping.py、app/routers/intake.py、app/routers/invoices.py、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests/js/test_intake_amounts.cjs、tests/unit/test_intake_amount_alignment.py、tests/unit/test_intake_zh_suggestion.py、tests/unit/test_invoice_flow_intake.py、tests/unit/test_invoice_intake_mapping.py、tests/fixtures/amount_to_chinese_vectors.json、docs/DEVELOPMENT_STATUS.md、docs/REVIEW_FIX_LOG.md。
 
 
+## 2026-11-05 發票清單頁不再清空所有人的草稿
+
+- 問題：草稿只存在伺服器程序的記憶體，所有使用者共用同一個字典 `_DRAFT_INVOICE_STORE`；`_render_invoice_list_view`（`GET /invoices`、`/invoices/review`、`/invoices/voucher`）與 `GET /dashboard` 一進入就 `_DRAFT_INVOICE_STORE.clear()`（2026-10-28 示範版遺留，用意是丟掉未完成的示範草稿）。同一個實例上乙打開清單，甲正在核對的草稿就消失，甲的檢核與提交都回 404；自己打開清單也會丟掉自己的草稿。離線重現：兩位使用者、同一個記憶體實例。
+- 處理：兩處 `clear()` 都移除。清單頁改為只清掉「目前使用者自己、已提交」的草稿（`uploaded_by` 等於本人且有 `submitted_invoice_id`；案件已在資料庫、影像已在提交時移除，使用者離開步驟 4 後不再需要）；未提交的草稿與別人的草稿（含已提交的）一律不動。沒有新增任何跨使用者讀寫權限；`discard` 維持只能刪本人指定的未提交草稿。
+- 驗證（離線；假 API、假部門模組）：新增 `tests/unit/test_list_pages_keep_drafts.py` 8 項，先對未修正的程式確認 8 項全部失敗，修正後全部通過；突變驗證：清單頁 `clear()` 加回（7 項失敗）、儀表板 `clear()` 加回（1 項）、清除不看擁有者（1 項）、清除不看已提交（4 項）都會被抓到。
+- 未解決的限制：
+  1. 草稿仍只在單一實例的記憶體：實例回收、或上傳與核對被不同實例處理（核對回 404），草稿仍會遺失；真正的解法是共享草稿保存，需要與 API／架構負責人決定（API 沒有讀取辨識紀錄的端點；`ai_recognition_logs` 只保存 AI 辨識結果與影像 1 小時，使用者的修改沒有任何地方保存）。
+  2. 移除 `clear()` 後，被放棄的未提交草稿（每份最多 4 MB 影像）會留到實例回收，沒有數量或時間上限；需要另案設計上限或 TTL。
+  3. 正式環境同一個實例是否常同時服務多位使用者、`/dashboard` 在正式環境是否可達，尚無證據。
+
+
 ## 2026-11-05 人工驗收修正：重新上傳、國字寫法不標準、統編檢查碼提示
 
 - 問題 D（重新上傳）：核對頁「重新上傳」原本是 `<a href="/intake">`，`/intake` 要求部門的 `inv.intake` 新增權限，只有發票上傳權限的人得到 403。業務定義（2026-11-05 使用者確認）：系統發現資料庫已有相同發票時，使用者放棄這次、改傳另一張新發票；按「重新上傳」要刪除本次尚未成功提交的原草稿（辨識結果、核對資料、暫存影像），不刪除或修改資料庫中已存在的重複發票，不影響其他使用者或其他草稿，保留登入 Session，回到新發票上傳頁。處理：流程頁的按鈕改為 `POST /invoices/{id}/flow/discard`（有副作用所以不用 GET）→ 303 `/invoices/new`（建立全新草稿、步驟 1 選檔）。准入沿用整條上傳流程：有效登入＋inv.upload VIEW（router 層）＋同源＋草稿上傳者本人（財務部也不能刪別人的草稿）；不要求 inv.intake。只刪 `_DRAFT_INVOICE_STORE` 裡這一份草稿並清空其中的辨識結果、核對資料、暫存影像等欄位（避免別處仍握著物件時殘留）；已提交的草稿（結果頁還在）、清單或資料庫的案件、已不存在的 id（重複點擊）都不刪，直接導向 `/invoices/new`，且不會為未知 id 自動建立空草稿；刪不掉時回 500，不假裝成功。不呼叫 API、不碰資料庫與 Storage。舊 `/intake` 頁沒有草稿，連結改為 `/invoices/new`。曾評估並放棄 POST `…/flow/restart`（重設同一份草稿，與業務定義不符）與純 GET `/invoices/new` 連結（不刪原草稿）。
@@ -1144,3 +1155,20 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 - 處理檔案：app/routers/invoices.py、app/services/invoice_intake_mapping.py、app/static/js/tax-id.js、app/static/js/invoice-flow-review.js、app/static/css/pages/invoice-flow.css、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests（test_invoice_flow_intake、test_pages、test_intake_zh_suggestion、test_intake_amount_alignment、test_tax_id.cjs、tax_id_vectors.json）。
 - 驗證（離線，假 API／假部門模組，不是正式環境或真實瀏覽器驗收）：ADMIN pytest 2910 passed／23 skipped、ruff、djlint、check_project 通過；本次相關 JS 測試 53 項通過。ADMIN `tests/js/*.cjs` 全部另有 5 項既有失敗（`test_e_department_permissions` 4 項的測試替身過時、`test_sidebar_logout` 缺 Playwright），`origin/main` 同樣失敗，與本次無關。未驗：真實瀏覽器、真實 API、修改紀錄端到端。
 - 已知限制：發票清單頁（`_render_invoice_list_view`）每次顯示都會 `_DRAFT_INVOICE_STORE.clear()`，會清掉所有人的草稿（既有行為，本次未改）。整條上傳流程（/invoices/new、flow/upload、flow/review）仍只要求 inv.upload 檢視，是否另設新增權限待團隊確認。
+
+
+## 2026-11-05 重新上傳：確保一定回到新的上傳頁（沒有 403）— 方案 C
+
+- 驗收要求：無論有沒有重複發票，按「重新上傳」都停在新的上傳頁（可選檔）、仍登入、沒有 403 或被導回登入頁。
+- 檢查結果：沒有重複發票時，discard → `/invoices/new` → 步驟 1 本來就能正常運作（採購部、財務部都有測試）。唯一會得到 403 的情況：草稿只存在單一實例的記憶體，若下一個請求落在沒有這份草稿的實例，`_find_flow_invoice` 會補一份上傳者固定為 `"1"` 的空草稿，一般（非財務）員工就被 `_check_invoice_access` 擋成 403；財務部因為一律放行而不受影響。第一次從側邊欄進入上傳流程時也會發生。
+- 處理（方案 C）：`_find_flow_invoice` 新增 `owner` 與 `persist`。
+  - 步驟 1 的 `GET …/flow?step=1`：`owner`＝目前使用者、`persist=False`——找不到草稿時只暫時顯示選檔頁，**不寫入** `_DRAFT_INVOICE_STORE`，單純開頁不留下空草稿。
+  - `POST …/flow/upload`：`owner`＝目前使用者、`persist` 維持預設的寫入——真正上傳時才建立並保存屬於本人的草稿，再進入既有的 OCR 流程。
+  - 其他呼叫端（核對、檢核、discard 之外的所有路由）不傳參數，行為與以前完全相同：步驟 3 以後對沒看過的 id 仍是一般員工 403。
+  - 已存在的草稿（含別人的）一律照原樣返回，不覆寫、不接手；清單與資料庫的案件不會被轉成草稿；`discard`、`/invoices/new` 沒有改動。
+- 驗證（離線；假 API、假部門模組；兩個各自獨立的記憶體字典模擬兩個實例，**不是**真實 Vercel 多實例驗證）：`test_invoice_flow_intake.py` 50 項；方案 A 版本會在「GET 不保存草稿」相關 3 項失敗，方案 C 全部通過；突變驗證：GET 保存草稿、上傳草稿上傳者為 `"1"`、步驟 1 略過存取檢查（可接手他人草稿）、其他步驟也自動補草稿，都會被測試抓到。
+- 未解決的限制：
+  1. 上傳在實例 B、核對回到實例 A 時，核對會回 404「找不到指定發票」（辨識結果只在 B 的記憶體）；測試確認這種情況不會顯示成功、不會呼叫 API 提交、也不會洩漏 B 的資料。真正的解法是共享草稿保存（資料庫、Storage 或快取），需與 API／架構負責人決定；API 目前沒有可讀回辨識結果的端點。
+  2. 發票清單頁每次顯示都會 `_DRAFT_INVOICE_STORE.clear()`，會清掉該實例上所有人的草稿（既有行為，未改）。
+  3. 重新上傳後孤兒草稿（在另一個實例的記憶體）與 API 已存入 Storage 的影像與辨識紀錄不會被清除。
+  4. 一般員工之外，財務部對未知 id 在步驟 3 以後仍會被補一份空草稿（既有行為，未改）。

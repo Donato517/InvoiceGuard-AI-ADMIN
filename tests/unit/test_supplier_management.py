@@ -97,9 +97,13 @@ def test_real_navigation_and_pages(browser: TestClient, suppliers: dict) -> None
         response = browser.get(path)
         assert response.status_code == 200
         entries = SidebarNavigation(response.text).entries
-        assert entries.count("/suppliers") == 1 and entries.index(
-            "/suppliers"
-        ) + 1 == entries.index("/logout")
+        # 2026-11-05 使用者核定側欄順序：供應商排在公司基本資料之後、發票功能之前（不再緊貼登出）
+        assert entries.count("/suppliers") == 1
+        assert entries.index("/suppliers") < entries.index("/logout")
+        if "/company-profile" in entries:
+            assert entries.index("/company-profile") + 1 == entries.index("/suppliers")
+        if "/invoices/upload" in entries:
+            assert entries.index("/suppliers") < entries.index("/invoices/upload")
         if path != "/welcome":
             assert "模擬模式" not in response.text
             assert "供應商功能列表" not in response.text

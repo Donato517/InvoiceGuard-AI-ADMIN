@@ -14,6 +14,7 @@ import json
 from collections.abc import Mapping
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -27,7 +28,10 @@ from app.schemas.intake import (
     OutboundRequest,
     RecognitionView,
     RequiredCheckView,
+    ResubmitView,
+    ReturnItemsView,
     SubmitView,
+    VoidView,
     WarningCheckView,
 )
 
@@ -37,6 +41,8 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_MESSAGE_CHARS = 200
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+# 只讀取、沒有副作用的操作：逾時或回應異常時可以安全重試；其餘（辨識、提交、重送、作廢）結果不明時不得自動重送
+READ_ONLY_OPERATIONS = frozenset({"check", "read"})
 
 Model = TypeVar("Model", bound=BaseModel)
 
@@ -150,11 +156,45 @@ class ApiIntakeClient:
         """送出發票；失敗重送是否安全由 API 的冪等規則保證（同一辨識只能送出一次）。"""
         return self._call("submit", "POST", API_PREFIX, SubmitView, 201, json_body=body)
 
+    # ---- 退回補正：規則（欄位白名單、輪次、冪等、圖片退件）全部由 API 判斷，這裡只轉送 ----
+
+    def get_return_items(self, invoice_id: str) -> ReturnItemsView:
+        """讀取退件項目、後端允許修改的欄位與上一輪提交值（只有原提交者可讀，其餘 API 回 404）。"""
+        return self._call(
+            "read",
+            "GET",
+            f"{API_PREFIX}/{_uuid_path(invoice_id)}/return-items",
+            ReturnItemsView,
+            200,
+        )
+
+    def resubmit(self, invoice_id: str, body: Mapping[str, Any]) -> ResubmitView:
+        """同案補正／申覆重送；結果不明（逾時）時不得換新冪等鍵重送，應以同一把鍵重試。"""
+        return self._call(
+            "resubmit",
+            "POST",
+            f"{API_PREFIX}/{_uuid_path(invoice_id)}/resubmit",
+            ResubmitView,
+            200,
+            json_body=body,
+        )
+
+    def void(self, invoice_id: str, body: Mapping[str, Any]) -> VoidView:
+        """申請人作廢被退回的案件（圖片退件的必經步驟）；只轉換狀態，不刪除案件與影像。"""
+        return self._call(
+            "void",
+            "POST",
+            f"{API_PREFIX}/{_uuid_path(invoice_id)}/void",
+            VoidView,
+            200,
+            json_body=body,
+        )
+
     # ---- 內部 ----
 
     def _call(
         self,
-        operation: Literal["recognize", "check", "submit"],
+        operation: Literal["recognize", "check", "submit", "read", "resubmit", "void"],
         method: str,
         path: str,
         model: type[Model],
@@ -192,7 +232,7 @@ class ApiIntakeClient:
         except (httpx.ConnectError, httpx.ConnectTimeout):
             raise IntakeTransportError(ambiguous=False) from None  # 尚未送出，可安全重試
         except httpx.HTTPError:
-            raise IntakeTransportError(ambiguous=operation != "check") from None
+            raise IntakeTransportError(ambiguous=operation not in READ_ONLY_OPERATIONS) from None
         return self._parse(response, model, expected, operation)
 
     @staticmethod
@@ -200,7 +240,9 @@ class ApiIntakeClient:
         response: httpx.Response, model: type[Model], expected: int, operation: str
     ) -> Model:
         if len(response.content) > MAX_RESPONSE_BYTES:
-            raise IntakeTransportError(ambiguous=operation != "check", message="發票服務回應異常")
+            raise IntakeTransportError(
+                ambiguous=operation not in READ_ONLY_OPERATIONS, message="發票服務回應異常"
+            )
         try:
             body = response.json()
         except ValueError:
@@ -212,8 +254,16 @@ class ApiIntakeClient:
         except ValidationError:
             # 2xx 但格式不符：API 可能已處理，不能當成失敗
             raise IntakeTransportError(
-                ambiguous=operation != "check", message="發票服務回應格式異常"
+                ambiguous=operation not in READ_ONLY_OPERATIONS, message="發票服務回應格式異常"
             ) from None
+
+
+def _uuid_path(invoice_id: str) -> str:
+    """路徑只接受標準 UUID，避免把使用者輸入直接拼進 API 路徑。"""
+    try:
+        return str(UUID(str(invoice_id)))
+    except ValueError:
+        raise IntakeApiError(404, "NOT_FOUND", "找不到這張發票") from None
 
 
 def _api_error(status: int, body: object) -> IntakeApiError:

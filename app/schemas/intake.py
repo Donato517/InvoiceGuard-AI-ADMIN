@@ -103,6 +103,89 @@ class SubmitView(_ApiModel):
     modified_fields: tuple[ModifiedFieldView, ...] = ()
 
 
+# ---- 退回補正（return-items／resubmit／void）的 API 回應模型：只解析，不判斷授權或規則 ----
+
+
+class FieldRefView(_ApiModel):
+    """欄位定位；明細欄位以 line_no 與 item_id 指出，表頭欄位兩者為 None。"""
+
+    field_scope: Literal["header", "item"]
+    line_no: int | None = None
+    item_id: UUID | None = None
+    field_name: str
+
+
+class ReturnItemView(_ApiModel):
+    return_item_id: UUID
+    item_kind: Literal["field", "image", "other"]
+    target: FieldRefView | None = None
+    reason: str
+    allowed_fields: tuple[FieldRefView, ...] = ()
+    status: str = "open"
+
+
+class PreviousItemView(_ApiModel):
+    item_id: UUID
+    line_no: int
+    item_name: str | None = None
+    quantity: str | None = None
+    unit_price: str | None = None
+    line_amount: str | None = None
+
+
+class PreviousSubmissionView(_ApiModel):
+    invoice_track: str | None = None
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    seller_tax_id: str | None = None
+    seller_name: str | None = None
+    buyer_tax_id: str | None = None
+    buyer_name: str | None = None
+    tax_type: str | None = None
+    sales_amount: str | None = None
+    tax_amount: str | None = None
+    total_amount: str | None = None
+    total_amount_zh: str | None = None
+    items: tuple[PreviousItemView, ...] = ()
+
+
+class ReturnItemsView(_ApiModel):
+    """GET return-items：退件項目、後端允許修改的欄位與上一輪正式提交值。"""
+
+    invoice_id: UUID
+    status: str
+    submission_round: int
+    can_resubmit: bool
+    requires_void: bool
+    resubmit_blocked_reason: str | None = None
+    editable_fields: tuple[FieldRefView, ...] = ()
+    return_items: tuple[ReturnItemView, ...] = ()
+    previous: PreviousSubmissionView
+
+
+class ResubmitView(_ApiModel):
+    """POST resubmit：重送後的狀態（回到退件來源節點）與輪次；replayed 為冪等重放。"""
+
+    invoice_id: UUID
+    status: str
+    submission_round: int
+    submitted_at: datetime
+    tax_period: str
+    warnings: tuple[ApiWarning, ...] = ()
+    modified_fields: tuple[ModifiedFieldView, ...] = ()
+    rereview_fields: tuple[FieldRefView, ...] = ()
+    replayed: bool = False
+
+
+class VoidView(_ApiModel):
+    """POST void：申請人作廢；原案件與影像保留，重新上傳會建立新案件。"""
+
+    invoice_id: UUID
+    status: str
+    submission_round: int
+    voided_at: datetime
+
+
 # ---- 核對表單（使用者看到與編輯的值，全部字串）----
 
 
@@ -144,7 +227,7 @@ class IntakeForm:
 class OutboundRequest:
     """即將送往 API 的請求描述，供憑證提供者綁定操作、方法、路徑與內容雜湊（不含內容本身）。"""
 
-    operation: Literal["recognize", "check", "submit"]
+    operation: Literal["recognize", "check", "submit", "read", "resubmit", "void"]
     method: str
     path: str
     body_sha256: str

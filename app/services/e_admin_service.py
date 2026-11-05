@@ -46,6 +46,7 @@ GRANTS = "sys.department-permissions"
 INVOICES = "inv.upload"
 INTAKE = "inv.intake"
 KNOWLEDGE = "rag.manager"
+KNOWLEDGE_QA = "rag.qa"
 
 
 @dataclass
@@ -370,6 +371,15 @@ def get_e_module() -> EModule:
             "知識庫",
             "/knowledge",
             frozenset(Action),
+            system_only=False,
+        ),
+        Capability(
+            KNOWLEDGE_QA,
+            "RAG知識庫問答",
+            "知識庫",
+            "/knowledge-qa",
+            frozenset({Action.VIEW}),
+            management=False,
             system_only=False,
         ),
     )

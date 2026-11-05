@@ -31,6 +31,36 @@ CONTACT = "財務部"
 TIME_EPSILON = 1e-6
 
 
+def test_current_department_reaches_both_retrieval_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """目前部門必須同時傳到兩條搜尋路徑，不接收額外知識庫縮限。"""
+    from app.schemas.rag import SearchResult
+
+    calls: list[tuple[str, Any, Any]] = []
+
+    def vector(*args: Any, **kwargs: Any) -> SearchResult:
+        calls.append(("vector", args[2], kwargs.get("selected_ids")))
+        return SearchResult(hits=(), sources=())
+
+    def keyword(*args: Any, **kwargs: Any) -> list[SearchHit]:
+        assert kwargs["knowledge_base_ids"] is None
+        calls.append(("keyword", kwargs["department_id"], kwargs.get("selected_ids")))
+        return []
+
+    monkeypatch.setattr(qa.retrieval, "search", vector)
+    monkeypatch.setattr(qa.rag_repository, "search_keyword_chunks", keyword)
+    qa.ask(
+        "第12條是什麼？",
+        FINANCE,
+        embedding_factory=FakeEmbedding,
+        chat_factory=FakeChat,
+        open_session=FakeSession,
+    )
+    assert [(kind, str(dept), selected) for kind, dept, selected in calls] == [
+        ("vector", FINANCE.department_id, None),
+        ("keyword", FINANCE.department_id, None),
+    ]
+
+
 def hit(distance: float, n: int = 0) -> SearchHit:
     return SearchHit(
         "第十二條 三聯式發票遺失，應取得影本並蓋章。",

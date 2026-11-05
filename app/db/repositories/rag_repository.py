@@ -882,3 +882,50 @@ def sum_no_answer_since(db: Session, since: date) -> dict[str, int]:
         return {}
     rows = db.execute(SUM_NO_ANSWER_SINCE, {"since": since}).mappings()
     return {row["knowledge_base_id"]: int(row["total"] or 0) for row in rows}
+
+
+LIST_QA_CHOICES = text("""
+    SELECT DISTINCT kb.knowledge_base_id::text AS id, kb.knowledge_name AS title
+    FROM public.v_user_department_rag_access va
+    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = va.knowledge_base_id
+    WHERE va.user_id = CAST(:user_id AS uuid)
+      AND va.department_id = CAST(:department_id AS uuid)
+      AND va.can_read AND va.use_for_qa
+      AND kb.approval_status = 'approved' AND kb.is_active AND kb.file_count >= 1
+    ORDER BY title, id
+""")
+
+
+def list_qa_choices(db: Session, user_id: UUID, department_id: UUID) -> list[dict[str, str]]:
+    """只列本人目前部門可用的問答知識庫，不回傳其他部門名稱。"""
+    return [
+        dict(row)
+        for row in db.execute(
+            LIST_QA_CHOICES, {"user_id": str(user_id), "department_id": str(department_id)}
+        ).mappings()
+    ]
+
+
+def qa_department_status(db: Session, user_id: UUID, department_id: UUID) -> list[dict[str, Any]]:
+    """唯讀診斷本人目前部門已開放閱讀的知識庫，不回傳其他部門或未授權來源。"""
+    statement = text("""
+        SELECT kb.knowledge_base_id::text AS id, kb.knowledge_name AS title,
+               da.use_for_qa AS selected,
+               (kb.approval_status = 'approved' AND kb.is_active AND kb.file_count >= 1) AS eligible
+        FROM public.v_user_departments ud
+        JOIN public.rag_department_access da ON da.department_id = ud.department_id AND da.can_read
+        JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = da.knowledge_base_id
+        WHERE ud.user_id = CAST(:user_id AS uuid)
+          AND ud.department_id = CAST(:department_id AS uuid)
+        ORDER BY kb.knowledge_name, kb.knowledge_base_id
+    """)
+    return [
+        dict(row)
+        for row in db.execute(
+            statement,
+            {
+                "user_id": str(user_id),
+                "department_id": str(department_id),
+            },
+        ).mappings()
+    ]

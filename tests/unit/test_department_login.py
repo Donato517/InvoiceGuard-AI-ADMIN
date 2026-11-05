@@ -1221,3 +1221,53 @@ def test_retired_document_selection_route_is_not_registered(
         "/knowledge/shared-tax/documents/sample-tax/toggle-dept", headers=ORIGIN
     )
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "absent", "no-view", "inactive", "frontend-only", "revoked", "manager-only"]
+)
+def test_rag_qa_catalog_controls_sidebar_and_real_guard(
+    browser: TestClient, state: dict[str, Any], monkeypatch: pytest.MonkeyPatch, fault: str | None
+) -> None:
+    """以真實登入 adapter 驗證 rag_qa，不從管理權限或登入快照推定可問答。"""
+    from app.services import department_qa_service
+
+    monkeypatch.setattr(department_qa_service, "choices", lambda actor: [])
+    monkeypatch.setattr(
+        department_qa_service,
+        "configuration_status",
+        lambda actor: {
+            "readable_count": 0,
+            "selected_count": 0,
+            "available_count": 0,
+            "unavailable": [],
+        },
+    )
+    if fault not in {"absent", "manager-only"}:
+        row = {
+            **state["functions"][0],
+            "function_code": "rag_qa",
+            "function_name": "RAG知識庫問答",
+            "app_scope": "frontend" if fault == "frontend-only" else "admin",
+            "is_active": fault != "inactive",
+            "can_view": fault != "no-view",
+            "can_create": False,
+            "can_edit": False,
+            "can_delete": False,
+        }
+        state["functions"].append(row)
+    if fault == "manager-only":
+        rag_manager_row(state)
+    login(browser)
+    if fault == "revoked":
+        row["can_view"] = False
+    menu = browser.get("/welcome")
+    page = browser.get("/knowledge-qa")
+    if fault is None:
+        assert 'href="/knowledge-qa"' in menu.text
+        assert page.status_code == 200 and "RAG知識庫問答" in page.text
+        assert 'href="/knowledge"' not in menu.text
+        assert browser.get("/knowledge/chat").status_code == 403
+    else:
+        assert 'href="/knowledge-qa"' not in menu.text
+        assert page.status_code == 403

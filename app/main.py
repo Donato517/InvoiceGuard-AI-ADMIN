@@ -32,6 +32,7 @@ from app.routers import (
     invoice_correction,
     invoices,
     knowledge,
+    knowledge_qa,
     robots,
     supplier_management,
     system,
@@ -67,6 +68,7 @@ app.include_router(invoices.router)
 app.include_router(cases.router)
 app.include_router(intake.router)
 app.include_router(knowledge.router)
+app.include_router(knowledge_qa.router)
 app.include_router(supplier_management.router)
 app.include_router(company_profile.router)
 app.include_router(users.router)

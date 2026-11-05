@@ -42,6 +42,7 @@ CATALOG_CODES = {
     "sys.department-permissions": "department",
     "inv.upload": "Triplicate Uniform Invoice",
     "rag.manager": "rag_manager",
+    "rag.qa": "rag_qa",
     "company.profile": "company_profile",
 }
 COMPANY_CATALOG_CODES = {

@@ -1,0 +1,52 @@
+{#
+  @template pages/knowledge_qa/chat.html
+  @description 部門問答：自動使用部門問答來源，不顯示清單；對話不保存。
+  @route GET /knowledge-qa
+  @context has_sources: bool 目前部門是否有可用問答來源
+  @context department_id: str 頁面部門識別，僅用於偵測過期頁面
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}RAG知識庫問答{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/knowledge.css') }}">
+{% endblock head %}
+{% block content %}
+  <div class="page-heading">
+    <h2>RAG知識庫問答</h2>
+    <p class="muted small-text">回答根據目前部門可用的知識庫，並附上來源。每題獨立處理，對話不保存，重新整理即清空。</p>
+  </div>
+  <form class="qa-layout qa-layout--department"
+        hx-post="/knowledge-qa/ask"
+        hx-target="#chatMessages"
+        hx-swap="beforeend scroll:#chatMessages:bottom"
+        hx-disabled-elt="find button[type=submit]"
+        hx-history="false"
+        data-busy="正在查詢知識庫並整理回答，約需 20～50 秒…"
+        hx-on::after-request="if (event.detail.elt === this && event.detail.xhr.status === 200) this.querySelector('textarea').value = ''">
+    <input type="hidden"
+           name="context_department_id"
+           value="{{ department_id }}">
+    <section class="card chat-card" aria-label="對話">
+      <div class="toolbar">
+        <h3 class="card__title">💬 智慧問答</h3>
+        <a href="/knowledge-qa" class="btn btn--secondary btn--small">清除對話</a>
+      </div>
+      <div id="chatMessages" role="log" aria-live="polite">
+        <div class="message assistant">您好！請輸入想了解的問題，我會根據目前部門的知識庫為您查詢。</div>
+      </div>
+      {% if not has_sources %}<p class="muted" role="status">目前部門尚無可用的問答資料，請聯絡管理人員。</p>{% endif %}
+      <div class="ask-form">
+        <textarea name="question"
+                  rows="2"
+                  maxlength="500"
+                  required
+                  aria-label="問題"
+                  placeholder="請輸入您的問題"
+                  {% if not has_sources %}disabled{% endif %}></textarea>
+        <button type="submit"
+                class="btn btn--primary"
+                {% if not has_sources %}disabled{% endif %}>送出</button>
+      </div>
+    </section>
+  </form>
+{% endblock content %}

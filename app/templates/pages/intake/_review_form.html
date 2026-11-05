@@ -34,7 +34,7 @@
         {% if live_check %}id="flow-review-form" data-live-check-url="{{ check_url }}"{% endif %}>
     <input type="hidden" name="recognition_id" value="{{ form.recognition_id }}">
     <section class="card">
-      <h3>核對欄位（14 項）</h3>
+      <h3>發票基本資料</h3>
       <div class="invoice14-grid">
         {# 1 發票聯式／識別 #}
         <div class="invoice14-field">
@@ -72,17 +72,13 @@
         {# 5 買受人統編 #}
         {{ field("buyer_tax_id", "5", "買受人統編", form.buyer_tax_id) }}
 
-        {# 6～9 品名明細摘要 #}
-        <div class="invoice14-field">
-          <label><span>6～9</span>品名／數量／單價／金額</label>
-          <input value="請見下方「品名明細」" readonly disabled class="muted">
-        </div>
+        {# 6～9 品名／數量／單價／金額：只在下方「品名明細」填寫與保存（不再重複顯示佔位列；API／Schema／檢核對應不變） #}
 
         {# 10 銷售額合計 #}
         {{ field("sales_amount", "10", "銷售額合計", form.sales_amount, true) }}
 
-        {# 11 課稅別與稅額 #}
-        <div class="invoice14-field">
+        {# 11 課稅別與稅額（獨佔一列） #}
+        <div class="invoice14-field invoice14-field--full">
           <label for="f-tax_type">
             <span>11</span>課稅別與稅額<span class="field-required">*必填</span>
           </label>
@@ -106,8 +102,8 @@
           </div>
         </div>
 
-        {# 12 總計／國字大寫 #}
-        <div class="invoice14-field">
+        {# 12 總計／國字大寫（獨佔一列） #}
+        <div class="invoice14-field invoice14-field--full">
           <label for="f-total_amount">
             <span>12</span>總計／國字大寫<span class="field-required">*必填</span>
           </label>
@@ -127,8 +123,8 @@
           </div>
         </div>
 
-        {# 13 備註 #}
-        <div class="invoice14-field">
+        {# 13 備註（獨佔一列） #}
+        <div class="invoice14-field invoice14-field--full">
           <label><span>13</span>備註</label>
           <input value="無備註（API 目前沒有備註欄位）" readonly disabled class="muted">
         </div>
@@ -158,39 +154,50 @@
     </section>
     <section class="card">
       <h3>品名明細（第 6～9 項，最多 {{ max_items }} 筆）</h3>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col" class="col-w-index">#</th>
-              <th scope="col">品名／用途</th>
-              <th scope="col" class="col-w-qty">數量</th>
-              <th scope="col" class="col-w-money">單價</th>
-              <th scope="col" class="col-w-money">金額</th>
-              <th scope="col" class="col-w-action">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for item in form.items %}
-              {% set n = loop.index0 %}
-              <tr>
-                <td>{{ loop.index }}
-                  <input type="hidden" name="item_source_line_no" value="{{ item.source_line_no if item.source_line_no is not none else '' }}">
-                  {% if item.source_line_no is none %}<span class="muted small-text">新增</span>{% endif %}
-                </td>
-                <td><input name="item_item_name" value="{{ item.item_name }}" aria-label="第 {{ loop.index }} 筆品名">{{ note("items." ~ n ~ ".item_name") }}</td>
-                <td><input name="item_quantity" value="{{ item.quantity }}" aria-label="第 {{ loop.index }} 筆數量">{{ note("items." ~ n ~ ".quantity") }}</td>
-                <td><input name="item_unit_price" value="{{ item.unit_price }}" aria-label="第 {{ loop.index }} 筆單價">{{ note("items." ~ n ~ ".unit_price") }}</td>
-                <td><input name="item_line_amount" value="{{ item.line_amount }}" aria-label="第 {{ loop.index }} 筆金額">{{ note("items." ~ n ~ ".line_amount") }}</td>
-                <td><button type="submit" name="action" value="remove_item:{{ n }}" class="btn btn--secondary btn--small">刪除</button></td>
-              </tr>
-            {% else %}
-              <tr><td colspan="6">沒有明細；至少需要一筆才能送出。</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <p class="muted small-text">請確認發票之品名、數量、單價與金額，必要時可調整或新增品項。</p>
+      {#- 每個項次一張卡：上列品名，下列數量、單價、金額。欄位 name 與送出順序不變（item_*），每個輸入框各自搭配一個 [data-check-field] 提醒容器 -#}
+      <div class="item-list">
+        {% set total = namespace(value=0.0) %}
+        {% for item in form.items %}
+          {% set n = loop.index0 %}
+          {% set total.value = total.value + ((item.line_amount | string | replace(",", "") | float(0)) if item.line_amount is not none else 0) %}
+          <div class="item-card">
+            <div class="item-card__index">{{ loop.index }}
+              <input type="hidden" name="item_source_line_no" value="{{ item.source_line_no if item.source_line_no is not none else '' }}">
+              {% if item.source_line_no is none %}<span class="muted small-text">新增</span>{% endif %}
+            </div>
+            <div class="item-card__body">
+              <div class="item-cell item-cell--name">
+                <label class="item-label" for="f-item-name-{{ n }}">品名</label>
+                <input id="f-item-name-{{ n }}" name="item_item_name" value="{{ item.item_name }}" aria-label="第 {{ loop.index }} 筆品名">{{ note("items." ~ n ~ ".item_name") }}
+              </div>
+              <div class="item-card__nums">
+                <div class="item-cell">
+                  <label class="item-label" for="f-item-qty-{{ n }}">數量</label>
+                  <input id="f-item-qty-{{ n }}" name="item_quantity" value="{{ item.quantity }}" aria-label="第 {{ loop.index }} 筆數量">{{ note("items." ~ n ~ ".quantity") }}
+                </div>
+                <div class="item-cell">
+                  <label class="item-label" for="f-item-price-{{ n }}">單價</label>
+                  <input id="f-item-price-{{ n }}" name="item_unit_price" value="{{ item.unit_price }}" aria-label="第 {{ loop.index }} 筆單價">{{ note("items." ~ n ~ ".unit_price") }}
+                </div>
+                <div class="item-cell">
+                  <label class="item-label" for="f-item-amount-{{ n }}">金額</label>
+                  <input id="f-item-amount-{{ n }}" name="item_line_amount" value="{{ item.line_amount }}" aria-label="第 {{ loop.index }} 筆金額" class="item-amount">{{ note("items." ~ n ~ ".line_amount") }}
+                </div>
+              </div>
+            </div>
+            <div class="item-card__action">
+              <button type="submit" name="action" value="remove_item:{{ n }}" class="btn btn--secondary btn--small">刪除</button>
+            </div>
+          </div>
+        {% else %}
+          <p class="muted">沒有明細；至少需要一筆才能送出。</p>
+        {% endfor %}
       </div>
-      <p><button type="submit" name="action" value="add_item" class="btn btn--secondary btn--small" {% if form.items | length >= max_items %}disabled{% endif %}>新增明細</button></p>
+      <div class="item-footer">
+        <button type="submit" name="action" value="add_item" class="btn btn--secondary btn--small" {% if form.items | length >= max_items %}disabled{% endif %}>新增明細</button>
+        <p class="item-total">明細總金額<strong data-items-total>{{ ("{:,.0f}".format(total.value)) if total.value == (total.value | int) else ("{:,.2f}".format(total.value)) }}</strong></p>
+      </div>
     </section>
     <p>
       {% if not live_check %}<button type="submit" name="action" value="check" class="btn btn--secondary">檢核</button>{% endif %}
@@ -206,3 +213,4 @@
     </p>
   </form>
   <script src="{{ static_url('js/intake-amounts.js') }}" defer></script>
+  <script src="{{ static_url('js/item-total.js') }}" defer></script>

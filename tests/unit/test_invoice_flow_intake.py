@@ -751,6 +751,47 @@ def test_restart_route_still_does_not_exist(browser_as: Any) -> None:
     )
 
 
+def test_step3_has_no_duplicate_6_to_9_placeholder_but_keeps_item_table(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+
+    assert "請見下方" not in html and "<span>6～9</span>" not in html
+    # 品名明細完整保留：欄位 name 不變，仍可新增／刪除、送出
+    for name in ("item_item_name", "item_quantity", "item_unit_price", "item_line_amount"):
+        assert f'name="{name}"' in html
+    assert 'value="add_item"' in html and 'value="remove_item:0"' in html
+    assert "品名明細（第 6～9 項" in html
+
+
+def test_step3_layout_keeps_fields_1_to_4_and_shows_item_cards_with_total(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+
+    assert "<h3>發票基本資料</h3>" in html and "表頭 10 項" not in html
+    # 1～4（聯式、字軌號碼、日期、買受人名稱）必須保留
+    for expected in ("發票聯式／識別", "發票字軌號碼", "發票日期", "買受人名稱"):
+        assert expected in html, expected
+    for name in ("invoice_track", "invoice_number", "invoice_date", "buyer_name"):
+        assert f'name="{name}"' in html, name
+    # 11、12、13 各佔一列；5 與 10 同列（不加 --full）
+    for num in ("11", "12", "13"):
+        assert f"<span>{num}</span>" in html
+    assert html.count("invoice14-field--full") == 4  # 11、12、13、14
+    # 品名明細：一項次一張卡，上列品名、下列數量／單價／金額；欄位 name 不變
+    assert html.count('class="item-card"') == 2 and "品名／用途" not in html
+    for name in ("item_item_name", "item_quantity", "item_unit_price", "item_line_amount"):
+        assert html.count(f'name="{name}"') == 2, name
+    # 明細總金額：RECOGNITION 兩筆為 2,000 與 1,000
+    assert "明細總金額" in html and "<strong data-items-total>3,000</strong>" in html
+    assert "品名小計" not in html
+
+
 # ---- 重新上傳：無論有沒有重複發票，都停在新的上傳頁（可選檔）、仍登入、沒有 403 或登入頁 ----
 
 

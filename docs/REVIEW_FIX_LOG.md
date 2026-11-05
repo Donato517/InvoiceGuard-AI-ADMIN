@@ -1188,3 +1188,12 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 
 
 驗證結果：獨立 RAG 提交的登入／部門問答／既有 RAG 回歸 324 passed、1 skipped（27.36 秒），保留既有 Starlette 警告；三站契約 check_project、Ruff lint 與 249 檔格式通過。
+
+## 2026-11-06 Show Case 交付
+
+原因：上傳核對需要可追溯的供應商範例，但範例不應直接改寫本次發票，也不應另建第二份供應商主檔。
+結論：ADMIN 維護與人工確認、API 提供有效範例、前台另開唯讀參考。新範例綁定正式供應商，原圖與歷程保留；逐次驗權、版本衝突、來源 SHA-256 與失敗回滾由既有分層處理。正式發票換算／檢核流程保留。
+界線：結構版本檔是待 DB 負責人審查的定義，沒有套用正式 migration。正式範例表與私有歷程擴充須依團隊手動 SQL 流程核對；無權限或缺表時拒絕，不以假成功取代。模型比較、真實角色與 Storage、獨立 PostgreSQL 多連線及 Preview 仍待驗收。
+說明見 FEATURE-DELIVERY-20261106.md；提交前的實際驗證結果另補 TEST_REPORT。
+
+交付驗證（2026-11-06）：包含 main 新版補正及本機兩項功能的完整 pytest 3151 passed、31 skipped（542.82 秒），1 個既有 Starlette 警告；check_project --project-root ..、Ruff lint、91 份樣板 djLint 通過。供應商新建／修訂／回滾另有合成記憶體 PostgreSQL 驗收；正式角色、Storage、多連線、模型與 Preview 待驗收。

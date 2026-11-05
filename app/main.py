@@ -34,6 +34,7 @@ from app.routers import (
     knowledge,
     knowledge_qa,
     robots,
+    showcases,
     supplier_management,
     system,
     users,
@@ -84,3 +85,4 @@ app.include_router(dev_files.page)
 # 06_E 正式功能；共同接點未就緒時拒絕操作。
 app.include_router(e_admin.router)
 app.include_router(e_function_settings.router)
+app.include_router(showcases.router)

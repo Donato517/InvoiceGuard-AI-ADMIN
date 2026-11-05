@@ -33,6 +33,7 @@ from app.schemas.e_admin import (
     UnauthenticatedError,
     UnavailableError,
 )
+from app.schemas.showcase import ACTIVATE_CODE, CATALOG_CODE, CODE
 from app.services.e_registry import Capability
 
 CATALOG_CODES = {
@@ -43,6 +44,8 @@ CATALOG_CODES = {
     "inv.upload": "Triplicate Uniform Invoice",
     "rag.manager": "rag_manager",
     "rag.qa": "rag_qa",
+    CODE: CATALOG_CODE,
+    ACTIVATE_CODE: CATALOG_CODE,
     "company.profile": "company_profile",
 }
 COMPANY_CATALOG_CODES = {
@@ -439,7 +442,7 @@ class DepartmentLoginAdapter:
             for row in rows:
                 code = row["function_code"]
                 mask = flags.get(code, 0)
-                if not mask or code == "welcome":
+                if not mask or code in {"welcome", CATALOG_CODE, CODE, ACTIVATE_CODE}:
                     continue
                 lookup_code = _normalize_catalog_code(code, row.get("function_name", ""))
                 definition = definitions.get(lookup_code)

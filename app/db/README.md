@@ -117,3 +117,7 @@ users ──1:N──> invoices ──1:N──> invoice_items
 ## 正式供應商主檔
 
 `public.suppliers` 由 API migration `5e8b11d0a941` 定義，ADMIN 透過 `suppliers_repository` 固定參數 SQL 存取，沒有 ADMIN migration 或舊 users ORM 依賴。欄位與啟用限制見 [正式供應商](../../docs/SUPPLIER_MANAGEMENT.md)。
+
+## Show Case 交付的結構注意事項（2026-11-06）
+
+API 草案 f5e7afb48888 定義私有歷程，4c7c7c1d26b0 對接正式範例並保留既有公司／供應商版本鏈。ADMIN 只使用固定 SQL，未新增本站 migration。正式 DB 沿用團隊手動 SQL 流程；結構檔供審查與隔離測試，沒有執行正式升級。已存在的表需先核對，不能直接重跑 CREATE TABLE。實際角色、私有 Storage 與舊資料映射仍由 DB 負責人確認。

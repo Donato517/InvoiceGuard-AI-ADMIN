@@ -1110,3 +1110,12 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 實際流程：登入與財務部門檢核（`invoice_max_step >= 5`）→ 本人限制 → 直接改記憶體示範案件的欄位與狀態；原先沒有同源檢查、沒有案件狀態檢查（已核准案件可被翻成退回，且修改後沒清審核案件快取，可重複審核）、任何非 `passed` 的 decision 都當退回、欄位內容不檢核；對資料庫案件只改被丟棄的複本卻回成功。
 修正（`app/routers/invoices.py`）：路由加 `Depends(require_e_origin)`（沿用其他寫入路由的同源機制）；資料庫案件回 409（同 `_refuse_legacy_demo_write`）；本人 403；狀態須為可審核，decision 只接受 `passed`／`rejected`，課稅別與扣抵代號只接受固定清單（或維持目前值），文字欄位限 200 字；全部檢核通過後才修改，並在成功後清除審核案件快取。`test_pages` 的舊入口測試改用待審核案件並帶 Origin（瀏覽器表單本來就會帶）。
 驗證：離線／替身測試；暫時拿掉同源、狀態、decision 檢查時對應測試失敗。會計科目與用途為舊版自由文字，只限長度，未改為正式科目清單（舊入口預設值 `6211004 管理-文具用品` 與步驟 5 清單格式不同）。
+
+## 2026-11-05 Claude：ADMIN 金額功能移植到 PR #22 之後的新版 `/intake`
+
+- 問題：`fix/admin-amount-zh-align`（來源 `31ba15f`、`d8e8d9d`）建在未合併的 `feature/c-intake-delivery` 上，與 `main` 已合併的 PR #22（流程頁串接 API 辨識與核對、合併 `/intake`）有 12 個檔案衝突，且 `main` 的模板、Router 已重做。
+- 處理：以 `origin/main`（`b817d2b`）建新分支，將兩個來源提交的淨差異用 3-way 套用（不自動提交、不採整檔 ours/theirs）。實際衝突三處並逐一人工解決：`_review_form.html`（保留 PR #22 的 `live_check`／`check_url` 說明，補金額連動說明）、`_flow_step_correct.html`（在 PR #22 的 `with` 清單末尾加 `zh_suggestion_note`）、`test_invoice_flow_intake.py`（雙方測試都保留）；`intake.py`、`invoices.py`（僅 `_intake_view` 多一個欄位）、`invoice_intake_mapping.py` 自動合併。文件不套舊版，改依新版內容追加。
+- 自我審查發現並已修正：新版 `invoice-flow-review.js` 的 `clearLive()` 移除所有 `[data-live]`，會清掉本機金額提醒（原用 `data-live="amounts"`）；改用 `data-amounts-note`，並在伺服器已回報同欄位警示時隱藏本機提醒避免重複；隱藏過期警示的選擇器排除新舊兩類節點。新增測試直接執行新版實際的 `clearLive()`／`add()` 原始碼，並加靜態守門（本機提醒不得再使用 `data-live`）。
+- 重複的國字轉換器：保留 `app/utils/chinese_amount.py` 與 `routers/invoices.py` 的 `_invoice_chinese_amount`（後者為舊示範／財務儲存路徑，含角分與兆，屬他人範圍），新增對照測試要求兩者對共用整數向量輸出相同；未重構，列為技術債。
+- 驗證：ADMIN `pytest -q tests/unit` 2864 passed、9 skipped；金額 JS 36 passed；PR #22 相關（intake 路由、流程、契約、client、權限、mapping）106 passed；ruff、format、`check_project`、djlint 通過。未驗：真實瀏覽器、真實 API。
+- 處理檔案：app/static/js/intake-amounts.js、app/utils/chinese_amount.py、app/services/invoice_intake_mapping.py、app/routers/intake.py、app/routers/invoices.py、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests/js/test_intake_amounts.cjs、tests/unit/test_intake_amount_alignment.py、tests/unit/test_intake_zh_suggestion.py、tests/unit/test_invoice_flow_intake.py、tests/unit/test_invoice_intake_mapping.py、tests/fixtures/amount_to_chinese_vectors.json、docs/DEVELOPMENT_STATUS.md、docs/REVIEW_FIX_LOG.md。

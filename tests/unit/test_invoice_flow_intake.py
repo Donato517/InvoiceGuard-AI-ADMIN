@@ -4,12 +4,14 @@
 API 以 httpx.MockTransport 的假 API 替身（沿用 test_intake_routes）；合成資料，不連 API、DB 或 Storage。
 """
 
+import copy
 from collections.abc import Iterator
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
-from test_intake_routes import INV, RID, FakeApi, api, review_data  # noqa: F401
+from test_intake_routes import INV, RECOGNITION, RID, FakeApi, api, review_data  # noqa: F401
 
 from app.routers import invoices as invoices_router
 
@@ -241,3 +243,96 @@ def test_live_check_is_refused_after_submission(
     )
 
     assert response.status_code == 409
+
+
+# ---- 國字大寫自動建議值（辨識當下伺服器端填一次；之後每次渲染重算提醒、不再填值）----
+SUGGESTED = "參仟壹佰伍拾元整"  # RECOGNITION 的總計為 3150
+
+
+def _recognition(zh: str | None, warnings: list[dict[str, str]] | None = None) -> httpx.Response:
+    body = copy.deepcopy(RECOGNITION)
+    body["invoice"]["total_amount_zh"] = zh
+    body["warnings"] = warnings or []
+    return httpx.Response(200, json=body)
+
+
+UNREADABLE = {
+    "field": "total_amount_zh",
+    "code": "total_amount_zh_unreadable",
+    "message": "無法判讀",
+}
+MISMATCH = {"field": "total_amount_zh", "code": "total_amount_zh_mismatch", "message": "不符"}
+
+
+def _zh_input_value(html: str) -> str:
+    import re
+
+    match = re.search(r'<input id="f-total_amount_zh" name="total_amount_zh" value="([^"]*)"', html)
+    assert match
+    return match.group(1)
+
+
+def test_blank_zh_is_filled_once_with_a_note_that_survives_rerendering(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)  # RECOGNITION 的國字為 None
+    first = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    second = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    assert _zh_input_value(first) == SUGGESTED == _zh_input_value(second)
+    assert "AI 沒有辨識到國字大寫金額" in first and "field-suggestion" in first
+    assert (
+        first.count("field-suggestion") == second.count("field-suggestion") == 1
+    )  # 提醒只有一則，重開頁面不重複
+    assert flow_api.paths() == [
+        "/api/v1/invoices/recognize"
+    ]  # 重新開啟頁面不再呼叫 API，也不重複填值
+
+
+def test_unreadable_zh_is_replaced_and_note_shows_the_escaped_original(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    flow_api.routes["/api/v1/invoices/recognize"] = _recognition("<b>約壹萬</b>", [UNREADABLE])
+    _upload(admin_client, draft)
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    assert _zh_input_value(html) == SUGGESTED
+    assert "&lt;b&gt;約壹萬&lt;/b&gt;" in html and "<b>約壹萬</b>" not in html  # 原值已跳脫
+    assert "無法判讀，已依總計自動帶入" in html
+
+
+def test_check_keeps_the_suggestion_and_note_but_a_manual_value_is_never_overwritten(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    _upload(admin_client, draft)
+    kept = admin_client.post(
+        f"/invoices/{draft}/flow/review",
+        headers=_ORIGIN,
+        data=review_data("check", recognition_id=RID, total_amount_zh=SUGGESTED),
+    ).text
+    assert _zh_input_value(kept) == SUGGESTED and "field-suggestion" in kept  # 仍是建議值：提醒保留
+    manual = admin_client.post(
+        f"/invoices/{draft}/flow/review",
+        headers=_ORIGIN,
+        data=review_data("check", recognition_id=RID, total_amount_zh="自行填寫"),
+    ).text
+    assert _zh_input_value(manual) == "自行填寫" and "field-suggestion" not in manual
+    again = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    assert _zh_input_value(again) == "自行填寫"  # 之後再開也不被建議值覆寫
+    cleared = admin_client.post(
+        f"/invoices/{draft}/flow/review",
+        headers=_ORIGIN,
+        data=review_data("check", recognition_id=RID, total_amount_zh=""),
+    ).text
+    assert (
+        _zh_input_value(cleared) == ""
+    )  # 清空也不由伺服器補回（自動更新是瀏覽器端改總計時才發生）
+
+
+def test_mismatch_and_tolerant_zh_are_left_alone(
+    admin_client: TestClient, flow_api: FakeApi, draft: str
+) -> None:
+    flow_api.routes["/api/v1/invoices/recognize"] = _recognition(
+        "壹萬肆仟捌佰伍拾玖元整", [MISMATCH]
+    )
+    _upload(admin_client, draft)
+    html = admin_client.get(f"/invoices/{draft}/flow?step=3").text
+    assert _zh_input_value(html) == "壹萬肆仟捌佰伍拾玖元整" and "field-suggestion" not in html

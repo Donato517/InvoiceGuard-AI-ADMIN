@@ -1,0 +1,193 @@
+{
+  "_comment": "國字大寫轉換共用向量：輸出取自手機前台 InvoiceGuard-AI app/static/js/invoice-field-rules.js 的 amountToChinese()；ADMIN intake-amounts.js 必須逐項相同。",
+  "vectors": [
+    {
+      "input": "0",
+      "output": "零元整"
+    },
+    {
+      "input": "1",
+      "output": "壹元整"
+    },
+    {
+      "input": "9",
+      "output": "玖元整"
+    },
+    {
+      "input": "10",
+      "output": "壹拾元整"
+    },
+    {
+      "input": "11",
+      "output": "壹拾壹元整"
+    },
+    {
+      "input": "15",
+      "output": "壹拾伍元整"
+    },
+    {
+      "input": "20",
+      "output": "貳拾元整"
+    },
+    {
+      "input": "100",
+      "output": "壹佰元整"
+    },
+    {
+      "input": "101",
+      "output": "壹佰零壹元整"
+    },
+    {
+      "input": "110",
+      "output": "壹佰壹拾元整"
+    },
+    {
+      "input": "999",
+      "output": "玖佰玖拾玖元整"
+    },
+    {
+      "input": "1000",
+      "output": "壹仟元整"
+    },
+    {
+      "input": "1001",
+      "output": "壹仟零壹元整"
+    },
+    {
+      "input": "1010",
+      "output": "壹仟零壹拾元整"
+    },
+    {
+      "input": "1100",
+      "output": "壹仟壹佰元整"
+    },
+    {
+      "input": "6300",
+      "output": "陸仟參佰元整"
+    },
+    {
+      "input": "9999",
+      "output": "玖仟玖佰玖拾玖元整"
+    },
+    {
+      "input": "10000",
+      "output": "壹萬元整"
+    },
+    {
+      "input": "10001",
+      "output": "壹萬零壹元整"
+    },
+    {
+      "input": "10010",
+      "output": "壹萬零壹拾元整"
+    },
+    {
+      "input": "10100",
+      "output": "壹萬零壹佰元整"
+    },
+    {
+      "input": "10500",
+      "output": "壹萬零伍佰元整"
+    },
+    {
+      "input": "11000",
+      "output": "壹萬壹仟元整"
+    },
+    {
+      "input": "12600",
+      "output": "壹萬貳仟陸佰元整"
+    },
+    {
+      "input": "14858",
+      "output": "壹萬肆仟捌佰伍拾捌元整"
+    },
+    {
+      "input": "100000",
+      "output": "壹拾萬元整"
+    },
+    {
+      "input": "100050",
+      "output": "壹拾萬零伍拾元整"
+    },
+    {
+      "input": "123456",
+      "output": "壹拾貳萬參仟肆佰伍拾陸元整"
+    },
+    {
+      "input": "1000000",
+      "output": "壹佰萬元整"
+    },
+    {
+      "input": "10000000",
+      "output": "壹仟萬元整"
+    },
+    {
+      "input": "10000050",
+      "output": "壹仟萬零伍拾元整"
+    },
+    {
+      "input": "99999999",
+      "output": "玖仟玖佰玖拾玖萬玖仟玖佰玖拾玖元整"
+    },
+    {
+      "input": "100000000",
+      "output": "壹億元整"
+    },
+    {
+      "input": "100000001",
+      "output": "壹億零壹元整"
+    },
+    {
+      "input": "100010000",
+      "output": "壹億零壹萬元整"
+    },
+    {
+      "input": "100000050",
+      "output": "壹億零伍拾元整"
+    },
+    {
+      "input": "123456789",
+      "output": "壹億貳仟參佰肆拾伍萬陸仟柒佰捌拾玖元整"
+    },
+    {
+      "input": "999999999999",
+      "output": "玖仟玖佰玖拾玖億玖仟玖佰玖拾玖萬玖仟玖佰玖拾玖元整"
+    },
+    {
+      "input": "1,200",
+      "output": "壹仟貳佰元整"
+    },
+    {
+      "input": "14858.0",
+      "output": "壹萬肆仟捌佰伍拾捌元整"
+    },
+    {
+      "input": " 14858 ",
+      "output": "壹萬肆仟捌佰伍拾捌元整"
+    },
+    {
+      "input": "",
+      "output": null
+    },
+    {
+      "input": "abc",
+      "output": null
+    },
+    {
+      "input": "-5",
+      "output": null
+    },
+    {
+      "input": "14858.5",
+      "output": null
+    },
+    {
+      "input": "1000000000000",
+      "output": null
+    },
+    {
+      "input": "0014858",
+      "output": "壹萬肆仟捌佰伍拾捌元整"
+    }
+  ]
+}

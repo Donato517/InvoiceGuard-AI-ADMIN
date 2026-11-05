@@ -6,7 +6,7 @@
   @context procurement_return: dict | None  退回補正資料（2-5）；不在退回補正時為 None
 #}
 {% if intake %}
-  {% with form=intake.form, errors=intake.errors, warnings=intake.warnings, missing=intake.missing, duplicate=intake.duplicate, checked=intake.checked, rows=intake.rows, tax_type_options=intake.tax_type_options, max_items=intake.max_items, review_action=intake.review_action, check_url=intake.check_url, live_check=true %}
+  {% with form=intake.form, errors=intake.errors, warnings=intake.warnings, missing=intake.missing, duplicate=intake.duplicate, checked=intake.checked, rows=intake.rows, tax_type_options=intake.tax_type_options, max_items=intake.max_items, review_action=intake.review_action, check_url=intake.check_url, live_check=true, zh_suggestion_note=intake.zh_suggestion_note %}
     {% if intake.banner %}<p class="alert alert--danger" role="alert">{{ intake.banner }}</p>{% endif %}
     <div class="invoice-correction-split">
       {% include "pages/invoices/_invoice_original_pane.html" %}

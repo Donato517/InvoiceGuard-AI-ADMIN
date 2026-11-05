@@ -236,3 +236,11 @@ C 組 `/intake` 與 `/cases` 交付候選（2026-11-03，分支 `feature/c-intak
 
 - 2026-11-05 財務審核方案 1：清單新增上傳者帳號欄（`user_accounts.email` 取 @ 前，缺值「未提供」）、「本人上傳／無權審核」標籤與「檢視詳情」；詳情頁本人上傳時唯讀。後端核准仍由 `SELF_APPROVAL` 擋下；禁止本人退回已核定並由後端 `SELF_RETURN` 拒絕（2026-11-05）。新 JOIN 未在真實 PostgreSQL 驗證。
 - 2026-11-05 本人上傳限制已涵蓋核准、退回、儲存會計欄位三條後端路徑（403）。
+
+ADMIN 核對表單金額功能移植到 PR #22 之後的 `/intake`＋流程頁（2026-11-05，分支 `feat/admin-amount-zh-on-main`，基底 `origin/main` `b817d2b`；**本機修改、尚未 Commit；僅離線測試**）：
+- **來源**：舊分支 `fix/admin-amount-zh-align` 的 `31ba15f`、`d8e8d9d`（該分支建在尚未合併的 `feature/c-intake-delivery` 上，與 `main` 的 PR #22 add/add 衝突，所以改為依 `main` 重新移植；舊分支與兩個來源提交保留不動）。
+- **功能**（與來源相同）：(1) 銷售額＋稅額與總計不一致即時提醒（整數分 BigInt，不假設稅率、不改寫總計或稅額）；(2) 修改合法整數總計後國字自動更新，輸出與手機前台 `amountToChinese` 逐項相同（共用向量 `tests/fixtures/amount_to_chinese_vectors.json`）；手動改過的國字不覆寫、清空後恢復；(3) 辨識當下（`form_from_recognition`，只發生一次）若 API 回報 `total_amount_zh_unreadable` 或 AI 國字空白且總計為合法整數，帶入標準國字並顯示含 AI 原值的核對提醒；可解析但不符只警示；API 容錯接受的預印單位字串不產生本機異常提示（本機不做國字格式預檢）。
+- **與 PR #22 的整合差異**：新版 `invoice-flow-review.js` 的 `clearLive()` 會移除表單內所有 `[data-live]`，原本機金額提醒用 `data-live="amounts"` 會被每一輪伺服器即時檢核清掉，已改為獨立標記 `data-amounts-note`；伺服器（API）已在總計欄位回報警示時隱藏本機提醒避免重複（MutationObserver，必填缺漏與錯誤訊息不算），伺服器警示被清掉或檢核失敗時本機提醒補位；隱藏過期警示的選擇器排除 `[data-live]`、`[data-amounts-note]`、`.field-suggestion`。`invoice-flow-review.js`、`/invoices/{id}/flow/check`、既有 Router 與模板行為未修改。
+- **轉換器**：`app/utils/chinese_amount.py` 與 `routers/invoices.py` 的 `_invoice_chinese_amount`（舊示範流程與財務儲存路徑使用，含角分、兆，放在別人的 router 層）並存，未重構；整數輸出相同，由 `test_intake_zh_suggestion.py` 的對照測試守住（技術債：日後由該檔改引用 util）。
+- **離線測試**：`pytest -q tests/unit` 2864 passed、9 skipped；`node --test tests/js/test_intake_amounts.cjs` 36 passed（含直接執行 `invoice-flow-review.js` 實際 `clearLive()`／`add()` 原始碼的共存測試）；ruff、format、`check_project`、djlint 通過。
+- **未驗證**：真實瀏覽器（含新舊兩支腳本同頁互動與 Safari 輸入法）、真實 API；`total_amount_zh_unreadable` 由上游 API 產生；`tests/js/test_sidebar_logout.cjs`（缺 Playwright）、`test_e_department_permissions.cjs`（4 項失敗，`origin/main` 未修改即如此）與本功能無關。舊的 `POST /intake/review` 暫留路徑重新渲染時沒有保存辨識結果，建議提醒在該路徑檢核後不再顯示。

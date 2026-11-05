@@ -1,10 +1,11 @@
 {#
   @template pages/intake/_review_form.html
-  @description 核對表單（14 項表頭欄位＋多筆品名明細＋檢核／提交按鈕）；/intake 核對頁與發票作業流程步驟 3 共用。
+  @description 核對表單（14 項表頭欄位＋多筆品名明細＋檢核／提交按鈕）；/intake 核對頁與發票作業流程步驟 3 共用；金額連動（國字大寫、總計核對提醒）由 static/js/intake-amounts.js 提供。
   @context live_check: bool    流程頁為 true：輸入時即時檢核（不顯示「檢核」按鈕），並用 check_url 呼叫伺服器檢核
   @context check_url: str      即時檢核端點（live_check 時使用）
   @context review_action: str   表單送出位置（預設 /intake/review；流程頁為 /invoices/{id}/flow/review）
   @context form, errors, warnings, missing, rows, tax_type_options, max_items: 同 pages/intake/review.html
+  @context zh_suggestion_note: str  國字大寫自動帶入的核對提醒（可空；空白表示沒有自動帶入或使用者已改過）
 #}
 {% macro note(key) %}
   {#- A 組警示顯示接點：每個欄位一個 [data-check-field] 容器；blocking＝格式錯誤與必填缺漏，warning＝業務警示（不阻擋提交） -#}
@@ -12,6 +13,8 @@
     {% if errors.get(key) %}<p class="field-error" role="alert" data-check-kind="error" data-severity="blocking">{{ errors.get(key) }}</p>{% endif %}
     {% if missing.get(key) %}<p class="field-error" role="alert" data-check-kind="required" data-severity="blocking">{{ missing.get(key) }}</p>{% endif %}
     {% for message in warnings.get(key, []) %}<p class="field-warning" data-check-kind="warning" data-severity="warning">{{ message }}</p>{% endfor %}
+    {#- 國字大寫自動帶入的核對提醒（伺服器端於辨識當下填值；仍是建議值時才顯示，瀏覽器端改過就隱藏） -#}
+    {% if key == "total_amount_zh" and zh_suggestion_note | default("") %}<p class="field-warning field-suggestion" role="note" data-check-kind="suggestion" data-severity="warning" data-suggested-value="{{ form.total_amount_zh }}">{{ zh_suggestion_note }}</p>{% endif %}
   </div>
 {% endmacro %}
 {% macro field(name, num, label, value, required=false, key=none, placeholder="", readonly=false) %}
@@ -194,3 +197,4 @@
       <a href="/intake">重新上傳</a>
     </p>
   </form>
+  <script src="{{ static_url('js/intake-amounts.js') }}" defer></script>

@@ -1,5 +1,13 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 PR #21 第二輪審查 Batch 2：資料庫發票缺值不虛構，申報金額保留 NULL
+
+- 問題（`_row_to_invoice_dict`）：`submitted_by` 為 NULL 時填成 `"1"`（示範身分）；課稅別 NULL 被推定為應稅；申報金額經 `int(x or 0)`，NULL 變成 0（F09 看不到缺漏）、小數被截斷。
+- 處理：`uploaded_by` 缺值改空字串；課稅別 NULL 保留空白（F09 回報 `BAD_TAX_TYPE`）；新增 `sales_amount_db`／`tax_amount_db` 保存原始值，`_to_filing_snapshot` 在資料庫案件使用它們（NULL → F09 `BAD_AMOUNT`、小數 → `BAD_AMOUNT`、真正的 0 維持 0）；`purpose` 不再補「公務使用」。畫面用的 `net_amount`／`tax_amount` 不變；示範案件沒有 `*_db` 欄位，行為不變。核准規則 `review_status == "approved"` 未動。
+- **刻意未處理（2026-11-06 團隊決議：專題展示用途，保留現有行為，不作為 Merge 阻擋條件）**：`deduction_code` 預設 `"1 - 進貨及費用"`、`account_code` 預設 `"5601 辦公用品費"` 與 `_build_voucher` 的 `"6211004 管理-文具用品"` 後備值仍會出現在 F09 申報檔、401 彙總與示範傳票輸出中；這些是範例預設值，**未經正式財會資料驗證**。`invoices` 表沒有扣抵代號欄位。本批不修改 F09／401／傳票或共用資料模型。
+- 另案提出（不在本批）：單筆顯示欄位 `quantity`／`unit_price`／`amount` 在無明細時預設 1 與銷售額，只取第一筆明細；畫面顯示的 `net_amount` 仍 `int()` 截斷小數。
+- 驗證：`tests/unit/test_db_invoice_read_no_fabrication.py` 17 項（離線）。全套結果見下方提交報告。未做隔離 PostgreSQL 與正式資料驗證。
+
 ## 2026-11-06 PR #21 第二輪審查 Batch 1：資料庫案件不得走只改記憶體的舊入口，舊匯出須先核准
 
 - 問題：`procurement/resubmit`、`flow/upload`、`import-confirm`、`filing`、`flow/complete` 對資料庫案件只修改 `_find_invoice` 回傳的一份用完即丟的字典卻回成功（畫面已隱藏表單，但直接 POST 仍可觸發）；`GET /invoices/{id}/export/{kind}` 沒有核准檢查，也沒有 `_check_invoice_access`，財務可匯出未核准的資料庫案件。

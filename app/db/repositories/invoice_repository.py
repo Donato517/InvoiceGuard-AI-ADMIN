@@ -208,16 +208,20 @@ def _row_to_invoice_dict(
         view_status = "pending"
         is_completed = False
 
-    raw_tax_type = str(row.get("tax_type") or "taxable")
+    raw_tax_type = str(row.get("tax_type") or "")
     if raw_tax_type == "tax_exempt":
         tax_category = "免稅"
         tax_type = "3 - 免稅"
     elif raw_tax_type == "zero_rated":
         tax_category = "零稅率"
         tax_type = "2 - 零稅率"
-    else:
+    elif raw_tax_type == "taxable":
         tax_category = "應稅"
         tax_type = "1 - 應稅"
+    else:
+        # 資料庫沒有課稅別（草稿可為 NULL）：保留空白，不推定為應稅；F09 會回報課稅別缺漏
+        tax_category = ""
+        tax_type = ""
 
     # 列表查詢不讀整份明細，只帶 item_names（SELECT_INVOICES）；單筆查詢傳入 items
     item_desc = str(row.get("item_names") or "")
@@ -233,7 +237,7 @@ def _row_to_invoice_dict(
 
     return {
         "id": row["invoice_id"],
-        "uploaded_by": row.get("submitted_by") or "1",
+        "uploaded_by": row.get("submitted_by") or "",  # 缺值不填假使用者（"1" 是示範／測試身分）
         "submitter_name": row.get("submitter_name") or "",
         "submitter_account": account_display(row.get("submitter_account")),
         "department_id": row.get("department_id") or "",
@@ -251,6 +255,9 @@ def _row_to_invoice_dict(
         "quantity": qty,
         "unit_price": unit_p,
         "amount": amt,
+        # 申報用原始金額：NULL 保持 None、真正的 0 保持 0、小數保持原值，由 F09 判定；net_amount／tax_amount 只供畫面顯示
+        "sales_amount_db": row.get("sales_amount"),
+        "tax_amount_db": row.get("tax_amount"),
         "net_amount": int(row.get("sales_amount") or 0),
         "tax_category": tax_category,
         "tax_amount": int(row.get("tax_amount") or 0),
@@ -264,7 +271,7 @@ def _row_to_invoice_dict(
         "is_completed": is_completed,
         "file_name": row.get("original_filename"),
         "file_media_type": row.get("mime_type") or "image/jpeg",
-        "purpose": item_desc or "公務使用",
+        "purpose": item_desc,
         "account_code": "5601 辦公用品費",
         "deduction_code": "1 - 進貨及費用",
         "tax_type": tax_type,

@@ -970,6 +970,43 @@ def invoice_upload_entry(request: Request) -> RedirectResponse:
     return create_new_invoice(request)
 
 
+# 多頁 PDF 找發票頁：瀏覽器把 PDF 每頁轉成縮圖後分批送來（每批最多 9 張、單張 1.5 MB，與 API 相同）
+MAX_PDF_PAGES_PER_BATCH = 9
+MAX_PDF_PAGE_IMAGE_BYTES = 1536 * 1024
+MAX_PDF_BATCH_BYTES = 4 * 1024 * 1024
+
+
+@router.post("/pdf-pages/classify", response_model=None, dependencies=[Depends(require_e_origin)])
+async def classify_pdf_pages(
+    request: Request, files: Annotated[list[UploadFile], File()]
+) -> JSONResponse:
+    """步驟 1 選 PDF 時：把頁面縮圖轉給 API 判斷是不是三聯式發票與聯別（不存檔、不寫資料），回 JSON 給挑頁程式。"""
+
+    def error(status: int, code: str, message: str) -> JSONResponse:
+        return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+
+    if not 1 <= len(files) <= MAX_PDF_PAGES_PER_BATCH:
+        return error(
+            400, "INVOICE_PAGE_COUNT_INVALID", f"每次需送 1～{MAX_PDF_PAGES_PER_BATCH} 張頁面影像"
+        )
+    images: list[tuple[str, bytes, str]] = []
+    total = 0
+    for upload in files:
+        content = await upload.read(MAX_PDF_PAGE_IMAGE_BYTES + 1)
+        total += len(content)
+        if len(content) > MAX_PDF_PAGE_IMAGE_BYTES or total > MAX_PDF_BATCH_BYTES:
+            return error(400, "INVOICE_IMAGE_TOO_LARGE", "頁面影像過大，請重新選擇檔案")
+        images.append((upload.filename or "page.jpg", content, upload.content_type or "image/jpeg"))
+    client = get_intake_client(request)
+    try:
+        result = await run_in_threadpool(client.classify_pdf_pages, images)
+    except IntakeApiError as exc:
+        return error(exc.status if 400 <= exc.status < 600 else 502, exc.code, api_message(exc))
+    except IntakeTransportError as exc:
+        return error(502, "UPSTREAM_ERROR", exc.public_message)
+    return JSONResponse(result.model_dump(mode="json"))
+
+
 @router.get("/review", response_class=HTMLResponse)
 def invoice_review_list(
     request: Request,
@@ -1391,6 +1428,7 @@ def _render_flow_page(
             "db_invoice": _is_db_invoice(invoice),
             "is_self_upload": is_self_upload,
             "persist_first_four": invoice_id not in _DRAFT_INVOICE_STORE,
+            "pdf_page_pick": step == 1 and _is_new_upload(invoice),
         },
     )
 
@@ -2025,6 +2063,14 @@ _NEED_REAL_LOGIN_MESSAGE = "請以正式帳號登入後再審核；目前身分�
 # 資料庫發票（UUID）的會計填寫暫存：invoices 沒有 deduction_code／account_code 欄位，財務先選好再按核准，
 # 核准時寫進審核歷程原因留存。只存在記憶體，重啟後需重選（核准會因缺扣抵代號被擋，不會寫入錯誤資料）。
 _ACCOUNTING_DRAFT: dict[str, dict[str, str | None]] = {}
+
+
+def _is_new_upload(invoice: dict[str, Any]) -> bool:
+    """步驟 1 是新上傳（會送 API 辨識）而不是既有案件補附件；只有新上傳才把多頁 PDF 挑出發票頁。"""
+    invoice_id = str(invoice["id"])
+    if any(str(item["id"]) == invoice_id for item in _INVOICE_STORE):
+        return False
+    return not _is_db_invoice(invoice)
 
 
 def _is_db_invoice(invoice: dict[str, Any]) -> bool:

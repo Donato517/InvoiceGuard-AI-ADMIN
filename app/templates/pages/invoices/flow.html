@@ -13,6 +13,10 @@
 {% block head %}
   <link rel="stylesheet"
         href="{{ static_url('css/pages/invoice-flow.css') }}">
+  {% if pdf_page_pick | default(false) %}
+    <link rel="stylesheet"
+          href="{{ static_url('css/pages/pdf-invoice-page.css') }}">
+  {% endif %}
 {% endblock head %}
 {% block content %}
   <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票審核</a>
@@ -98,3 +102,15 @@
     {% endif %}
   </div>
 {% endblock content %}
+
+{% block scripts %}
+  {#- 步驟 1 新上傳：多頁 PDF 先挑出三聯式發票頁（pdf.js 選 PDF 送出時才載入） -#}
+  {% if pdf_page_pick | default(false) %}
+    <script src="{{ static_url('js/pdf-invoice-page.js') }}"
+            data-pdfjs="{{ static_url('js/vendor/pdfjs/pdf.min.mjs') }}"
+            data-pdfjs-worker="{{ static_url('js/vendor/pdfjs/pdf.worker.min.mjs') }}"
+            data-pdfjs-cmaps="/static/js/vendor/pdfjs/cmaps/"
+            defer></script>
+    <script src="{{ static_url('js/flow-upload-pdf.js') }}" defer></script>
+  {% endif %}
+{% endblock scripts %}

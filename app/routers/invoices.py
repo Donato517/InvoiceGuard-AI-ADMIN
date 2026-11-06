@@ -102,6 +102,7 @@ from app.services.procurement_case_service import (
     prepare_terminate,
 )
 from app.utils.account_display import account_display, is_same_user
+from app.utils.list_paging import page_url, paginate
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
@@ -821,6 +822,7 @@ def _render_invoice_list_view(
     section: str = "invoices",
     status: str | None = None,
     q: str = "",
+    page: int = 1,
 ) -> HTMLResponse:
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
     # 草稿只存在伺服器記憶體、所有使用者共用同一個字典：絕不能整個清空（會刪掉別人尚未提交的草稿）。
@@ -923,11 +925,21 @@ def _render_invoice_list_view(
         "flagged": flagged_count,
     }
 
+    # 每頁 30 筆（2026-11-06）；統計卡用上面的完整清單，不受分頁影響
+    paged = paginate(invoices, page)
+    page_urls = {
+        number: page_url(active_route, number, q=q.strip() or None, status=status)
+        for number in {*(n for n in paged.links if n), paged.page - 1, paged.page + 1}
+        if 1 <= number <= paged.pages
+    }
+
     return templates.TemplateResponse(
         request,
         "pages/invoices/list.html",
         {
-            "invoices": invoices,
+            "invoices": list(paged.items),
+            "paging": paged,
+            "page_urls": page_urls,
             "status": status,
             "q": q,
             "counts": counts,
@@ -946,9 +958,10 @@ def invoice_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🗂️ 發票管理列表：財務部可檢視所有發票，非財務部僅限檢視本人上傳發票。"""
-    return _render_invoice_list_view(request, section="invoices", status=status, q=q)
+    """🗂️ 發票管理列表：財務部可檢視所有發票，非財務部僅限檢視本人上傳發票；每頁 30 筆。"""
+    return _render_invoice_list_view(request, section="invoices", status=status, q=q, page=page)
 
 
 @router.get("/upload")
@@ -962,11 +975,12 @@ def invoice_review_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🔍 財會檢核列表（僅財務部工作區開放）。"""
+    """🔍 財會檢核列表（僅財務部工作區開放）；每頁 30 筆。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
-    return _render_invoice_list_view(request, section="review", status=status, q=q)
+    return _render_invoice_list_view(request, section="review", status=status, q=q, page=page)
 
 
 # ---- 申報檔（F09）----
@@ -1239,11 +1253,12 @@ def invoice_voucher_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🧾 會計傳票列表（僅財務部工作區開放）。"""
+    """🧾 會計傳票列表（僅財務部工作區開放）；每頁 30 筆。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
-    return _render_invoice_list_view(request, section="voucher", status=status, q=q)
+    return _render_invoice_list_view(request, section="voucher", status=status, q=q, page=page)
 
 
 @router.get("/new")

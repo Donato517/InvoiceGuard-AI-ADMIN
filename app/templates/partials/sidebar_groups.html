@@ -3,9 +3,10 @@
   @description 側欄手風琴群組（2026-11-05 使用者核定）：群組標題可展開／收合，目前頁面所在群組預設展開；
     側欄收合成圖示列（或手機寬度）時，點群組圖示在右側跳出該群組的功能。開合與收合狀態由 main.js 記在瀏覽器。
   @context menu: 已授權的側欄項目（SidebarEntry），由 sidebar_groups filter 分組；沒有項目的群組不顯示
+  @context sidebar_workspace: 工作台版面設為 true，另加入基本資料與範例發票參考（app.utils.sidebar_order）
 #}
 {% set active_route = request.state.active_sidebar_route if request.state.active_sidebar_route is defined else None %}
-{% for group in menu|sidebar_groups %}
+{% for group in menu|sidebar_groups(sidebar_workspace | default(false)) %}
   {% set current = namespace(found=false) %}
   {% for item in group.entries %}
     {% if sidebar_active(item.route, request.url.path, active_route) %}{% set current.found = true %}{% endif %}

@@ -16,13 +16,9 @@
           <span class="app-sidebar__emoji" aria-hidden="true">📊</span>
           <span>工作台</span>
         </a>
-        <a class="app-sidebar__link" href="/showcases/reference">範例發票參考</a>
-        <a class="app-sidebar__link {% if request.url.path == '/account' %}app-sidebar__link--active{% endif %}"
-           href="/account">
-          <span class="app-sidebar__emoji" aria-hidden="true">👤</span>
-          <span>本人資訊</span>
-        </a>
+        {#- 範例發票參考（供應商作業）與基本資料（系統作業，原「本人資訊」）改由群組顯示，見 app.utils.sidebar_order -#}
         {% set menu = e_menu %}
+        {% set sidebar_workspace = true %}
         {% include "partials/sidebar_groups.html" %}
       </nav>
     </aside>

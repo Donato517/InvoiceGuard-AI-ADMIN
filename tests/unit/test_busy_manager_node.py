@@ -22,8 +22,15 @@ SCRIPTS = {
 @pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 才能執行前端單元測試")
 @pytest.mark.parametrize("script", sorted(SCRIPTS))
 def test_busy_overlay_node_scripts(script: str) -> None:
+    # node 一律輸出 UTF-8；不指定時 Windows 中文環境會用 cp950 解碼而失敗（stdout 變成 None）
     result = subprocess.run(
-        ["node", str(JS_DIR / script)], capture_output=True, text=True, timeout=60, check=False
+        ["node", str(JS_DIR / script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert SCRIPTS[script] in result.stdout

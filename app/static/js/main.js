@@ -84,31 +84,27 @@ document.addEventListener('submit', (event) => {
 
 /**
  * 處理中遮罩：表單加上 data-busy="訊息"，送出後整個畫面反灰並顯示處理中，避免重複送出。
- * 一般表單送出後等待換頁；HTMX 表單在請求結束時關閉。
+ * 遮罩由 busy.js 以「擁有者 Token」管理（每個請求只釋放自己的 Token，全部釋放才移除）；
+ * 一般表單送出後等待換頁；HTMX 請求在請求結束時只釋放自己的 Token。
  * @example
  * <form method="post" action="/knowledge/.../index" data-busy="正在建立索引…">
  */
-function setBusy(message) {
-  let overlay = document.getElementById('busy-overlay')
-  if (!message) {
-    overlay?.remove()
-    return
-  }
-  if (!overlay) {
-    overlay = document.createElement('div')
-    overlay.id = 'busy-overlay'
-    overlay.className = 'busy-overlay'
-    overlay.setAttribute('role', 'status')
-    overlay.setAttribute('aria-live', 'assertive')
-    overlay.innerHTML = '<div class="busy-overlay__box"><span class="busy-overlay__spinner"></span><span class="busy-overlay__text"></span></div>'
-    // 開啟中的 <dialog> 位於最上層，遮罩要放進對話框裡才看得到
-    ;(document.querySelector('dialog[open]') || document.body).append(overlay)
-  }
-  overlay.querySelector('.busy-overlay__text').textContent = message
+// busy.js 沒載入時（版面漏掉 script）只停用遮罩，不影響本檔其他功能；tests/unit/test_busy_overlay.py 會檢查 base.html 有載入
+const Busy = window.InvoiceGuardBusy || {
+  acquire: () => () => {},
+  clearAll: () => {},
 }
 
-// 一般 POST 表單（非 HTMX，送出後換頁）一律顯示遮罩，避免使用者以為卡住而重複送出；
-// 有 data-busy 用指定訊息，沒有就用預設訊息；data-busy="" 代表不顯示。HTMX 表單沿用下方 htmx 事件。
+// 換頁型（一般表單、帶 data-busy 的連結）：瀏覽器換頁或從快取還原（pageshow）時清除，不使用固定逾時
+let releaseNavigationBusy = () => {}
+function showNavigationBusy(message) {
+  releaseNavigationBusy()
+  releaseNavigationBusy = Busy.acquire(message)
+}
+
+// 一般表單（非 HTMX，送出後換頁）：POST 預設顯示「處理中，請稍候…」遮罩，避免使用者以為卡住而重複送出；
+// GET（查詢、篩選）預設不顯示（改用局部或輕量回饋），需要時以非空 data-busy 指定訊息。
+// 有 data-busy 一律用指定訊息，data-busy="" 代表不顯示；POST 開新分頁（target）不顯示。HTMX 表單沿用下方 htmx 事件。
 const DEFAULT_BUSY_MESSAGE = '處理中，請稍候…'
 document.addEventListener('submit', (event) => {
   const form = event.target
@@ -116,19 +112,24 @@ document.addEventListener('submit', (event) => {
     return
   }
   const attribute = (name) => (typeof form.getAttribute === 'function' ? form.getAttribute(name) : null)
-  const isHtmx = attribute('hx-post') !== null || attribute('hx-get') !== null
+  const isHtmx = ['hx-post', 'hx-get', 'hx-put', 'hx-patch', 'hx-delete'].some((name) => attribute(name) !== null)
   const isPost = (attribute('method') || '').toLowerCase() === 'post'
-  const message =
-    form.dataset.busy !== undefined ? form.dataset.busy : isPost && !isHtmx ? DEFAULT_BUSY_MESSAGE : ''
+  const opensElsewhere = Boolean(attribute('target')) && attribute('target') !== '_self'
+  let message = ''
+  if (form.dataset.busy !== undefined) {
+    message = form.dataset.busy
+  } else if (isPost && !isHtmx && !opensElsewhere) {
+    message = DEFAULT_BUSY_MESSAGE
+  }
   if (message) {
-    setBusy(message)
+    showNavigationBusy(message)
   }
 })
 
-// 按「上一頁」從瀏覽器快取還原頁面時，送出前留下的遮罩一併清掉
+// 按「上一頁」從瀏覽器快取還原頁面時，送出前留下的遮罩一併清掉（舊的 release 之後被呼叫也不會影響新請求）
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) {
-    setBusy('')
+    Busy.clearAll()
   }
 })
 
@@ -138,17 +139,40 @@ document.addEventListener('click', (event) => {
   if (!link || !link.dataset.busy || event.ctrlKey || event.metaKey || event.shiftKey) {
     return
   }
-  setBusy(link.dataset.busy)
+  showNavigationBusy(link.dataset.busy)
 })
-document.addEventListener('htmx:beforeRequest', (event) => {
-  const message = event.detail.elt.closest('[data-busy]')?.dataset.busy
+// HTMX：有 data-busy 用指定訊息（data-busy="" 為不顯示）；沒有時，會寫入資料的請求（POST／PUT／PATCH／DELETE）
+// 預設顯示「處理中」，查詢類的 GET（即時搜尋、篩選）不顯示，避免打字時一直閃遮罩。
+// 在 htmx:beforeSend（請求確定要送出才觸發，beforeRequest 被其他監聽器取消時不會到這裡）取得 Token，
+// 以 detail.xhr（HTMX 2.0.11 每個請求唯一，beforeSend 與 afterRequest／各種失敗事件相同）當識別；
+// 結束時只釋放自己的 Token，沒有顯示遮罩的請求結束不會影響別人的遮罩。
+const htmxBusyReleases = new WeakMap()
+document.addEventListener('htmx:beforeSend', (event) => {
+  const { xhr, elt, requestConfig } = event.detail || {}
+  if (!xhr) {
+    return
+  }
+  const marked = elt?.closest?.('[data-busy]')
+  const verb = String(requestConfig?.verb || 'get').toLowerCase()
+  const message = marked ? marked.dataset.busy : verb !== 'get' ? DEFAULT_BUSY_MESSAGE : ''
   if (message) {
-    setBusy(message)
+    htmxBusyReleases.set(xhr, Busy.acquire(message))
   }
 })
-document.addEventListener('htmx:afterRequest', () => setBusy(null))
+function releaseHtmxBusy(event) {
+  const xhr = event.detail?.xhr
+  const release = xhr && htmxBusyReleases.get(xhr)
+  if (release) {
+    htmxBusyReleases.delete(xhr)
+    release()
+  }
+}
+// afterRequest 在成功、HTTP 錯誤、網路失敗、逾時、中止時都會觸發；其餘事件是保險，重複釋放無效
+for (const name of ['afterRequest', 'sendError', 'sendAbort', 'timeout', 'responseError']) {
+  document.addEventListener(`htmx:${name}`, releaseHtmxBusy)
+}
 window.addEventListener('pageshow', () => {
-  setBusy(null)
+  Busy.clearAll()
   const uploadBtn =
     document.getElementById('btn-flow-upload') ||
     document.querySelector('button[form="flow-upload-form"]')

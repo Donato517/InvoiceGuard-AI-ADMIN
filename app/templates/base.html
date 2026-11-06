@@ -29,6 +29,8 @@
   <body>
     {% block body %}{% endblock %}
     <script src="{{ static_url('js/vendor/htmx.min.js') }}" defer></script>
+    {# busy.js（處理中遮罩管理）必須排在 main.js 之前；兩者都是 defer，會依順序執行 #}
+    <script src="{{ static_url('js/busy.js') }}" defer></script>
     <script src="{{ static_url('js/main.js') }}" defer></script>
     {% block scripts %}{% endblock %}
   </body>

@@ -15,7 +15,7 @@ import pytest
 JS_DIR = Path(__file__).resolve().parent / "js"
 SCRIPTS = {
     "busy_manager.test.js": "15/15 passed",  # busy.js：擁有者 Token、對話框重新安置
-    "main_busy.test.js": "13/13 passed",  # main.js：表單與 HTMX 事件處理（GET 預設不顯示等）
+    "main_busy.test.js": "35/35 passed",  # main.js：表單、HTMX、側邊欄導覽、按鈕載入與防重
 }
 
 

@@ -24,6 +24,7 @@ OPT_OUT_TEMPLATES = {
     "pages/knowledge/chat.html": "切換部門只更新清單（即時查詢）",
     "pages/knowledge/eval.html": "題庫逐題執行有自己的進度顯示",
     "pages/knowledge/_eval_result.html": "題庫逐題執行有自己的進度顯示",
+    "pages/invoices/_flow_step_upload.html": "「上傳並開始辨識」用按鈕載入（模式 A），不再蓋全頁遮罩",
 }
 
 
@@ -39,7 +40,9 @@ def test_busy_js_loads_before_main_js_on_every_page() -> None:
 def test_post_forms_show_the_overlay_by_default_but_get_forms_do_not() -> None:
     assert "const DEFAULT_BUSY_MESSAGE = '處理中，請稍候…'" in MAIN_JS
     # GET（查詢、篩選）預設不顯示全頁遮罩（模式 C）；只有 POST 預設顯示，GET 要用非空 data-busy 才顯示
-    assert "DEFAULT_LOAD_MESSAGE" not in MAIN_JS and "載入中，請稍候" not in MAIN_JS
+    assert (
+        "DEFAULT_LOAD_MESSAGE" not in MAIN_JS
+    )  # 側邊欄導覽另有 NAVIGATION_MESSAGE，不是 GET 表單的預設
     assert "} else if (isPost && !isHtmx && !opensElsewhere) {" in MAIN_JS
     # 明確的 data-busy（含空字串）優先；已被取消（確認視窗按取消、其他腳本自行處理）的送出不顯示
     assert "if (form.dataset.busy !== undefined) {" in MAIN_JS
@@ -55,7 +58,10 @@ def test_htmx_overlay_is_owned_per_request_and_released_only_by_itself() -> None
     block = MAIN_JS[MAIN_JS.index("htmx:beforeSend") :]
     assert "Busy.acquire(message)" in block and "htmxBusyReleases.set(xhr" in block
     assert "marked ? marked.dataset.busy" in block  # 明確的 data-busy（含空字串）優先
-    assert "verb !== 'get' ? DEFAULT_BUSY_MESSAGE" in block
+    assert (
+        "const write = isHtmxWrite(requestConfig)" in block
+        and "write ? DEFAULT_BUSY_MESSAGE : ''" in block
+    )
     # 結束／失敗／中止／逾時事件都只釋放自己的 Token
     assert (
         "for (const name of ['afterRequest', 'sendError', 'sendAbort', 'timeout', 'responseError'])"
@@ -65,7 +71,10 @@ def test_htmx_overlay_is_owned_per_request_and_released_only_by_itself() -> None
 
 
 def test_navigation_overlay_has_no_fixed_timeout_and_is_cleared_by_pageshow() -> None:
-    assert "setTimeout" not in BUSY_JS and "setInterval" not in BUSY_JS
+    # 不使用固定秒數的倒數或輪詢：busy.js 唯一的 setTimeout 都是 0 毫秒的「工作回合邊界」
+    # （連結等 navigate 事件、表單等送出事件處理完、延到事件處理完才停用按鈕），不是用時間猜導覽有沒有結束
+    assert "setInterval" not in BUSY_JS
+    assert BUSY_JS.count("setTimeout(") == len(re.findall(r",\s*0\)", BUSY_JS)) == 4
     assert MAIN_JS.count("Busy.clearAll()") == 2  # 兩個 pageshow 處理
     assert "event.persisted" in MAIN_JS
 
@@ -131,3 +140,77 @@ def test_no_form_opens_a_new_tab_without_being_exempt() -> None:
             if re.search(r"\btarget\s*=\s*\"_blank\"", attrs):
                 uncovered.append((path.name, "target=_blank"))
     assert uncovered == []
+
+
+# ---- Loading UX 模式 A／B／C 整合 ----
+LOADING_MODE_TEMPLATES = {
+    "pages/departments/list.html": "disable",  # 部門啟停開關
+    "pages/knowledge/_dept_badges.html": "disable",  # 知識庫部門徽章切換
+}
+
+
+def test_sidebar_navigation_is_a_full_page_overlay_that_only_starts_on_a_real_navigation() -> None:
+    assert "NAVIGATION_MESSAGE = '載入中，請稍候…'" in MAIN_JS
+    assert "classList.contains('app-sidebar__link')" in MAIN_JS
+    # 新分頁、同頁錨點、下載、外部網址不顯示；不使用固定秒數
+    for guard in (
+        "event.ctrlKey",
+        "event.metaKey",
+        "event.shiftKey",
+        "event.altKey",
+        "event.button !== 0",
+    ):
+        assert guard in MAIN_JS
+    assert (
+        "link.hasAttribute('download')" in MAIN_JS
+        and "url.origin !== window.location.origin" in MAIN_JS
+    )
+    assert "navigateerror" in BUSY_JS and "event.downloadRequest != null" in BUSY_JS
+    assert (
+        "setTimeout(() => {\n      if (pendingNavigation === mine)" in BUSY_JS
+    )  # 工作回合邊界，不是倒數計時
+    assert "setInterval" not in BUSY_JS
+
+
+def test_button_loading_keeps_submitter_values_and_restores() -> None:
+    assert (
+        "setTimeout(() => {\n      if (state.active) button.disabled = true" in BUSY_JS
+    )  # 事件處理完才停用
+    assert "button.disabled = state.disabled" in BUSY_JS and "buttonStates.has(button)" in BUSY_JS
+    assert "event.submitter" in MAIN_JS  # 以事件的 submitter 為準，保留 name／value／formaction
+    assert "formsInFlight" in MAIN_JS and "event.stopImmediatePropagation()" in MAIN_JS
+
+
+def test_same_htmx_element_cannot_start_a_second_write_while_one_is_in_flight() -> None:
+    assert "htmxWritesInFlight" in MAIN_JS
+    block = MAIN_JS[MAIN_JS.index("htmx:beforeRequest") :]
+    block = block[: block.index("htmx:beforeSend")]
+    assert "isHtmxWrite(requestConfig)" in block and "event.preventDefault()" in block
+    assert "'get'" in MAIN_JS  # GET（即時搜尋）不受影響
+
+
+def test_small_toggles_use_button_mode_and_no_template_mixes_it_with_a_busy_message() -> None:
+    for name, mode in LOADING_MODE_TEMPLATES.items():
+        html = (ROOT / "app/templates" / name).read_text(encoding="utf-8")
+        assert f'data-loading-mode="{mode}"' in html, name
+    for path in (ROOT / "app/templates").rglob("*.html"):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"<(?:form|button|a)\b([^>]*data-loading-mode[^>]*)>", text, re.S):
+            attrs = match.group(1)
+            assert re.search(r'data-busy="[^"]+"', attrs) is None, (
+                f"{path.name}: data-loading-mode 與非空 data-busy 不可並用"
+            )
+
+
+def test_invoice_recognition_button_has_no_extra_full_page_overlay() -> None:
+    html = (ROOT / "app/templates/pages/invoices/_flow_step_upload.html").read_text(
+        encoding="utf-8"
+    )
+    form = html[html.index('<form id="flow-upload-form"') :]
+    assert 'data-busy=""' in form[: form.index(">")]
+    assert "flow-upload-form" in MAIN_JS and "辨識中…" in MAIN_JS  # 既有的按鈕載入仍在
+    # 補正頁「重新上傳附件」是另一個表單，沒有按鈕載入，繼續用預設全頁遮罩
+    other = (ROOT / "app/templates/pages/invoices/_procurement_return.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'data-busy=""' not in other

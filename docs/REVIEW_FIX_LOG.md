@@ -1247,3 +1247,22 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 說明見 FEATURE-DELIVERY-20261106.md；提交前的實際驗證結果另補 TEST_REPORT。
 
 交付驗證（2026-11-06）：包含 main 新版補正及本機兩項功能的完整 pytest 3151 passed、31 skipped（542.82 秒），1 個既有 Starlette 警告；check_project --project-root ..、Ruff lint、91 份樣板 djLint 通過。供應商新建／修訂／回滾另有合成記憶體 PostgreSQL 驗收；正式角色、Storage、多連線、模型與 Preview 待驗收。
+
+## 2026-11-06 Show Case 狀態操作返回供應商範例
+
+問題：啟用或停用後固定返回同一張範例詳情，連續新增範例需手動尋找列表入口。
+原因：狀態路由固定導向範例詳情錨點。
+處理：`app/services/showcase_service.py` 在成功提交後回傳已驗權範例所綁定的供應商 ID；`app/routers/showcases.py` 僅在啟用、停用成功且有供應商關聯時導向該供應商範例列表。退回補正與無關聯的舊範例沿用詳情頁。`tests/unit/test_showcase.py` 補轉址斷言。列表既有桌面五欄響應式排版與新增入口不變。
+驗證：`git diff --check` 通過。專案 `.venv` 指向已不存在的 Python 3.12 路徑，本次 pytest 未能啟動；未執行正式 DB 或 Storage 驗收。
+
+## 2026-11-06 Show Case 顯示與供應商列表補正
+
+問題：多列明細顯示為「其他明細欄位」、只有查看權的部門看到管理資訊、供應商列表無範例張數，範例按更新時間排列造成名稱順序跳動。
+處理：明細路徑依列號產生欄名；唯讀頁僅展示目前原圖與狀態；供應商列表以單次額外讀取顯示正式範例張數，讀取失敗標示不可用且不影響主檔；範例清單改按名稱排序。不更動資料表或範例內容。
+驗證：Python AST 語法解析及 `git diff --check` 通過。原 `.venv` 的 Python 3.12 已失效，pytest 與網頁／正式 DB 驗收未執行。
+
+## 2026-11-06 Show Case 提交前整合修正
+
+原因：狀態轉址測試缺少合成供應商 UUID；新增歷程讀取未納入測試替身，且 ADMIN/API 共用 reader 版本不同。
+處理：補齊合成替身、同步 API 共用 reader、整理 import 與格式。保留最新 main 與雙方開發紀錄，不修改正式資料庫。
+驗證：ADMIN Show Case／供應商／目前版本／跨站 reader 相關測試 65 passed；專案檢查及 Ruff lint/format 通過。正式 DB、Storage 與網頁人工驗收尚未執行。

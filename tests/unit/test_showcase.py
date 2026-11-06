@@ -115,6 +115,7 @@ def test_shared_status_changes_use_sample_owner_and_require_review_grant(
     monkeypatch.setattr(
         service.repository, "set_example_status", lambda *args: statuses.append(args[1:])
     )
+    monkeypatch.setattr(service.repository, "sync_example_invoice_identity", lambda *args: None)
     monkeypatch.setattr(
         service, "_read_master", lambda *args: {"tax_id": "12345678", "is_active": True}
     )
@@ -743,6 +744,7 @@ def test_detail_template_and_upload_actor(monkeypatch: pytest.MonkeyPatch) -> No
         uuid4(), uuid4(), uuid4(), 1, datetime.now(UTC) + timedelta(hours=1), True, "admin"
     )
     sample = uuid4()
+    linked_supplier_id = uuid4()
     payload = transition(
         revise(None, data(), {"key": "source"}, actor.user_id), "activate", actor.user_id, True
     )
@@ -788,6 +790,7 @@ def test_detail_template_and_upload_actor(monkeypatch: pytest.MonkeyPatch) -> No
     def status(identity, key, version, command, reason, confirmed):
         assert (identity, key, version, reason) == (actor, sample, 1, "請重核金額")
         row["payload"] = transition(payload, command, identity.user_id, confirmed)
+        return linked_supplier_id
 
     monkeypatch.setattr(service, "change_status", status)
     try:
@@ -797,7 +800,11 @@ def test_detail_template_and_upload_actor(monkeypatch: pytest.MonkeyPatch) -> No
             assert "/tests/" in page.text
             assert 'name="command" value="deactivate"' in page.text
             assert all(label in page.text for label in ("退回補正", "停用"))
-            for command, expected in (("activate", 303), ("return_for_correction", 303)):
+            for command, expected in (
+                ("activate", 303),
+                ("deactivate", 303),
+                ("return_for_correction", 303),
+            ):
                 response = client.post(
                     f"/showcases/{sample}/status",
                     data={"version": 1, "command": command, "reason": "請重核金額"},
@@ -805,7 +812,11 @@ def test_detail_template_and_upload_actor(monkeypatch: pytest.MonkeyPatch) -> No
                     follow_redirects=False,
                 )
                 assert response.status_code == expected
-                assert response.headers["location"].endswith("#showcase-status")
+                assert response.headers["location"] == (
+                    f"/showcases/by-supplier/{linked_supplier_id}"
+                    if command in {"activate", "deactivate"}
+                    else f"/showcases/{sample}#showcase-status"
+                )
             returned_page = client.get(f"/showcases/{sample}")
             assert "範例狀態：退回補正" in returned_page.text
             assert 'name="command" value="activate"' in returned_page.text

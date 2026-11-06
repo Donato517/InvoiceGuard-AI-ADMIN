@@ -98,6 +98,15 @@
       <section class="card">
         <h3>{{ item.payload.title }}</h3>
         {% set latest = item.payload.revisions | last %}
+        {% set invoice = namespace(date='', number='') %}
+        {% for truth in latest.truths | default([]) %}
+          {% if truth.state == 'readable' and truth.path == 'invoice_date' %}{% set invoice.date = truth.text %}{% endif %}
+          {% if truth.state == 'readable' and truth.path == 'invoice_number' %}{% set invoice.number = truth.text %}{% endif %}
+        {% endfor %}
+        <p class="showcase-gallery__invoice-meta">
+          <span>{{ format_invoice_date(invoice.date) if invoice.date else ('日期資料缺漏' if latest.status == 'active' else '日期尚未確認') }}</span>
+          <span>{{ invoice.number or ('發票號碼資料缺漏' if latest.status == 'active' else '發票號碼尚未確認') }}</span>
+        </p>
         <a href="/showcases/{{ item.id }}">
           <img src="/showcases/{{ item.id }}/files/{{ latest.id }}"
                alt="{{ item.payload.title }} 最新修訂預覽"
@@ -161,6 +170,13 @@
   {% if items | length == 20 %}<a href="{{ next_url }}">下一頁</a>{% endif %}
 {% endif %}
 {% if row %}
+  {% if not can_edit_showcase %}
+    <section class="card">
+      <h2>範例發票原圖</h2>
+      <p>範例狀態：{{ revision_states[(row.payload.revisions | last).status] }}</p>
+      <img src="/showcases/{{ sample_id }}/files/{{ data.id }}" alt="範例發票原圖" class="showcase-image">
+    </section>
+  {% else %}
   <section class="card">
     <h2>原圖與版本</h2>
     {% if row.read_only %}<p>目前可查閱 v2.0 原圖及欄位。此範例缺少相符的管理歷程，補齊後即可在此修改。</p>{% endif %}
@@ -193,6 +209,7 @@
       </details>
     {% endfor %}
   </section>
+  {% endif %}
 {% endif %}
 {% if editing and (can_edit_showcase if row else can_create_showcase) %}
   <section class="card">
@@ -306,7 +323,7 @@
       </label>
       {% if row %}
         <button type="submit" id="showcase-save-review">保存核對草稿</button>
-        <button type="submit" name="run_ocr" value="yes">替換圖片並辨識</button>
+        <button type="submit" name="run_ocr" value="yes">重新辨識原圖／替換圖片並辨識</button>
       {% else %}
         <button type="submit" name="run_ocr" value="yes">上傳並辨識</button>
         <button type="submit">保存手動草稿</button>
@@ -314,7 +331,7 @@
     </form>
   </section>
 {% endif %}
-{% if row %}
+{% if row and can_edit_showcase %}
   <section class="card" id="showcase-status">
     <div class="showcase-status-control">
       <h2>範例狀態：{{ revision_states[(row.payload.revisions | last).status] }}</h2>
@@ -431,16 +448,16 @@
       {% endif %}
     </section>
   {% endif %}
-  <section class="card">
+  {% if can_edit_showcase %}<section class="card">
     <h2>操作紀錄（最近 200 筆）</h2>
     {% for event in row.history %}
       <p>{{ event.occurred_at }} · {{ event.actor_id }} · {{ event.action }} · 版本 {{ event.version }}</p>
       <p>{{ event.reason }}</p>
       <pre>{{ event.details | tojson(indent=2) }}</pre>
     {% endfor %}
-  </section>
+  </section>{% endif %}
 {% endif %}
-{% if row %}
+{% if row and can_edit_showcase %}
   <section class="card">
     <h2>已保存測試（最近 20 筆）</h2>
     {% for test in row.tests %}

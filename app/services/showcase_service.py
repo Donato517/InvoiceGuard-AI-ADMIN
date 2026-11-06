@@ -155,7 +155,29 @@ def master_examples(
     try:
         with open_session() as db:
             authorize(db, identity, Action.VIEW, supplier_master=True)
-            return v2.supplier_examples(db, supplier, page), repository.archive_writable(db)
+            examples = v2.supplier_examples(db, supplier, page)
+            has_archive = repository.archive_available(db)
+            if has_archive:
+                for example in examples:
+                    current = example["payload"]["revisions"][-1]
+                    try:
+                        archived = repository.read(
+                            db, identity.selected_department_id, example["id"], shared_master=True
+                        )["payload"]["revisions"][-1]
+                    except MissingError:
+                        continue
+                    if not _same_current_revision(archived, current):
+                        continue
+                    known = {field["path"] for field in current["truths"]}
+                    current["truths"].extend(
+                        field
+                        for field in archived["truths"]
+                        if field["path"] in {"invoice_date", "invoice_number"}
+                        and field["path"] not in known
+                        and field["text"].strip()
+                        and field["state"] == "readable"
+                    )
+            return examples, has_archive and repository.archive_writable(db)
     except repository.StoreError:
         raise UnavailableError from None
 
@@ -493,8 +515,11 @@ def save(
         except repository.StoreError:
             raise UnavailableError from None
     recognition = None
+    reuse_original = run_ocr and expected > 0 and content is None
     if run_ocr:
-        if content is None:
+        if reuse_original:
+            content, _ = source(identity, sample, UUID(before["payload"]["revisions"][-1]["id"]))
+        elif content is None:
             raise ValueError("請先選擇要辨識的圖片")
         mime, _ = image_info(content)
         try:
@@ -508,10 +533,14 @@ def save(
             recognition = _recognition_failure(error)
         recognition["source_sha256"] = sha256(content)
         data = data.model_copy(update={"truths": [], "key_fields": []})
-    source = upload(identity, supplier, content, action, sample) if content is not None else None
-    if source and filename:
+    uploaded_source = (
+        upload(identity, supplier, content, action, sample)
+        if content is not None and not reuse_original
+        else None
+    )
+    if uploaded_source and filename:
         basename = filename.replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "").strip()
-        source["filename"] = basename[:255] or source["filename"]
+        uploaded_source["filename"] = basename[:255] or uploaded_source["filename"]
     try:
         with open_session() as db:
             row = None
@@ -531,7 +560,9 @@ def save(
                         "tax_id": master["tax_id"] if master["country_code"] == "TW" else "",
                     }
                 )
-            payload = revise(row["payload"] if row else None, data, source, identity.user_id)
+            payload = revise(
+                row["payload"] if row else None, data, uploaded_source, identity.user_id
+            )
             if recognition:
                 payload["revisions"][-1]["recognition"] = recognition
             payload["supplier_id"] = str(supplier)
@@ -593,8 +624,8 @@ def save(
                     ],
                 },
             )
-            if source:
-                repository.upload_state(db, source["key"], "linked")
+            if uploaded_source:
+                repository.upload_state(db, uploaded_source["key"], "linked")
             db.commit()
     except repository.StoreError:
         raise UnavailableError from None
@@ -658,7 +689,7 @@ def transition(
 
 def change_status(
     identity: Identity, sample: UUID, expected: int, command: str, reason: str, confirmed: bool
-) -> None:
+) -> UUID | None:
     """狀態與操作者事件同交易，使用獨立啟用管理功能授權。"""
     try:
         with open_session() as db:
@@ -688,7 +719,8 @@ def change_status(
                     master = _read_master(db, UUID(revision["master_supplier_id"]))
                     if not master["is_active"] or master["tax_id"] != revision["tax_id"]:
                         raise ValueError("供應商已停用或統編不符，請先核對供應商主檔")
-                    _, _, mapped = example_columns(revision)
+                    header, _, mapped = example_columns(revision)
+                    repository.sync_example_invoice_identity(db, sample, v2_version, header)
                     selected = revision["key_fields"] or list(mapped)
                     if any(key not in mapped for key in selected):
                         raise ValueError("選定的關鍵欄位格式不符，請修正後重新驗證")
@@ -729,6 +761,8 @@ def change_status(
                 },
             )
             db.commit()
+            master_supplier_id = row["payload"].get("master_supplier_id")
+            return UUID(master_supplier_id) if master_supplier_id else None
     except repository.StoreError:
         raise UnavailableError from None
 

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.db.repositories import showcase_v2_reader
 from app.db.repositories import suppliers_repository as repository
 from app.schemas.e_admin import EError, MissingError, UnavailableError
 from app.schemas.supplier import SupplierInput
@@ -49,6 +50,15 @@ def list_suppliers(query: str, page: int) -> tuple[list[dict], int]:
     """讀取真實主檔，不產生預設或測試資料。"""
     rows, total = _run(lambda db: repository.list_suppliers(db, query, (page - 1) * 20))
     return [_display(row) for row in rows], total
+
+
+def showcase_counts(supplier_ids: list[UUID]) -> dict[str, int] | None:
+    """範例讀取失敗不影響供應商主檔列表；失敗時不冒稱零張。"""
+    try:
+        counts = _run(lambda db: showcase_v2_reader.supplier_example_counts(db, supplier_ids))
+        return {str(key): value for key, value in counts.items()}
+    except SupplierUnavailableError:
+        return None
 
 
 def get_supplier(supplier_id: UUID) -> dict:

@@ -1266,3 +1266,23 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 原因：狀態轉址測試缺少合成供應商 UUID；新增歷程讀取未納入測試替身，且 ADMIN/API 共用 reader 版本不同。
 處理：補齊合成替身、同步 API 共用 reader、整理 import 與格式。保留最新 main 與雙方開發紀錄，不修改正式資料庫。
 驗證：ADMIN Show Case／供應商／目前版本／跨站 reader 相關測試 65 passed；專案檢查及 Ruff lint/format 通過。正式 DB、Storage 與網頁人工驗收尚未執行。
+
+## 2026-11-06 F09 快照不再把「資料檢視通過」當成財務核准
+
+原因：`_to_filing_snapshot` 以 `review_status == "approved" or status == "passed"` 判斷核准。資料庫映射（`_row_to_invoice_dict`）把 `pending_*` 待審案件的檢視狀態也設成 `passed`（`review_status` 是 `pending`），所以待審資料庫案件的快照狀態被寫成 `approved`，F09 的 `NOT_APPROVED` 檢核不會出現；在其他欄位檢核都通過時，批次申報清單會顯示可勾選、批次產檔與步驟 6 單張預覽也會放行。F09 本身（`validate_snapshot`，只認快照狀態 `approved`）沒有問題。
+
+處理：只改 `app/routers/invoices.py` 的一行，核准一律只看正式的 `review_status == "approved"`。F09 共用檢核、API、Schema、資料庫與認證沒有動。
+
+行為差異（影響**所有**財務使用者，不只本人上傳者）：
+- 待審資料庫案件：申報清單不再可勾選，改顯示「請款單未核准，不可匯出」；件數與金額合計不再計入。
+- 批次產檔：選到待審案件，整批 400 不產檔（原本其餘欄位合格時會產出）。
+- 步驟 6 單張檢核：待審案件回報 `NOT_APPROVED`，不再產生 81 字元預覽。
+- 資料庫已核准案件、示範案件 id 1、2、5（核准）與 id 3、4（待審）：行為不變；既有測試中所有 `status: "passed"` 的資料都同時是 `review_status: "approved"`，沒有測試把 `passed` 當作核准。
+- 與本人權限補丁（`feat/self-steps-7-9-after-finance-review`，`debbf0f`）：功能不衝突，該分支在 `/filing/export` 對本人案件的整批 403 保留為第二道防線，並額外處理示範案件「已核准但階段未到 7」。
+
+測試：新增 `tests/unit/test_f09_snapshot_approval.py`，使用真實的 `_row_to_invoice_dict`、`_to_filing_snapshot`、`validate_snapshot`、`check_snapshot`、`build_format21_file`；只有「發票清單來源」與公司資料以替身（`HardcodedCompanyProfileProvider`）取代。離線測試，不連資料庫，不是正式環境驗收。把修正換回舊條件時 11 個新測試失敗，確認測試守得住。
+
+未驗證與待確認：
+- 真實資料庫中待審案件的實際資料與正式環境行為。
+- 這個修正會讓非本人財務人員無法再對待審案件批次產檔，需申報功能負責人確認「只有正式核准才可產檔」符合預期（`EXPORTABLE_STATUS = "approved"` 與既有測試顯示設計意圖如此）。
+- F09 真正的 TXT 產檔內容與財政部申報軟體匯入仍須實測。

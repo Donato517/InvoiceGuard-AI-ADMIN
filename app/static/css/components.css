@@ -325,6 +325,71 @@ fieldset.form legend {
   background-color: var(--color-primary);
 }
 
+/* 表格下方的分頁列（發票列表，2026-11-06）：左邊筆數、右邊上一頁／頁碼／下一頁 */
+.pagination--table {
+  justify-content: space-between;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.pagination__pages {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.pagination--table .pagination__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  text-decoration: none;
+}
+
+.pagination__item[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pagination__gap {
+  padding: 0 0.25rem;
+}
+
+@media (max-width: 800px) {
+  .pagination--table {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* 手機只留上一頁、目前頁、下一頁 */
+  .pagination__num:not(.pagination__item--active),
+  .pagination__gap {
+    display: none;
+  }
+}
+
+/* 列表欄位：序號、金額靠右；品名太長以「…」截斷（完整內容在 title） */
+.table .col-no {
+  width: 3.5rem;
+  color: var(--color-text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table .col-money {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.table .col-item {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- 空狀態 ---- */
 .empty-state {
   padding: 1.5625rem;

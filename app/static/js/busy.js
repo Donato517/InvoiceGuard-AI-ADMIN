@@ -14,6 +14,15 @@
  * JavaScript close()）時，只要還有擁有者就重新安置遮罩——關閉時移回 body 繼續蓋住頁面，之後才開啟的對話框則把遮罩移進去。
  * 不阻止對話框關閉：Escape 的 cancel 事件第二次按下時不可取消（瀏覽器仍會關閉），所以改成讓遮罩跟著保護，而不是擋住關閉。
  *
+ * 換頁型遮罩（requestNavigation）：側邊欄連結、一般表單送出會換頁。支援 Navigation API（Chromium）時，
+ * 等 `navigate` 事件確認導覽真的開始才顯示（新分頁、被取消的點擊、同頁錨點、下載連結都不會開始導覽），
+ * 並在 `navigateerror`（使用者按停止、導覽失敗或被中止）時釋放，不使用固定秒數；沒有 Navigation API 時退回
+ * 「確認未被取消就立即顯示」，並讓 Escape（瀏覽器的停止載入鍵）釋放。回傳下載檔案、不換頁的表單不會觸發
+ * navigateerror（實測），仍要加 data-busy=""。
+ *
+ * 按鈕載入（buttonLoading）：模式 A，把送出鈕轉成「轉圈＋訊息」並停用（deferred 停用，保留 name/value），
+ * 結束或換頁被取消時還原；keepContent 只停用並標示 aria-busy，不改內容（部門啟停開關、徽章這類小型切換）。
+ *
  * 以 <script defer> 載入，需排在 main.js 之前（templates/base.html）；也能被 Node 載入做單元測試。
  */
 ;(function (root) {
@@ -74,6 +83,7 @@
   function clearAll() {
     owners.clear()
     render()
+    endCurrentNavigation() // 同時還原換頁型動作附帶的按鈕載入狀態與表單防重旗標
   }
 
   /** 目前仍有效的擁有者數量（測試用）。 */
@@ -90,7 +100,120 @@
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['open'], subtree: true })
   }
 
-  const api = Object.freeze({ acquire, clearAll, count })
+  // ---- 換頁型遮罩與按鈕載入 ----
+  const navigation =
+    root.navigation && typeof root.navigation.addEventListener === 'function' ? root.navigation : null
+  let endCurrentNavigation = noop // 釋放目前換頁型遮罩與其附帶的還原動作
+  let pendingNavigation = null // 已提出、等 navigate 事件確認的開始動作（連結）
+  let navigationStarted = false // 目前這次換頁是否已看到屬於它的 navigate 事件
+
+  function startNavigation(start, started) {
+    endCurrentNavigation()
+    navigationStarted = started
+    const cleanup = start()
+    let ended = false
+    endCurrentNavigation = () => {
+      if (ended) return
+      ended = true
+      endCurrentNavigation = noop
+      if (typeof cleanup === 'function') cleanup()
+    }
+  }
+
+  /**
+   * 提出一次「可能換頁」的動作。start() 負責顯示遮罩／按鈕載入，回傳 cleanup（導覽被取消或頁面還原時呼叫）。
+   * @param {() => (void | (() => void))} start 開始動作；回傳 undefined 代表這次不算導覽（例如點擊已被取消）。
+   * @param {{ gate?: 'navigate' | 'task', isCanceled?: () => boolean }} [options]
+   *   gate 'navigate'（預設，用於連結）：連結的導覽在點擊的同一個工作回合就會觸發 navigate 事件，等到事件才開始；
+   *   gate 'task'（用於表單）：瀏覽器把表單送出排到之後的工作回合才導覽，所以改成等目前事件處理完、確認沒被取消
+   *   （isCanceled）就開始，並忽略「屬於上一次導覽」的 navigateerror，直到看到這次的 navigate 事件為止。
+   */
+  function requestNavigation(start, options = {}) {
+    const { gate = 'navigate', isCanceled } = options
+    if (!navigation) {
+      // 沒有 Navigation API：表單立即開始（維持原本行為）；連結延到事件處理完再開始，start() 自己檢查有沒有被取消
+      if (gate === 'navigate') setTimeout(() => startNavigation(start, true), 0)
+      else startNavigation(start, true)
+      return
+    }
+    if (gate === 'task') {
+      setTimeout(() => {
+        if (!(isCanceled && isCanceled())) startNavigation(start, false)
+      }, 0)
+      return
+    }
+    const mine = { start }
+    pendingNavigation = mine
+    // navigate 事件與點擊在同一個工作回合觸發；回合結束還沒等到，就不是一次導覽（新分頁、被取消、同頁錨點）
+    setTimeout(() => {
+      if (pendingNavigation === mine) pendingNavigation = null
+    }, 0)
+  }
+
+  if (navigation) {
+    navigation.addEventListener('navigate', (event) => {
+      const pending = pendingNavigation
+      if (pending) {
+        pendingNavigation = null
+        if (event.defaultPrevented || event.hashChange || event.downloadRequest != null) return
+        startNavigation(pending.start, true)
+        return
+      }
+      if (!event.hashChange && event.downloadRequest == null) navigationStarted = true // 表單這次導覽開始了
+    })
+    // 使用者按停止、導覽失敗或被中止：釋放遮罩與按鈕載入狀態（回傳下載檔案時不會觸發，見檔頭說明）。
+    // 上一次導覽的錯誤事件會在新導覽開始時才補發，所以要等到屬於這次的 navigate 事件之後才算數
+    navigation.addEventListener('navigateerror', () => {
+      if (navigationStarted) endCurrentNavigation()
+    })
+  } else if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    // 沒有 Navigation API：Escape 是瀏覽器停止載入鍵，盡力釋放換頁型遮罩
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') endCurrentNavigation()
+    })
+  }
+
+  const buttonStates = new WeakMap() // 按鈕 → 還原資料
+  const escapeHtml = (text) =>
+    String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+  /**
+   * 模式 A：把按鈕轉成載入狀態並停用。回傳 restore（只還原一次）。
+   * 停用會延到目前事件處理完才做，否則送出鈕的 name／value 與 formaction 會因為已停用而不被送出。
+   */
+  function buttonLoading(button, options = {}) {
+    if (!button || buttonStates.has(button)) return noop
+    const { text = '處理中…', keepContent = false } = options
+    // hx-disabled-elt 在 beforeSend 之前就停用了按鈕（並加 data-disabled-by-htmx，結束時由 HTMX 自己移除）；
+    // 那不是按鈕原本的狀態，不能記起來還原，否則請求結束後按鈕會一直停用
+    const disabledByHtmx = button.hasAttribute('data-disabled-by-htmx')
+    const state = { html: button.innerHTML, disabled: button.disabled && !disabledByHtmx, active: true }
+    buttonStates.set(button, state)
+    button.classList.add('btn--loading')
+    button.setAttribute('aria-busy', 'true')
+    if (!keepContent) {
+      button.innerHTML = '<span class="btn__spinner" aria-hidden="true"></span>' + escapeHtml(text)
+    }
+    setTimeout(() => {
+      if (state.active) button.disabled = true
+    }, 0)
+    return () => {
+      if (!state.active) return
+      state.active = false
+      buttonStates.delete(button)
+      if (!keepContent) button.innerHTML = state.html
+      button.classList.remove('btn--loading')
+      button.removeAttribute('aria-busy')
+      button.disabled = state.disabled
+    }
+  }
+
+  /** 按鈕目前是否在載入狀態（用來擋同一個動作的重複送出）。 */
+  function isButtonLoading(button) {
+    return Boolean(button) && buttonStates.has(button)
+  }
+
+  const api = Object.freeze({ acquire, clearAll, count, requestNavigation, buttonLoading, isButtonLoading })
   root.InvoiceGuardBusy = api
   // 其他腳本（例如以 fetch 送出的 invoice-correct.js）：const release = window.invoiceGuardBusy('訊息'); … finally { release() }
   root.invoiceGuardBusy = acquire

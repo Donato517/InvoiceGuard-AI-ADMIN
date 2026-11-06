@@ -15,7 +15,9 @@
       method="post"
       action="/invoices/{{ invoice.id }}/flow/upload"
       enctype="multipart/form-data"
-      class="form">
+      class="form"
+      data-busy="">
+  {#- 「上傳並開始辨識」用按鈕載入（main.js 的 flow-upload-form 處理，模式 A）；data-busy="" 避免再蓋全頁遮罩 -#}
   <div class="dropzone {% if is_first_four_readonly %}dropzone--disabled{% endif %}"
        id="invoiceDrop"
        data-dropzone>

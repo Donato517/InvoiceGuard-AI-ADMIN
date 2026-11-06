@@ -89,41 +89,101 @@ document.addEventListener('submit', (event) => {
  * @example
  * <form method="post" action="/knowledge/.../index" data-busy="正在建立索引…">
  */
-// busy.js 沒載入時（版面漏掉 script）只停用遮罩，不影響本檔其他功能；tests/unit/test_busy_overlay.py 會檢查 base.html 有載入
+// busy.js 沒載入時（版面漏掉 script）只停用 Loading，不影響本檔其他功能；tests/unit/test_busy_overlay.py 會檢查 base.html 有載入
 const Busy = window.InvoiceGuardBusy || {
   acquire: () => () => {},
   clearAll: () => {},
+  requestNavigation: () => {},
+  buttonLoading: () => () => {},
+  isButtonLoading: () => false,
 }
 
-// 換頁型（一般表單、帶 data-busy 的連結）：瀏覽器換頁或從快取還原（pageshow）時清除，不使用固定逾時
-let releaseNavigationBusy = () => {}
-function showNavigationBusy(message) {
-  releaseNavigationBusy()
-  releaseNavigationBusy = Busy.acquire(message)
+/**
+ * Loading UX 三種模式（遮罩與按鈕載入由 busy.js 管理）：
+ * - 模式 A 按鈕載入：form 或送出鈕（HTMX 的 hx-post 元素）加 data-loading-mode="button"，送出鈕轉成「轉圈＋訊息」
+ *   並停用，不顯示全頁遮罩；data-loading-text 指定訊息（預設「處理中…」）。小型切換（開關、徽章）用
+ *   data-loading-mode="disable"：只停用並標示 aria-busy，不改按鈕內容。
+ * - 模式 B 全頁遮罩：POST 表單預設、有非空 data-busy 的表單／連結／HTMX 請求、側邊欄導覽。
+ * - 模式 C 局部或不顯示：GET 查詢與篩選、HTMX 即時搜尋、下載（data-busy=""）、已有自己進度的操作。
+ * data-busy="" 與 data-loading-mode 都代表「不要全頁遮罩」。
+ */
+const DEFAULT_BUSY_MESSAGE = '處理中，請稍候…'
+const NAVIGATION_MESSAGE = '載入中，請稍候…'
+const DEFAULT_BUTTON_TEXT = '處理中…'
+const HTMX_ATTRIBUTES = ['hx-post', 'hx-get', 'hx-put', 'hx-patch', 'hx-delete']
+
+// 同一個表單正在換頁送出（遮罩或按鈕載入中）時不再送第二次；導覽被取消或頁面還原時由 busy.js 釋放
+const formsInFlight = new WeakSet()
+
+// 找出表單的送出鈕：優先用事件的 submitter（保留它的 name／value／formaction）
+function submitterOf(form, submitter) {
+  if (submitter) return submitter
+  return form.querySelector?.('button[type="submit"], button:not([type]), input[type="submit"]') || null
 }
+
+// 取得模式 A 的設定；form 或送出鈕任一邊有 data-loading-mode 即可
+function buttonModeOf(form, button) {
+  const holder = [button, form].find((el) => el?.dataset?.loadingMode)
+  const mode = holder?.dataset.loadingMode
+  if (mode !== 'button' && mode !== 'disable') return null
+  return {
+    keepContent: mode === 'disable',
+    text: holder.dataset.loadingText || button?.dataset?.loadingText || form?.dataset?.loadingText || DEFAULT_BUTTON_TEXT,
+  }
+}
+
+// 同一個提交動作進行中就擋掉重複送出（鍵盤 Enter、程式 requestSubmit）；capture 階段，早於其他處理
+document.addEventListener(
+  'submit',
+  (event) => {
+    if (formsInFlight.has(event.target) || htmxWritesInFlight.has(event.target)) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+  },
+  true,
+)
 
 // 一般表單（非 HTMX，送出後換頁）：POST 預設顯示「處理中，請稍候…」遮罩，避免使用者以為卡住而重複送出；
 // GET（查詢、篩選）預設不顯示（改用局部或輕量回饋），需要時以非空 data-busy 指定訊息。
-// 有 data-busy 一律用指定訊息，data-busy="" 代表不顯示；POST 開新分頁（target）不顯示。HTMX 表單沿用下方 htmx 事件。
-const DEFAULT_BUSY_MESSAGE = '處理中，請稍候…'
+// 有 data-busy 一律用指定訊息，data-busy="" 代表不顯示；POST 開新分頁（target）不顯示；
+// data-loading-mode（模式 A）改成按鈕載入。HTMX 表單沿用下方 htmx 事件。
 document.addEventListener('submit', (event) => {
   const form = event.target
   if (event.defaultPrevented || !form?.dataset) {
     return
   }
   const attribute = (name) => (typeof form.getAttribute === 'function' ? form.getAttribute(name) : null)
-  const isHtmx = ['hx-post', 'hx-get', 'hx-put', 'hx-patch', 'hx-delete'].some((name) => attribute(name) !== null)
+  const isHtmx = HTMX_ATTRIBUTES.some((name) => attribute(name) !== null)
   const isPost = (attribute('method') || '').toLowerCase() === 'post'
   const opensElsewhere = Boolean(attribute('target')) && attribute('target') !== '_self'
+  const button = submitterOf(form, event.submitter)
+  const buttonMode = buttonModeOf(form, button)
   let message = ''
-  if (form.dataset.busy !== undefined) {
+  if (buttonMode) {
+    message = ''
+  } else if (form.dataset.busy !== undefined) {
     message = form.dataset.busy
   } else if (isPost && !isHtmx && !opensElsewhere) {
     message = DEFAULT_BUSY_MESSAGE
   }
-  if (message) {
-    showNavigationBusy(message)
+  if (!message && !(buttonMode && !isHtmx)) {
+    return
   }
+  Busy.requestNavigation(
+    () => {
+      formsInFlight.add(form)
+      const releaseOverlay = message ? Busy.acquire(message) : () => {}
+      const restoreButton = buttonMode && button ? Busy.buttonLoading(button, buttonMode) : () => {}
+      return () => {
+        formsInFlight.delete(form)
+        releaseOverlay()
+        restoreButton()
+      }
+    },
+    // 瀏覽器把表單送出排到之後的工作回合才導覽；事件處理完沒被取消（含防重複送出）才開始
+    { gate: 'task', isCanceled: () => event.defaultPrevented },
+  )
 })
 
 // 按「上一頁」從瀏覽器快取還原頁面時，送出前留下的遮罩一併清掉（舊的 release 之後被呼叫也不會影響新請求）
@@ -133,30 +193,116 @@ window.addEventListener('pageshow', (event) => {
   }
 })
 
-// 會換頁的連結（例如上傳完成後重新整理清單）加上 data-busy 也顯示遮罩；新分頁或修飾鍵開啟時不顯示
+// 會換頁的連結：側邊欄導覽一律顯示「載入中，請稍候…」；其他連結加 data-busy="訊息" 才顯示。
+// 只有確定開始同頁面導覽才顯示：新分頁（Ctrl／Cmd／Shift／Alt＋點擊、中鍵不會觸發 click、target、download）、
+// 同頁錨點、外部網址與被取消的點擊都不顯示。
+function navigationMessageFor(link) {
+  if (link.dataset.busy !== undefined) return link.dataset.busy
+  if (link.classList.contains('app-sidebar__link')) return NAVIGATION_MESSAGE
+  return ''
+}
 document.addEventListener('click', (event) => {
-  const link = event.target.closest('a[data-busy]')
-  if (!link || !link.dataset.busy || event.ctrlKey || event.metaKey || event.shiftKey) {
+  const link = event.target?.closest?.('a[href]')
+  if (!link || event.defaultPrevented) {
     return
   }
-  showNavigationBusy(link.dataset.busy)
+  const message = navigationMessageFor(link)
+  if (!message) {
+    return
+  }
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    return
+  }
+  if (link.hasAttribute('download') || link.getAttribute('aria-disabled') === 'true') {
+    return
+  }
+  const target = link.getAttribute('target')
+  if (target && target !== '_self') {
+    return
+  }
+  let url
+  try {
+    url = new URL(link.href, window.location.href)
+  } catch {
+    return
+  }
+  if (url.origin !== window.location.origin) {
+    return
+  }
+  if (url.hash && url.pathname === window.location.pathname && url.search === window.location.search) {
+    return
+  }
+  Busy.requestNavigation(
+    () => {
+      // 沒有 Navigation API 的瀏覽器：事件處理完才執行，這時才看得出點擊有沒有被其他處理函式取消
+      if (event.defaultPrevented) return undefined
+      return Busy.acquire(message)
+    },
+    { gate: 'navigate' },
+  )
 })
+
 // HTMX：有 data-busy 用指定訊息（data-busy="" 為不顯示）；沒有時，會寫入資料的請求（POST／PUT／PATCH／DELETE）
-// 預設顯示「處理中」，查詢類的 GET（即時搜尋、篩選）不顯示，避免打字時一直閃遮罩。
+// 預設顯示「處理中」，查詢類的 GET（即時搜尋、篩選）不顯示，避免打字時一直閃遮罩；
+// data-loading-mode（模式 A）改成按鈕載入，不顯示全頁遮罩。
 // 在 htmx:beforeSend（請求確定要送出才觸發，beforeRequest 被其他監聽器取消時不會到這裡）取得 Token，
 // 以 detail.xhr（HTMX 2.0.11 每個請求唯一，beforeSend 與 afterRequest／各種失敗事件相同）當識別；
 // 結束時只釋放自己的 Token，沒有顯示遮罩的請求結束不會影響別人的遮罩。
 const htmxBusyReleases = new WeakMap()
+const htmxWritesInFlight = new WeakMap() // 元素 → 進行中的寫入請求；同一個元素不重複送出寫入
+const isHtmxWrite = (requestConfig) => String(requestConfig?.verb || 'get').toLowerCase() !== 'get'
+
+// HTMX 對同一個元素的重複觸發預設會排隊，等第一個結束再送第二個（到那時 beforeRequest 已看不出重複），
+// 所以要在 DOM 事件階段就擋：同一個寫入元素（或它的子元素）進行中的 click／submit 在 capture 階段取消。
+function inFlightHtmxWriter(target) {
+  for (let el = target; el; el = el.parentElement) {
+    if (htmxWritesInFlight.has(el)) return el
+  }
+  return null
+}
+document.addEventListener(
+  'click',
+  (event) => {
+    if (inFlightHtmxWriter(event.target)) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+  },
+  true,
+)
+document.addEventListener('htmx:beforeRequest', (event) => {
+  const { elt, requestConfig } = event.detail || {}
+  if (elt && isHtmxWrite(requestConfig) && htmxWritesInFlight.has(elt)) {
+    event.preventDefault() // 保險：程式觸發（htmx.trigger／ajax）的重複寫入也取消
+  }
+})
 document.addEventListener('htmx:beforeSend', (event) => {
   const { xhr, elt, requestConfig } = event.detail || {}
   if (!xhr) {
     return
   }
-  const marked = elt?.closest?.('[data-busy]')
-  const verb = String(requestConfig?.verb || 'get').toLowerCase()
-  const message = marked ? marked.dataset.busy : verb !== 'get' ? DEFAULT_BUSY_MESSAGE : ''
-  if (message) {
-    htmxBusyReleases.set(xhr, Busy.acquire(message))
+  const write = isHtmxWrite(requestConfig)
+  const releases = []
+  const form = elt?.closest?.('form') || elt
+  const trigger = requestConfig?.triggeringEvent?.submitter || (elt?.tagName === 'BUTTON' ? elt : null)
+  const buttonMode = buttonModeOf(form, trigger || submitterOf(form, null)) || buttonModeOf(elt, trigger)
+  if (buttonMode) {
+    releases.push(Busy.buttonLoading(trigger || submitterOf(form, null), buttonMode))
+  } else {
+    const marked = elt?.closest?.('[data-busy]')
+    const message = marked ? marked.dataset.busy : write ? DEFAULT_BUSY_MESSAGE : ''
+    if (message) {
+      releases.push(Busy.acquire(message))
+    }
+  }
+  if (write && elt) {
+    htmxWritesInFlight.set(elt, xhr)
+    releases.push(() => {
+      if (htmxWritesInFlight.get(elt) === xhr) htmxWritesInFlight.delete(elt)
+    })
+  }
+  if (releases.length) {
+    htmxBusyReleases.set(xhr, () => releases.forEach((release) => release()))
   }
 })
 function releaseHtmxBusy(event) {

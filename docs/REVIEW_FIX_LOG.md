@@ -1,5 +1,14 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 Loading UX 模式 A／B／C 整合（側邊欄導覽、按鈕載入、同一動作防重）
+
+- 規則（使用者確認）：模式 A 按鈕載入（登入、發票辨識、啟停／徽章等局部操作）、模式 B 全頁遮罩（導覽、重要寫入）、模式 C 局部或無遮罩（GET 查詢、即時搜尋、下載、已有自己進度的操作）。
+- 側邊欄導覽（模式 B）：`.app-sidebar__link` 的主要左鍵點擊顯示「載入中，請稍候…」。Ctrl／Cmd／Shift／Alt、非左鍵、`target`、`download`、`aria-disabled`、外部網址與同頁錨點不顯示。支援 Navigation API（Chromium）時等 `navigate` 事件確認導覽真的開始才顯示（被取消的點擊不會留下遮罩），並在 `navigateerror`（使用者按停止、導覽失敗或中止）釋放；表單送出則在事件處理完且沒被取消後開始，並忽略「上一次導覽補發」的 `navigateerror`（實測它會在新導覽開始時才補發）。沒有 Navigation API 的瀏覽器退回「確認未被取消就顯示」，Escape（停止載入鍵）盡力釋放。唯一的 `setTimeout` 都是 0 毫秒的工作回合邊界，沒有用固定秒數猜導覽結束。回傳下載檔案的表單不會觸發 `navigateerror`（實測），仍要加 `data-busy=""`。
+- 按鈕載入（模式 A）：新增 `data-loading-mode="button"`（送出鈕轉成「轉圈＋訊息」並停用，`data-loading-text` 指定訊息）與 `data-loading-mode="disable"`（只停用並標示 `aria-busy`，不改內容，給開關與徽章）。停用延到送出事件處理完才做，避免送出鈕的 `name`／`value`／`formaction` 因停用而遺失（真實瀏覽器驗證：`intent=go` 仍在網址上）。`hx-disabled-elt` 先停用的按鈕不當作原本狀態還原（`data-disabled-by-htmx`），否則部門啟停開關會在請求結束後一直停用（真實瀏覽器測試抓到並修正）。與 `data-busy` 不並用（有 `data-loading-mode` 就不顯示全頁遮罩）。
+- 套用：`invoices/_flow_step_upload.html` 的 `flow-upload-form` 加 `data-busy=""`（既有「辨識中…」按鈕載入保留，不再同時蓋全頁遮罩；`_procurement_return.html` 的「重新上傳附件」是另一個表單，維持預設全頁遮罩）；`departments/list.html` 啟停開關與 `knowledge/_dept_badges.html` 徽章加 `data-loading-mode="disable"`（只加屬性，沒有改業務邏輯）。
+- 同一動作防重（前端，不取代後端冪等）：進行中的換頁表單不再送第二次（capture 階段取消 `submit`）；HTMX 對同一元素的重複觸發預設會排隊再送一次（實測 Enter／Space 會多送一個 POST），改在 capture 階段取消進行中寫入元素的 `click`／`submit`（實測伺服器只收到 1 個 POST）；HTMX GET（即時搜尋）不受影響。
+- 驗證：`tests/unit/js/main_busy.test.js`（35 項）與 `busy_manager.test.js`（15 項）、`test_busy_overlay.py` 靜態檢查；以拿掉各項保護的版本對照，測試會失敗。真實瀏覽器（本機測試頁，真實滑鼠與鍵盤）驗證側邊欄左鍵與 `window.stop()` 釋放、按鈕模式、部門啟停、HTMX 重複觸發、Escape 對話框、登入與上傳按鈕。限制：內建瀏覽器無法開新分頁或送出修飾鍵點擊與中鍵，這幾項只有單元測試；未驗證 Safari／Firefox（沒有 Navigation API 的退回路徑）、手機、真實 API、資料庫與正式站。
+
 ## 2026-11-06 送出請求後的處理中遮罩：補齊 GET 表單、HTMX 寫入請求與補正頁，並改以擁有者 Token 管理
 
 - 盤點（程式與樣板，85 個 `<form>`）：既有全頁遮罩原本只涵蓋「非 HTMX 的 POST 表單」與明確加了 `data-busy` 的表單／連結。缺口：(1) 非 HTMX 的 GET 查詢／篩選表單；(2) HTMX 寫入請求（`hx-post`）沒有 `data-busy` 時沒有遮罩；(3) 補正頁（`/invoices/{id}/correct`）以 fetch 送出與終止，只有按鈕停用與文字提示。

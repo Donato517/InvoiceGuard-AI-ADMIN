@@ -43,15 +43,22 @@
 
   const page = document.getElementById('correct-page');
   if (!page) return;
+  // 以 fetch 送出、不換頁：向 busy.js 取得自己的遮罩 Token，完成時只釋放自己的（busy.js 沒載入時不做事）
+  const startBusy = (text) =>
+    typeof window.invoiceGuardBusy === 'function' ? window.invoiceGuardBusy(text) : () => {};
 
   // 圖片問題：只能由原提交者作廢後重新上傳（新案件走既有的 OCR 辨識與首次提交流程，舊案件與影像保留不變）
   const voidButton = document.getElementById('void-button');
   if (voidButton) {
+    let voiding = false; // 終止進行中不再送第二次（前端防重，不取代後端判斷）
     voidButton.addEventListener('click', async () => {
+      if (voiding) return;
       if (!window.confirm('終止後這張案件不能再補正，需要重新上傳影像建立新案件。確定要終止嗎？')) return;
       const note = document.getElementById('void-message');
+      voiding = true;
       voidButton.disabled = true;
       note.textContent = '終止中…';
+      const releaseBusy = startBusy('正在終止案件，請稍候…');
       try {
         const response = await fetch('/invoices/' + page.dataset.invoiceId + '/correct/void', {
           method: 'POST',
@@ -74,6 +81,9 @@
           : (data && data.error && data.error.message) || '終止失敗，請稍後再試。';
       } catch {
         note.textContent = '網路逾時，不確定是否已終止。請重新整理頁面確認案件狀態後再操作。';
+      } finally {
+        releaseBusy();
+        voiding = false;
       }
       voidButton.disabled = false;
     });
@@ -152,16 +162,46 @@
     return Object.assign({ idempotency_key: attempt.key }, body);
   }
 
+  let inFlight = false; // 補正提交進行中不再送第二次（前端防重；重送的正確性仍靠 idempotency_key 與後端）
+  let requestStarted = false; // 這次提交是否已把請求送出去（決定例外後怎麼告訴使用者）
+
   async function send() {
+    if (inFlight || form.dataset.done === 'true') return;
+    inFlight = true;
+    requestStarted = false;
+    const releaseBusy = startBusy('正在送出補正，請稍候…');
+    try {
+      await sendRequest();
+    } catch (error) {
+      // 非預期的 JavaScript 例外：依是否已送出告訴使用者，並恢復按鈕；已成功的提交不重新開放
+      if (form.dataset.done !== 'true') {
+        if (requestStarted) {
+          say('發生未預期的錯誤，不確定是否已送出。請按「重試」（使用相同識別碼，不會重複送出）；若仍失敗請重新整理頁面確認案件狀態。', true);
+          retryButton.hidden = false;
+        } else {
+          say('送出前發生未預期的錯誤，尚未送出。請重新整理頁面後再試。', true);
+        }
+        submitButton.disabled = false;
+      }
+      console.error(error);
+    } finally {
+      inFlight = false;
+      releaseBusy();
+    }
+  }
+
+  async function sendRequest() {
     submitButton.disabled = true;
     retryButton.hidden = true;
     say('送出中…', false);
+    const payload = JSON.stringify(withKey(buildBody())); // 組資料出錯是程式問題，不當成網路錯誤
     let response;
     try {
+      requestStarted = true;
       response = await fetch('/invoices/' + page.dataset.invoiceId + '/correct', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, // Accept 讓錯誤回 JSON 而不是錯誤頁
-        body: JSON.stringify(withKey(buildBody())),
+        body: payload,
       });
     } catch {
       say('網路逾時，不確定是否已送出。請按「重試」（使用相同識別碼，不會重複送出）。', true);

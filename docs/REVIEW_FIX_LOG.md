@@ -1,5 +1,16 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 送出請求後的處理中遮罩：補齊 GET 表單、HTMX 寫入請求與補正頁，並改以擁有者 Token 管理
+
+- 盤點（程式與樣板，85 個 `<form>`）：既有全頁遮罩原本只涵蓋「非 HTMX 的 POST 表單」與明確加了 `data-busy` 的表單／連結。缺口：(1) 非 HTMX 的 GET 查詢／篩選表單；(2) HTMX 寫入請求（`hx-post`）沒有 `data-busy` 時沒有遮罩；(3) 補正頁（`/invoices/{id}/correct`）以 fetch 送出與終止，只有按鈕停用與文字提示。
+- 預設行為（main.js）：POST 表單「處理中，請稍候…」（`target` 開新分頁不顯示）；**GET 查詢與篩選表單預設不顯示全頁遮罩**（模式 C：局部或輕量回饋），只有明確設定非空 `data-busy` 才顯示指定訊息；`data-busy=""` 永遠不顯示；HTMX 非 GET 請求預設顯示「處理中」，即時搜尋的 `hx-get` 不顯示；明確的 `data-busy`（含空字串）永遠優先。（本分支曾短暫加入「GET 預設『載入中，請稍候…』」，因與確認的 UX 規則衝突，已在 Commit 前移除。）
+- Commit 前審查發現的缺陷：原設計只有「遮罩元素在不在」一個共用狀態，任何 `htmx:afterRequest`（含沒有顯示遮罩的 GET）或補正頁的 `finally` 都會關掉別的請求的遮罩（並行時提早消失）；補正頁沒有防重複提交，成功回應後若拋出非預期例外，送出按鈕會停用、也沒有重試。
+- 修正：新增 `static/js/busy.js`（`base.html` 在 `main.js` 前載入）以「擁有者 Token」管理遮罩——每個動作 `acquire(訊息)` 取得自己的 Token、完成時只釋放自己的（重複釋放無效），仍有任何擁有者就維持顯示，全部釋放才移除；空訊息不取得擁有者；`pageshow` 還原頁面時 `clearAll()`，舊的釋放函式之後被呼叫不影響新 Token。HTMX 在 `htmx:beforeSend`（請求確定要送出才觸發）取得 Token，以 HTMX 2.0.11 每個請求唯一的 `detail.xhr` 為識別，於 `afterRequest`／`sendError`／`sendAbort`／`timeout`／`responseError` 釋放，所以 `beforeRequest` 被取消不會留下遮罩。換頁型遮罩不使用固定逾時（成功與失敗由換頁或 `pageshow` 決定）。
+- 對話框（Escape 問題）：遮罩原本掛在開啟中的 `<dialog>`（`showModal()`）裡，使用者在請求進行中按 Escape，對話框關閉、遮罩跟著隱藏，但 Token 仍在、頁面可操作。用真實 Escape 驗證「擋掉 cancel」不可靠：第一次 Escape 的 `cancel` 可取消，第二次不可取消，瀏覽器仍會關閉；且也擋不住按鈕或 `dialog.close()`。因此不阻止關閉，改在 `busy.js` 以 `MutationObserver` 監看 `<dialog>` 的 `open` 屬性：有擁有者時，對話框關閉就把遮罩移回 `body`（背景仍被擋住，實測最上層元素是遮罩、真實點擊無效），之後才開啟的對話框則把遮罩移進去。對話框內請求結束、失敗、逾時、中止都正常釋放；沒有 Loading 時 Escape 與對話框開關不受影響。鍵盤穿透遮罩（Tab／Enter）與換頁被取消後遮罩留存，仍是已知風險，未修正。
+- 補正頁（`invoice-correct.js`）：`window.invoiceGuardBusy(訊息)` 改為回傳 release；送出與終止都在 `finally` 釋放自己的 Token；新增 `inFlight`／`voiding` 防止進行中再次送出，已成功（`form.dataset.done`）也不再送；組資料例外不再被誤判為網路錯誤；非預期例外後依「是否已送出」說明並恢復送出與重試按鈕（已成功的提交不重新開放）。前端防重不取代後端：重試仍靠 `idempotency_key` 與 API 的冪等處理。
+- 刻意不顯示遮罩（`data-busy=""`，由測試清單固定）：登入、批次申報檔（下載不換頁）、知識庫部門選擇、題庫逐題執行。會回傳檔案或 204 的新表單必須加 `data-busy=""`，否則換頁型遮罩不會自己消失。
+- 驗證：`tests/unit/test_busy_overlay.py`（腳本內容與例外清單，已移除固定「任何 afterRequest 都關閉」的舊斷言）、`tests/unit/test_busy_manager_node.py`＋`tests/unit/js/busy_manager.test.js`（Node 假 DOM，10 項）；本機瀏覽器以可控制延遲與失敗的測試頁驗證 HTMX POST 並行（A／B 先完成）、與無遮罩 GET／`data-busy=""` 並行、與補正頁 fetch 並行、一成一敗、404／500／網路失敗／逾時／中止、`beforeRequest` 被取消、重複釋放、`pageshow` 後舊釋放、補正頁重複送出與例外恢復、真實點擊的下載表單。未連真實 API、資料庫或正式站；未驗證「離開頁面確認視窗按取消」後的遮罩（內建瀏覽器無法模擬）；正式站仍是舊版，部署後才生效。
+
 ## 2026-11-06 補正頁：API 查不到案件（404）時說明可能原因
 
 - 問題：重新登入後開 `/invoices/{id}/correct` 顯示通用的「找不到頁面」。API 查退件項目的條件是「發票編號＋提交者是本人＋發票部門等於 API 登入時選取的部門（主要部門）」，任一不符都回 404；ADMIN 把它轉成通用 404 頁，使用者看不出原因。

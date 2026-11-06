@@ -1,0 +1,161 @@
+{#
+  @template pages/invoices/correct.html
+  @description 採購在 ADMIN 補正被財務退回的案件：左側原圖、右側上一輪提交值；只有 API 回傳的 editable_fields 可修改（其餘欄位 disabled 反灰、不可點選；送出內容由 invoice-correct.js 讀欄位值組成 JSON，不依賴表單序列化，所以 disabled 欄位的上一輪值照常帶回），
+               其餘欄位唯讀。逐項回覆（已補正／申覆）後由 invoice-correct.js 經 ADMIN 伺服器送到 API。
+               圖片退件不顯示欄位表單，只能終止（API /void）後重新上傳。
+  @route GET /invoices/{invoice_id}/correct
+  @context invoice: dict          發票資料（原圖窗格用）
+  @context invoice_id: str
+  @context page: CorrectionPage | None   None 表示讀取退件資料失敗，只顯示 error
+  @context previous: PreviousSubmissionView | None
+  @context error: str
+  @context header_fields: tuple[str]
+  @context tax_type_options: tuple[(代碼, 名稱)]
+  @context labels: dict           欄位中文名稱
+#}
+{% extends "layouts/admin.html" %}
+{% block title %}退回補正{% endblock %}
+{% block head %}
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-flow.css') }}">
+  <link rel="stylesheet"
+        href="{{ static_url('css/pages/invoice-correct.css') }}">
+{% endblock head %}
+{% block content %}
+  {#- 第 N 輪提示與財務退回原因：可補正時放在右欄最上方（分欄上方的版面高度固定，凍結窗格的高度才算得準）；
+      終止／不可補正時沒有分欄，仍放在卡片最上方。內容與 id 不變。 -#}
+  {% macro return_summary(info, labels) %}
+    <p class="muted small-text">第 {{ info.submission_round }} 輪提交被退回。只有財務指定的欄位可以修改，其他欄位唯讀。</p>
+    <section aria-label="財務退回原因">
+      <h2>財務退回原因</h2>
+      {% if info.return_items %}
+        <ul id="return-reasons">
+          {% for item in info.return_items %}
+            <li data-return-item-id="{{ item.return_item_id }}">
+              {% if item.target %}<strong>{{ labels.get(item.target.field_name, item.target.field_name) }}</strong>：{% endif %}{{ item.reason }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="alert alert--warning" data-no-return-items>
+          系統沒有留下可供補正的退件原因（可能是較早期的退回）。請聯絡財務人員確認。
+        </p>
+      {% endif %}
+    </section>
+  {% endmacro %}
+  <a href="/invoices" class="btn btn--secondary btn--small">← 返回發票管理</a>
+  <h1>退回補正</h1>
+  {% if error %}<p class="alert alert--danger" role="alert" data-correct-error>{{ error }}</p>{% endif %}
+  {% if page %}
+    {% set info = page.info %}
+    <section class="card"
+             id="correct-page"
+             data-invoice-id="{{ invoice_id }}"
+             data-expected-round="{{ info.submission_round }}">
+      {% if page.mode == "void" or page.mode == "blocked" %}
+        {{ return_summary(info, labels) }}
+      {% endif %}
+      {% if page.mode == "void" %}
+        <p class="alert alert--warning" data-requires-void>
+          這張發票有圖片問題，不能在原案件補正或申覆，也不能直接換圖重送。請終止這張案件後重新上傳，系統會建立新的案件。
+        </p>
+        <p class="muted small-text">終止只會結束這張被退回的案件，並保留它的影像與退件紀錄；終止成功不代表新的發票已建立。</p>
+        <div class="form-field">
+          <label for="void-reason">終止原因（選填）</label>
+          <input id="void-reason" maxlength="200" placeholder="例如：圖片模糊，將重新拍照上傳">
+        </div>
+        <button type="button" id="void-button" class="btn btn--danger">終止並重新上傳</button>
+        <p id="void-message" role="status" aria-live="polite"></p>
+        <p id="void-next" hidden>
+          案件已終止。<a href="/invoices/new" class="btn btn--primary btn--small">重新上傳發票</a>
+        </p>
+      {% elif page.mode == "blocked" %}
+        <p class="alert alert--info" data-resubmit-blocked>{{ page.blocked_reason }}</p>
+        {% if page.other_items %}
+          <p data-other-limit>這類退回（非欄位、非圖片問題）目前沒有核定的自助處理方式，不能在原案件補正或申覆。請聯絡財務人員確認處理方式。</p>
+        {% endif %}
+      {% else %}
+        <div class="invoice-correction-split correction-split--frozen correction-split--compact">
+          {% include "pages/invoices/_invoice_original_pane.html" %}
+          <section class="correction-field-column" aria-label="補正欄位">
+            {{ return_summary(info, labels) }}
+            <div class="correction-panel-title">發票欄位（灰色為唯讀，只能修改財務指定的欄位）</div>
+            <form id="correct-form" novalidate>
+              {% for name in header_fields %}
+                {% set key = "header||" ~ name %}
+                {% set value = previous[name] %}
+                <div class="form-field">
+                  <label for="f-{{ name }}">{{ labels[name] }}{% if key in page.editable %} <span class="badge badge--flagged" data-editable-mark>需補正</span>{% endif %}</label>
+                  {% if name == "tax_type" %}
+                    <select id="f-{{ name }}"
+                            data-scope="header"
+                            data-field="{{ name }}"
+                            {% if key not in page.editable %}disabled{% endif %}>
+                      {% for code, text in tax_type_options %}
+                        <option value="{{ code }}" {% if value == code %}selected{% endif %}>{{ text }}</option>
+                      {% endfor %}
+                    </select>
+                  {% else %}
+                    <input id="f-{{ name }}"
+                           data-scope="header"
+                           data-field="{{ name }}"
+                           value="{{ value if value is not none else '' }}"
+                           {% if key not in page.editable %}disabled{% endif %}>
+                  {% endif %}
+                </div>
+              {% endfor %}
+              <h3>明細（不可新增、刪除或重排）</h3>
+              {#- 明細表比右欄寬：用全站既有的 .table-wrap（overflow: auto）做局部水平捲動，欄位容器的 overflow-x: hidden 不動 -#}
+              <div class="table-wrap" role="region" aria-label="明細（可左右捲動）" tabindex="0">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th scope="col">#</th>
+                      <th scope="col">品名</th>
+                      <th scope="col">數量</th>
+                      <th scope="col">單價</th>
+                      <th scope="col">金額</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in previous["items"] %}
+                      <tr data-item-id="{{ row.item_id }}" data-line-no="{{ row.line_no }}">
+                        <td>{{ row.line_no }}</td>
+                        {% for name in item_fields %}
+                          {% set key = "item|" ~ row.item_id ~ "|" ~ name %}
+                          <td>
+                            <input aria-label="{{ labels[name] }} 第 {{ row.line_no }} 列"
+                                   data-scope="item"
+                                   data-line-no="{{ row.line_no }}"
+                                   data-item-id="{{ row.item_id }}"
+                                   data-field="{{ name }}"
+                                   value="{{ row[name] if row[name] is not none else '' }}"
+                                   {% if key not in page.editable %}disabled{% endif %}>
+                          </td>
+                        {% endfor %}
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <h3>逐項回覆</h3>
+              {% for item in page.field_items %}
+                <fieldset class="response" data-return-item-id="{{ item.return_item_id }}">
+                  <legend>{{ labels.get(item.target.field_name, item.target.field_name) if item.target else "" }}：{{ item.reason }}</legend>
+                  <label><input type="radio" name="action-{{ item.return_item_id }}" value="corrected" checked> 已補正</label>
+                  <label><input type="radio" name="action-{{ item.return_item_id }}" value="appealed"> 申覆（不修改，必須填寫說明）</label>
+                  <textarea name="note-{{ item.return_item_id }}" rows="2" maxlength="200" aria-label="申覆說明"></textarea>
+                </fieldset>
+              {% endfor %}
+              <p id="correct-message" role="status" aria-live="polite"></p>
+              <button type="submit" id="correct-submit" class="btn btn--primary">重新送出財務審核</button>
+              <button type="button" id="correct-retry" class="btn btn--secondary" hidden>重試（使用相同識別碼，不會重複送出）</button>
+              <p id="correct-done" hidden><a href="/invoices" class="btn btn--secondary btn--small">回發票管理</a></p>
+            </form>
+          </section>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+  <script src="{{ static_url('js/invoice-correct.js') }}" defer></script>
+{% endblock content %}

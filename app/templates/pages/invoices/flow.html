@@ -48,7 +48,18 @@
     {% else %}
       <a href="/invoices" class="btn btn--secondary">← 返回列表</a>
     {% endif %}
-    {% if intake and step >= 3 %}
+    {% if step == 4 and is_self_upload | default(false) and (not intake or intake.submitted_invoice_id) %}
+      {#- 本人上傳者（財務部與非財務部統一）：不得進入步驟 5，完成步驟 4 後回發票管理列表。
+          資料庫案件在步驟 3 提交時已建立，finish-first-four 只轉址；舊記憶體示範發票仍要由它寫入「前四步已核對」標記，
+          所以非暫存草稿用 POST 沿用它，暫存草稿（該端點會回 409）改用一般連結。不經 /flow/advance、不進步驟 5 -#}
+      {% if persist_first_four | default(false) %}
+        <form method="post" action="/invoices/{{ invoice.id }}/flow/finish-first-four">
+          <button type="submit" class="btn btn--primary" data-view-my-invoice>檢視我的發票</button>
+        </form>
+      {% else %}
+        <a href="/invoices" class="btn btn--primary" data-view-my-invoice>檢視我的發票</a>
+      {% endif %}
+    {% elif intake and step >= 3 %}
       {#- API 辨識的發票：步驟 3 由表單自己的「檢核／確認提交」按鈕送出；步驟 4 之後的審核由案件資料決定 -#}
     {% elif step == 1 %}
       {% if is_first_four_readonly %}

@@ -785,6 +785,60 @@
   }
 }
 
+/* 步驟 3 人工核對／退回補正頁：凍結窗格（專用 class，不共用 .fr-split，避免影響步驟 5）。
+   捲動方式比照步驟 5：寬 ≥ 1101px 一律凍結（沒有高度門檻），左側原檔不動，右側表單自行捲動；
+   視窗太矮時分欄高度停在下限 32rem（與步驟 5 的 min-height 相同），此時外層頁面會多一段捲動，才能看到完整分欄。
+   --frozen-offset：分欄上下方版面（頁首、返回鈕、標題／步驟列、卡片內距、上一步列、內容區內距）合計高度，已用正式頁面實測；
+   --frozen-pane-chrome：左欄內原圖／PDF 以外（標題、檔名列、內距）的高度。
+   分欄上方多一則提示或錯誤訊息（--notice）時，多扣約 5.5rem；退回補正頁（--compact）版面較少，只扣約 15rem。 */
+@media (min-width: 1101px) {
+  .correction-split--frozen {
+    --frozen-offset: 25.5rem;
+    --frozen-pane-chrome: 10.5rem;
+    --frozen-height: max(32rem, calc(100vh - var(--frozen-offset)));
+    height: var(--frozen-height);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  @supports (height: 100dvh) {
+    .correction-split--frozen {
+      --frozen-height: max(32rem, calc(100dvh - var(--frozen-offset)));
+    }
+  }
+
+  .correction-split--frozen.correction-split--notice {
+    --frozen-offset: 31rem;
+  }
+
+  /* 退回補正頁：沒有步驟列與卡片標題，分欄上下方版面較少（實測約 14rem） */
+  .correction-split--frozen.correction-split--compact {
+    --frozen-offset: 15rem;
+  }
+
+  .correction-split--frozen > .correction-original-column {
+    position: static;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .correction-split--frozen > .correction-field-column {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .correction-split--frozen .correction-original-image {
+    max-width: 100%;
+    max-height: calc(var(--frozen-height) - var(--frozen-pane-chrome));
+  }
+
+  .correction-split--frozen .correction-original-pdf {
+    height: calc(var(--frozen-height) - var(--frozen-pane-chrome));
+    min-height: 12rem;
+  }
+}
+
 /* ==========================================================================
    步驟 3 核對表單：必填標示、即時格式提示與檢核訊息（對齊前台 .field-required／.field-hint）
    ========================================================================== */
@@ -922,4 +976,122 @@
 
 .link-button:hover {
   color: var(--color-primary-hover);
+}
+
+/* ---- 品名明細卡片：一個項次上下兩列（上列品名，下列數量／單價／金額）與明細總金額 ---- */
+.item-list {
+  display: grid;
+  gap: var(--space-3, 0.75rem);
+  margin-top: var(--space-3, 0.75rem);
+}
+
+.item-card {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  gap: var(--space-3, 0.75rem);
+  align-items: start;
+  padding: var(--space-3, 0.75rem);
+  border: 1px solid var(--color-border, #dfe5ee);
+  border-radius: 0.75rem;
+  background-color: #ffffff;
+}
+
+.item-card__index {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: center;
+  padding-top: 1.5rem;
+  font-weight: 600;
+}
+
+.item-card__body {
+  display: grid;
+  gap: var(--space-2, 0.5rem);
+  min-width: 0;
+}
+
+.item-card__nums {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2, 0.5rem);
+}
+
+.item-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.item-cell input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.item-cell input.item-amount {
+  background-color: var(--color-surface-muted, #f4f6fa);
+  text-align: right;
+}
+
+.item-label {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.item-card__action {
+  padding-top: 1.5rem;
+}
+
+.item-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 0.75rem);
+  margin-top: var(--space-3, 0.75rem);
+}
+
+.item-total {
+  display: flex;
+  gap: var(--space-3, 0.75rem);
+  align-items: baseline;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background-color: var(--color-surface-muted, #f4f6fa);
+  font-weight: 600;
+}
+
+.item-total strong {
+  min-width: 5rem;
+  text-align: right;
+  font-size: 1.125rem;
+}
+
+@media (max-width: 700px) {
+  .item-card {
+    grid-template-columns: 1fr;
+  }
+
+  .item-card__index,
+  .item-card__action {
+    padding-top: 0;
+    justify-items: start;
+  }
+
+  .item-card__nums {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 財務退回補正頁：未開放修改的欄位（disabled）反灰、游標顯示禁止，點擊不會出現輸入游標。
+   文字 #4b5a70 在底色 #e9edf3 上對比約 6:1（WCAG AA 需 4.5:1）；-webkit-text-fill-color 讓 Safari 也採用此文字色 */
+#correct-form input:disabled,
+#correct-form select:disabled {
+  background-color: #e9edf3;
+  color: #4b5a70;
+  -webkit-text-fill-color: #4b5a70;
+  cursor: not-allowed;
+  opacity: 1;
 }

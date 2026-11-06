@@ -283,6 +283,10 @@ def test_recognize_renders_the_review_form(web: TestClient, api: FakeApi) -> Non
     for expected in ("12345678", "04595257", "辦公文具", "影印紙", "買受人統編未辨識，請輸入", RID):
         assert expected in text, expected
     assert text.count('name="item_source_line_no"') == 2
+    # 6～9 項只在「品名明細」填寫，不再有唯讀佔位列；明細欄位仍在
+    assert "請見下方" not in text and "<span>6～9</span>" not in text
+    for name in ("item_item_name", "item_quantity", "item_unit_price", "item_line_amount"):
+        assert f'name="{name}"' in text, name
     assert "備註" in text and "API 目前沒有備註欄位" in text  # 備註只顯示不送出
     assert (
         "不會存入資料庫" not in text and "不留存" not in text

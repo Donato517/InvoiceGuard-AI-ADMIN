@@ -98,13 +98,44 @@ def test_entries_are_grouped_in_the_approved_groups() -> None:
         _entry("rag.manager", "RAG知識庫管理"),
         _entry("inv.filing", "申報資料"),
     ]
+    # 2026-11-06：群組改名「系統作業」；有供應商管理時，範例發票參考接在後面
     assert _names(group_sidebar(entries)) == [
-        ("企業基本作業", ["公司基本資料"]),
-        ("供應商作業", ["供應商管理", "範例發票"]),
+        ("系統作業", ["公司基本資料"]),
+        ("供應商作業", ["供應商管理", "範例發票參考", "範例發票"]),
         ("發票作業", ["發票上傳", "發票管理"]),
         ("財會作業", ["財會檢核", "申報資料", "會計傳票"]),
         ("RAG 知識庫作業", ["RAG知識庫管理", "RAG知識庫問答"]),
     ]
+
+
+def test_workspace_layout_adds_basic_profile_and_showcase_reference() -> None:
+    """工作台版面原本寫死的「本人資訊」（改名基本資料）與範例發票參考，改放進群組。"""
+    groups = group_sidebar([_entry("company.profile", "公司基本資料")], workspace=True)
+    assert _names(groups) == [
+        ("系統作業", ["公司基本資料", "基本資料"]),
+        ("供應商作業", ["範例發票參考"]),
+    ]
+    routes = {e.name: e.route for g in groups for e in g.entries}
+    assert routes["基本資料"] == "/account" and routes["範例發票參考"] == "/showcases/reference"
+
+
+def test_general_sidebar_never_adds_the_account_page() -> None:
+    """只有歡迎頁權限的帳號開不了 /account，一般側欄不加入基本資料。"""
+    for entries in ([], [_entry("suppliers", "供應商管理")]):
+        names = [e.name for g in group_sidebar(entries) for e in g.entries]
+        assert "基本資料" not in names
+
+
+def test_showcase_reference_needs_supplier_management_in_general_sidebar() -> None:
+    assert group_sidebar([_entry("inv.upload", "發票上傳")])[0].key == "invoice"
+    names = [e.name for g in group_sidebar([_entry("suppliers", "供應商管理")]) for e in g.entries]
+    assert names == ["供應商管理", "範例發票參考"]
+
+
+def test_workspace_layout_has_no_hardcoded_links_left() -> None:
+    layout = (ROOT / "app/templates/layouts/e_admin.html").read_text(encoding="utf8")
+    assert 'href="/showcases/reference"' not in layout and "<span>本人資訊</span>" not in layout
+    assert "{% set sidebar_workspace = true %}" in layout
 
 
 def test_empty_groups_are_hidden_and_unknown_and_system_entries_go_last() -> None:

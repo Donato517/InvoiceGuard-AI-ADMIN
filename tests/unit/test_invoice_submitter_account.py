@@ -63,7 +63,8 @@ class _Db:
             if isinstance(self.accounts, Exception):
                 raise self.accounts
             return _Result(self.accounts)
-        if "invoice_items" in sql:
+        # 列表 SQL 也會帶出品名（LATERAL 子查詢讀 invoice_items），只有「不讀 invoices 主表」的才是明細查詢
+        if "invoice_items" in sql and "FROM public.invoices i" not in sql:
             return _Result([])
         return _Result([dict(ROW)])
 

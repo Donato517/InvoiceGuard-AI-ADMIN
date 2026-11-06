@@ -1,0 +1,485 @@
+{# @template pages/showcases/manage.html @description 供應商範例上傳、確認、替換及歷程。 @context items, row, fields, identity #}
+{% extends "layouts/e_admin.html" %}
+{% block title %}供應商 Show Case 管理{% endblock %}
+{% block content %}
+  {% set revision_states = {'draft':'待確認','active':'已啟用','returned':'退回補正','inactive':'已停用','superseded':'已被取代'} %}
+  {% set showcase_access = effective_access.functions | selectattr('code', 'equalto', 'supplier.showcase') | list %}
+  {% set showcase_grants = showcase_access[0].grants if showcase_access else [] %}
+  {% set can_create_showcase = showcase_grants | selectattr('action', 'equalto', 'create') | list | length > 0 %}
+  {% set can_edit_showcase = showcase_grants | selectattr('action', 'equalto', 'edit') | list | length > 0 %}
+  <h1>{{ '供應商範例參考' if references is defined else '供應商 Show Case 管理' }}</h1>
+  {% if access_problem %}
+    <section class="card" role="alert">
+      {% if access_problem == "permission" %}
+        <h2>目前部門尚未取得 Show Case 查看權限</h2>
+        <p>請確認「供應商管理」（suppliers）與「供應商 Show Case 管理」（show_case）皆已啟用，並在目前選取的部門勾選兩項功能的「查看」。</p>
+        {% if e_menu | selectattr("route", "equalto", "/functions") | list %}<p><a href="/functions?q=show_case">查看 Show Case 功能設定</a></p>{% endif %}
+        {% if e_menu | selectattr("route", "equalto", "/department") | list %}<p><a href="/department/{{ identity.selected_department_id }}/edit">查看目前部門的功能權限</a></p>{% endif %}
+      {% else %}
+        <h2>Show Case 資料服務暫時無法使用</h2>
+        <p>請由管理員檢查供應商主檔、Show Case 資料庫結構與後端讀取權限，再重新整理此頁。</p>
+      {% endif %}
+      <a class="btn btn--secondary" href="/suppliers">返回供應商管理</a>
+    </section>
+  {% elif references is not defined %}
+    <p>保存供應商範例與票面答案，供人工核對參考。上傳後需確認才能啟用。</p>
+    {% set linked_supplier = data.master_supplier_id if data is defined else row.payload.master_supplier_id if row else none %}
+    <p>
+      <a class="btn btn--secondary" href="/suppliers">返回供應商管理</a>
+    {% if linked_supplier %}<a class="btn btn--secondary"
+   href="/showcases/by-supplier/{{ linked_supplier }}">返回此供應商範例</a>{% endif %}</p>
+    {% if not master_collection and not linked_supplier %}
+      <p><a href="/showcases/collections">供應商範例集</a> · <a href="/showcases">範例列表</a> · <a href="/suppliers">從供應商新增範例</a> · <a href="/showcases/reference">取用啟用範例</a></p>
+    {% endif %}
+  {% endif %}
+  {% if references is defined %}
+    <h2>依供應商取用參考範例</h2>
+    <p>供有效登入者核對使用。僅顯示已啟用版；參考值不等於本次發票答案。</p>
+    <form method="get" action="/showcases/reference">
+      <label>
+        供應商統編<input name="tax_id"
+       value="{{ tax_id }}"
+       required
+       pattern="[0-9]{8}"
+       maxlength="8">
+      </label>
+      <label>
+        版型<input name="layout" value="{{ layout }}" maxlength="120">
+      </label>
+      <button type="submit">找參考範例</button>
+    </form>
+    {% for reference in references %}
+      <section class="card">
+        <h3>{{ reference.title }} · {{ reference.supplier_name }}</h3>
+        <p>{{ reference.layout }} · {{ reference.writing }}</p>
+        <img src="/showcases/reference/{{ reference.sample_id }}/{{ reference.revision_id }}/file"
+             alt="已啟用參考原圖"
+             class="showcase-image">
+        {% for truth in reference.truths %}<p>{{ truth.path }}：{{ truth.text if truth.state == 'readable' else '空白、不可讀或不適用' }}</p>{% endfor %}
+      </section>
+  {% else %}<p>尚未查詢或沒有適用範例，請保留人工核對，不強行套用。</p>{% endfor %}
+{% endif %}
+{% if collections is defined %}
+  <form method="get" action="/showcases/collections">
+    <label>
+      供應商名稱或統編<input name="q" value="{{ q }}" maxlength="120">
+    </label>
+    <button type="submit">搜尋範例集</button>
+  </form>
+  {% for supplier in collections %}
+    <section class="card">
+      <h2><a href="/showcases/collections/{{ supplier.id }}">{{ supplier.name }}</a></h2>
+      <p>{{ supplier.tax_id }} · 共 {{ supplier.sample_count }} 張 · 已啟用 {{ supplier.active_count }} 張</p>
+      <a href="/suppliers">從正式供應商新增範例</a>
+    </section>
+{% else %}<p>沒有符合條件的供應商範例集。</p>{% endfor %}
+{% if page > 1 %}<a href="{{ previous_url }}">上一頁</a>{% endif %}
+{% if collections | length == 20 %}<a href="{{ next_url }}">下一頁</a>{% endif %}
+{% endif %}
+{% if collection is defined %}
+  <h2>{{ collection.name }}{% if collection.tax_id %}（{{ collection.tax_id }}）{% endif %}</h2>
+  {% if unsupported_country | default(false) %}
+    <p role="status">目前尚未支援此國別的發票範例</p>
+  {% else %}
+  {% if not master_collection %}<p>共 {{ collection.sample_count }} 張獨立範例；已啟用 {{ collection.active_count }} 張。歷史修訂不重複計入張數。</p>{% endif %}
+  <p>建議準備 3～10 張具有不同版型或筆跡的啟用範例；不足 3 張仍可使用，超過 10 張也不刪除。</p>
+  {% if not master_collection %}
+    <p><a href="/suppliers">從正式供應商新增範例</a>；此處保留歷史範例查閱。</p>
+  {% elif can_store_history | default(true) and can_create_showcase %}
+    <a class="btn btn--primary"
+     href="/showcases/new?{{ 'master_supplier_id' if master_collection else 'supplier_id' }}={{ collection.id }}">＋ 加入範例發票</a>
+    <p>新增另一張範例會保留現有範例。</p>
+  {% else %}
+    {% if not can_create_showcase %}<p>目前部門可查看範例；新增範例需由具有新增權限的部門操作。</p>
+    {% else %}<p>可查閱 v2.0 範例。啟用歷程保存後，才能加入或修正範例。</p>{% endif %}
+  {% endif %}
+  <div class="showcase-gallery">
+    {% for item in items %}
+      <section class="card">
+        <h3>{{ item.payload.title }}</h3>
+        {% set latest = item.payload.revisions | last %}
+        {% set invoice = namespace(date='', number='') %}
+        {% for truth in latest.truths | default([]) %}
+          {% if truth.state == 'readable' and truth.path == 'invoice_date' %}{% set invoice.date = truth.text %}{% endif %}
+          {% if truth.state == 'readable' and truth.path == 'invoice_number' %}{% set invoice.number = truth.text %}{% endif %}
+        {% endfor %}
+        <p class="showcase-gallery__invoice-meta">
+          <span>{{ format_invoice_date(invoice.date) if invoice.date else ('日期資料缺漏' if latest.status == 'active' else '日期尚未確認') }}</span>
+          <span>{{ invoice.number or ('發票號碼資料缺漏' if latest.status == 'active' else '發票號碼尚未確認') }}</span>
+        </p>
+        <a href="/showcases/{{ item.id }}">
+          <img src="/showcases/{{ item.id }}/files/{{ latest.id }}"
+               alt="{{ item.payload.title }} 最新修訂預覽"
+               class="showcase-thumbnail"
+               loading="lazy">
+        </a>
+        <p>{{ revision_states[latest.status] }} · {{ latest.layout }} · {{ latest.writing }}</p>
+        {% if latest.status == 'active' and latest.usable is defined and not latest.usable %}<p>供應商已停用或範例已到期。</p>{% endif %}
+        {% if item.payload.active_revision and item.payload.active_revision != latest.id %}<p>上一個啟用版仍可供參考。</p>{% endif %}
+        <a href="/showcases/{{ item.id }}">{{ '檢視／替換此範例' if can_edit_showcase else '檢視範例' }}</a>
+      </section>
+{% else %}<p>目前沒有範例。</p>{% endfor %}
+  </div>
+  {% if page > 1 %}<a href="{{ previous_url }}">上一頁</a>{% endif %}
+  {% if items | length == 20 %}<a href="{{ next_url }}">下一頁</a>{% endif %}
+  {% endif %}
+{% endif %}
+{% if items is defined and collection is not defined %}
+  <form method="get" action="/showcases">
+    <label for="q">供應商名稱、統編或範例名稱</label>
+    <input id="q" name="q" value="{{ q }}" maxlength="120">
+    <label>
+      版型<input name="layout" value="{{ filters.layout }}" maxlength="120">
+    </label>
+    <label>
+      書寫特徵<input name="writing" value="{{ filters.writing }}" maxlength="120">
+    </label>
+    <label>票種<select name="kind"><option value="all">全部支援票種</option><option value="triplicate"
+        {% if filters.kind == 'triplicate' %}selected{% endif %}>三聯式發票</option></select></label>
+    <label>狀態<select name="status"><option value="all">全部</option><option value="active" {% if filters.status == 'active' %}selected{% endif %}>有啟用版本</option><option value="inactive"
+        {% if filters.status == 'inactive' %}selected{% endif %}>尚未啟用或已停用</option></select></label>
+    {% if filters.supplier_id %}<input type="hidden" name="supplier_id" value="{{ filters.supplier_id }}">{% endif %}
+    <button type="submit">搜尋</button>
+    <a href="/showcases">清除條件</a>
+  </form>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>範例</th>
+          <th>供應商</th>
+          <th>統編</th>
+          <th>可用狀態</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td><a href="/showcases/{{ item.id }}">{{ item.payload.title }}</a></td>
+            <td><a href="/showcases/{{ 'by-supplier' if item.payload.master_supplier_id else 'collections' }}/{{ item.payload.supplier_id }}">{{ item.payload.supplier_name }}</a></td>
+            <td>{{ item.payload.tax_id }}</td>
+            <td>
+              {% if item.payload.revisions %}{{ revision_states[(item.payload.revisions | last).status] }}{% else %}{{ '已啟用' if item.payload.active_revision else '待確認' }}{% endif %}
+            </td>
+          </tr>
+{% else %}<tr><td colspan="4">目前沒有符合條件的範例。</td></tr>{% endfor %}
+  </tbody>
+  </table>
+  </div>
+  {% if page > 1 %}<a href="{{ previous_url }}">上一頁</a>{% endif %}
+  {% if items | length == 20 %}<a href="{{ next_url }}">下一頁</a>{% endif %}
+{% endif %}
+{% if row %}
+  {% if not can_edit_showcase %}
+    <section class="card">
+      <h2>範例發票原圖</h2>
+      <p>範例狀態：{{ revision_states[(row.payload.revisions | last).status] }}</p>
+      <img src="/showcases/{{ sample_id }}/files/{{ data.id }}" alt="範例發票原圖" class="showcase-image">
+    </section>
+  {% else %}
+  <section class="card">
+    <h2>原圖與版本</h2>
+    {% if row.read_only %}<p>目前可查閱 v2.0 原圖及欄位。此範例缺少相符的管理歷程，補齊後即可在此修改。</p>{% endif %}
+    <p>目前版本 {{ row.version }}；{{ '有啟用範例' if row.payload.active_revision else '尚無可用範例' }}。替換會保留舊圖。</p>
+    {% if data.master_supplier_id and data.tax_id %}
+      {% if data.v2_example_version %}
+        <p>OCR 範例版本 {{ data.v2_example_version }}。修改原圖或欄位後需重新驗證，才能再供 OCR 取用。</p>
+      {% else %}
+        <p>此為舊版範例。請重新上傳原圖並核對，完成 v2.0 驗證後即可供 OCR 取用。</p>
+      {% endif %}
+    {% endif %}
+    <p><a href="#showcase-status">{{ '調整範例狀態' if row.can_change_status else '查看範例狀態' }}</a></p>
+    {% for revision in row.payload.revisions | reverse %}
+      <details>
+        <summary>版本 {{ row.payload.revisions | length - loop.index0 }} · {{ revision_states[revision.status] }} · {{ revision.created_at }}</summary>
+        <img src="/showcases/{{ sample_id }}/files/{{ revision.id }}"
+             alt="範例原圖版本 {{ loop.index }}"
+             class="showcase-image">
+        <p>建立者：{{ revision.created_by }}；原因：{{ revision.reason }}</p>
+        {% if revision.confirmed_by %}<p>確認者 {{ revision.confirmed_by }} · {{ revision.confirmed_at }}</p>{% endif %}
+        <p>聯別：{{ {'unknown':'未設定','deduction':'扣抵聯','receipt':'收執聯','stub':'存根聯'}.get(revision.copy_type, '未設定') }}；適用期間：{{ revision.valid_from or '未設定' }} ～ {{ revision.valid_to or '未設定' }}</p>
+        <p>人工確認的關鍵欄位：{{ revision.key_fields | default([]) | join('、') or '未指定' }}</p>
+        {% for truth in revision.truths %}<p>{{ truth.path }}：{{ truth.text if truth.state == 'readable' else truth.state }}</p>{% endfor %}
+        {% if revision.recognition %}
+          <details>
+            <summary>原始辨識值</summary>
+            {% for path, value in revision.recognition['values'].items() %}<p>{{ path }}：{{ value }}</p>{% else %}<p>沒有可用辨識值。</p>{% endfor %}
+          </details>
+        {% endif %}
+      </details>
+    {% endfor %}
+  </section>
+  {% endif %}
+{% endif %}
+{% if editing and (can_edit_showcase if row else can_create_showcase) %}
+  <section class="card">
+    <h2>{{ '校對修正' if row else '加入範例發票' }}</h2>
+    <p>選擇單張 JPG／PNG（4 MB 內）後按「上傳並辨識」。左側顯示原圖，右側帶入辨識結果；直接修改欄位並保存，最後到「範例狀態」啟用。</p>
+    {% if not data.master_supplier_id %}<p>歷史範例保留原供應商身分；新增範例請從供應商管理進入。</p>{% endif %}
+    <form method="post"
+          action="/showcases/{{ sample_id }}/save"
+          enctype="multipart/form-data">
+      <input type="hidden" name="version" value="{{ version }}">
+      {% if data.master_supplier_id %}
+        <input type="hidden"
+               name="master_supplier_id"
+               value="{{ data.master_supplier_id }}">
+      {% endif %}
+      <label>
+        範例名稱<input name="title" required maxlength="120" value="{{ data.title }}">
+      </label>
+      <label>
+        供應商名稱<input name="supplier_name"
+       required
+       maxlength="120"
+       value="{{ data.supplier_name }}"
+       readonly>
+      </label>
+      <label>
+        供應商統編<input name="tax_id"
+       readonly
+       pattern="[0-9]{8}"
+       maxlength="8"
+       value="{{ data.tax_id }}">
+      </label>
+      {% if data.master_supplier_id and not data.tax_id %}<p class="muted">此供應商以主檔識別碼保存範例，未使用台灣統編比對。</p>{% endif %}
+      <details>
+        <summary>版型、筆跡及適用資訊</summary>
+        <label>
+          版型<input name="layout" required maxlength="120" value="{{ data.layout }}">
+        </label>
+        <label>
+          筆跡／列印特徵<input name="writing" maxlength="120" value="{{ data.writing }}">
+        </label>
+        <label>
+          聯別<select name="copy_type">
+          {% for value, label in [('unknown','未設定'),('deduction','扣抵聯'),('receipt','收執聯'),('stub','存根聯')] %}
+            <option value="{{ value }}"
+                    {% if data.copy_type | default('unknown') == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+          </select>
+        </label>
+        <label>
+          版型適用開始日期<input type="date" name="valid_from" value="{{ data.valid_from or '' }}">
+        </label>
+        <label>
+          版型適用結束日期<input type="date" name="valid_to" value="{{ data.valid_to or '' }}">
+        </label>
+        <p>此期間描述範例版型的適用範圍，不是發票字軌的有效期；未設定不代表永久適用。</p>
+      </details>
+      <label>{{ '替換原圖（選填）' if row else '範例圖片' }}<input type="file"
+       id="showcase-intake-file"
+       name="image"
+       accept="image/jpeg,image/png"
+       {% if not row %}required{% endif %}></label>
+      <p id="showcase-intake-status" role="status" aria-live="polite">{{ '可保存目前核對值，或選擇新圖重新辨識。' if row else '尚未選圖。選圖後按「上傳並辨識」。' }}</p>
+      {% if row %}<p id="showcase-replacement-note" role="status" hidden>您已選擇新圖。請按「替換圖片並辨識」開始核對新圖。</p>{% endif %}
+      <div class="showcase-review">
+        <aside class="showcase-review__image" id="showcase-review-image">
+          <h3>原圖</h3>
+          {% if not row %}<p id="showcase-image-hint">選圖後會在此預覽；按「上傳並辨識」後進入逐欄核對。</p>{% endif %}
+          <a class="showcase-review__jump" href="#showcase-review-fields">回到核對欄位</a>
+          {% if row %}
+            <a href="/showcases/{{ sample_id }}/files/{{ data.id }}"
+               target="_blank"
+               rel="noopener">另開原圖放大查看</a>
+          {% endif %}
+          <img id="showcase-intake-preview"
+               alt="範例發票原圖"
+               class="showcase-image"
+               {% if row %}src="/showcases/{{ sample_id }}/files/{{ data.id }}"{% else %}hidden{% endif %}>
+        </aside>
+        <div class="showcase-review__fields" id="showcase-review-fields">
+          <h3>校對修正</h3>
+          {% if row %}<a class="showcase-review__jump" href="#showcase-review-image">回到原圖</a>{% endif %}
+          {% if data.recognition and data.recognition.status == "failed" %}
+            <p role="alert">辨識暫未完成，原圖已保存。請依原圖人工核對，或重新選圖辨識。本次修訂尚未啟用。</p>
+            {% if data.recognition.failure_stage == 'ocr' %}<p>失敗階段：影像文字讀取。</p>{% elif data.recognition.failure_stage == 'fields' %}<p>失敗階段：欄位整理。</p>{% endif %}
+          {% endif %}
+          {% if data.recognition and data.recognition.status != "failed" %}
+            <p role="status">辨識已完成，讀取 {{ data.recognition['values'] | length }} 個欄位。請對照左側原圖修改，保存後到「範例狀態」啟用整張範例。</p>
+          {% endif %}
+          {% if not row %}<p>尚未辨識。若要人工建檔，也可直接填寫下方欄位並保存手動草稿。</p>{% endif %}
+          <div id="showcase-fields" class="showcase-correction-fields">
+            {% for field in fields %}
+              <div class="showcase-correction-field" {% if field.path == 'seller_tax_id' %}id="showcase-seller-tax-id"{% endif %}>
+                <label class="showcase-correction-label">{{ field.label }}
+                  <input name="truth_text" maxlength="2000" value="{{ field.text }}" data-ai-original="{{ field.original }}">
+                </label>
+                <p class="showcase-modified"
+                   role="status"
+                   {% if not data.recognition or not field.modified %}hidden{% endif %}>已修改</p>
+                <input type="hidden" name="truth_path" value="{{ field.path }}">
+                <input type="hidden" name="truth_state" value="{{ field.state }}">
+                <p class="showcase-original">{% if field.original %}AI 原值：{{ field.original }}{% elif data.recognition %}AI 未讀取{% endif %}</p>
+              </div>
+            {% endfor %}
+          </div>
+          <button type="button" id="showcase-add-item">增加一列明細</button>
+        </div>
+      </div>
+      <label>
+        建立／更動原因<textarea name="reason" required maxlength="500">{{ '核對並保存範例欄位' if row else data.reason }}</textarea>
+      </label>
+      {% if row %}
+        <button type="submit" id="showcase-save-review">保存核對草稿</button>
+        <button type="submit" name="run_ocr" value="yes">重新辨識原圖／替換圖片並辨識</button>
+      {% else %}
+        <button type="submit" name="run_ocr" value="yes">上傳並辨識</button>
+        <button type="submit">保存手動草稿</button>
+      {% endif %}
+    </form>
+  </section>
+{% endif %}
+{% if row and can_edit_showcase %}
+  <section class="card" id="showcase-status">
+    <div class="showcase-status-control">
+      <h2>範例狀態：{{ revision_states[(row.payload.revisions | last).status] }}</h2>
+      {% if row.can_change_status %}
+        <form method="post" action="/showcases/{{ sample_id }}/status#showcase-status">
+          <input type="hidden" name="version" value="{{ row.version }}">
+          {% if row.payload.active_revision %}
+            <button type="submit" name="command" value="deactivate" class="btn btn--secondary">停用</button>
+          {% else %}
+            <button type="submit" name="command" value="activate" class="btn btn--primary">啟用</button>
+          {% endif %}
+        </form>
+      {% endif %}
+    </div>
+    {% if row.payload.active_revision and row.payload.active_revision != (row.payload.revisions | last).id %}
+      <p>上一個啟用版仍可供參考。</p>
+    {% endif %}
+    {% if status_error %}
+      <p role="alert">{{ status_error }}</p>
+      {% if '賣方統編' in status_error %}
+        <p>請對照原圖，確認賣方統編與供應商主檔相同；如需修改，先保存欄位，再按啟用。</p>
+        <a href="/showcases/{{ sample_id }}#showcase-seller-tax-id">前往核對賣方統編</a>
+      {% endif %}
+    {% endif %}
+    {% if row.can_change_status %}
+      <details>
+        <summary>退回補正</summary>
+        <form method="post" action="/showcases/{{ sample_id }}/status#showcase-status">
+          <input type="hidden" name="version" value="{{ row.version }}">
+          <label>補正原因<input name="reason" value="{{ status_reason | default('') }}" required maxlength="500"></label>
+          <button type="submit" name="command" value="return_for_correction">退回補正</button>
+        </form>
+      </details>
+    {% endif %}
+  </section>
+  {% if row.payload.active_revision and not row.read_only and can_create_showcase %}
+    <section class="card">
+      <h2>測試發票核對</h2>
+      <p>僅測試，不建立正式案件。日期或金額不同不代表錯誤。</p>
+      <form method="post"
+            action="/showcases/{{ sample_id }}/test"
+            enctype="multipart/form-data">
+        <input type="hidden" name="version" value="{{ row.version }}">
+        <label>
+          測試圖片<input type="file"
+       name="image"
+       accept="image/jpeg,image/png"
+       required
+       id="showcase-test-file">
+        </label>
+        <img id="showcase-test-preview"
+             alt="本次測試發票預覽"
+             class="showcase-image"
+             hidden>
+        <label>
+          核對意見<textarea name="note" maxlength="2000"></textarea>
+        </label>
+        <fieldset>
+          <legend>測試 OCR 與範例參考效果</legend>
+          <p>勾選後會執行 Gemini 基線與範例參考辨識，可能產生費用。候選值需由人員核對。</p>
+          <label>
+            <input type="checkbox" name="run_ocr" value="yes">執行測試 OCR 與少量範例參考
+          </label>
+          <label>
+            <input type="checkbox" name="supplier_confirmed" value="yes">我已確認本次測試票的賣方及版型與此範例一致
+          </label>
+          <label>
+            本次測試票日期<input type="date" name="test_date">
+          </label>
+          <label>
+            本次測試票聯別<select name="test_copy_type">
+            <option value="unknown">未指定</option>
+            <option value="deduction">扣抵聯</option>
+            <option value="receipt">收執聯</option>
+            <option value="stub">存根聯</option>
+            </select>
+          </label>
+          <details>
+            <summary>填寫本次測試票的人工答案（選填，供效果驗收）</summary>
+            <p>請核對本次測試圖片，不沿用範例答案。留空表示未提供標準答案，不納入計算；結果採逐字比較。</p>
+            {% for key, label in [('invoice_number','字軌號碼'),('invoice_date','日期'),('seller_tax_id','賣方統編'),('buyer_tax_id','買方統編'),('sales_amount','銷售額'),('tax_amount','稅額'),('total_amount','總計')] %}
+              <label>
+                {{ label }}<input name="gold_{{ key }}" maxlength="2000">
+              </label>
+            {% endfor %}
+          </details>
+        </fieldset>
+        <button type="submit">保存測試與參考版本</button>
+      </form>
+      {% if test_id %}<p role="status">測試紀錄已保存：{{ test_id }}；正式案件未變更。</p>{% endif %}
+      {% if analysis_report %}
+        <h3>本次 OCR 測試結果：{{ analysis_report.status }}</h3>
+        <p>結果與使用的範例版本已保存於操作紀錄。未檢核不代表通過，辨識候選仍需人工核對。</p>
+        <p>{{ analysis_report.reason | default("") }}</p>
+        {% if analysis_report.candidate_values %}
+          <h4>本次辨識候選（待人工核對）</h4>
+          {% for key, value in analysis_report.candidate_values.items() %}<p>{{ key }}：{{ value }}</p>{% endfor %}
+        {% endif %}
+        <h4>獨立檢核結果</h4>
+        {% for check in analysis_report.rules %}<p>{{ check.rule }}：{{ {'pass':'本項通過','review':'需人工核對','not_checked':'尚未檢核'}.get(check.status, check.status) }} · {{ check.message }}</p>{% endfor %}
+        <h4>本次逐字比對效果</h4>
+        {% set baseline_label = "Gemini 基線" if analysis_report.baseline_provider | default("") == "gemini" else "Document AI 基線（歷史）" %}
+        <p>{{ baseline_label }}與範例參考結果分開比較。差異包含模型與提示方式的影響，待修正欄位數與實際人工修改次數分別計算。</p>
+        {% for label, score in [(baseline_label,analysis_report.baseline_metrics),('範例參考流程',analysis_report.enhanced_metrics)] %}
+          <p>
+            {{ label }}：
+            {% if score.status == "evaluated" %}
+              共 {{ score.fields }} 個人工標註欄位，正確 {{ score.correct }} 個、漏欄 {{ score.missing }} 個、待核對修正 {{ score.fields_needing_correction }} 個；正確率 {{ (score.accuracy * 100) | round(1) }}%，漏欄率 {{ (score.missing_rate * 100) | round(1) }}%。
+        {% else %}尚未評估 · {{ score.reason }}{% endif %}
+          </p>
+        {% endfor %}
+        <h4>本次選用的固定範例版本</h4>
+        {% for used in analysis_report.selected_examples %}<p>範例 {{ used.sample_id }} · 版本 {{ used.revision_id }}</p>{% else %}<p>無適用範例。</p>{% endfor %}
+      {% endif %}
+    </section>
+  {% endif %}
+  {% if can_edit_showcase %}<section class="card">
+    <h2>操作紀錄（最近 200 筆）</h2>
+    {% for event in row.history %}
+      <p>{{ event.occurred_at }} · {{ event.actor_id }} · {{ event.action }} · 版本 {{ event.version }}</p>
+      <p>{{ event.reason }}</p>
+      <pre>{{ event.details | tojson(indent=2) }}</pre>
+    {% endfor %}
+  </section>{% endif %}
+{% endif %}
+{% if row and can_edit_showcase %}
+  <section class="card">
+    <h2>已保存測試（最近 20 筆）</h2>
+    {% for test in row.tests %}
+      <h3>{{ test.created_at }}</h3>
+      <div class="showcase-compare">
+        <figure>
+          <img src="/showcases/{{ sample_id }}/tests/{{ test.id }}/file"
+               alt="測試發票"
+               class="showcase-image">
+          <figcaption>測試發票</figcaption>
+        </figure>
+        <figure>
+          <img src="/showcases/{{ sample_id }}/files/{{ test.revision_id }}"
+               alt="當時參考範例"
+               class="showcase-image">
+          <figcaption>當時參考範例</figcaption>
+        </figure>
+      </div>
+      <p>{{ test.note }}</p>
+{% else %}<p>尚無測試紀錄。</p>{% endfor %}
+  </section>
+{% endif %}
+<link rel="stylesheet" href="{{ static_url('css/pages/showcases.css') }}">
+<script src="{{ static_url('js/showcases.js') }}" defer></script>
+{% endblock %}

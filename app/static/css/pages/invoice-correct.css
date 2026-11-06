@@ -1,0 +1,7 @@
+/* 退回補正頁（/invoices/{id}/correct）專用樣式；只由 pages/invoices/correct.html 載入。
+   全站 .btn 設了 display: inline-flex，會蓋過瀏覽器對 [hidden] 的預設 display: none，
+   所以 invoice-correct.js 用 hidden 屬性切換的按鈕（重試、終止）必須在本頁明確隱藏。
+   範圍限定在 #correct-page 之內，不影響其他頁面的 .btn。 */
+#correct-page .btn[hidden] {
+  display: none;
+}

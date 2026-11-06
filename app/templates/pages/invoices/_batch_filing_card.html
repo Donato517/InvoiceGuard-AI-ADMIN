@@ -11,7 +11,11 @@
       公司資料未通過檢核，無法產生申報檔：{{ batch_filing.company_issues | join("、") }}
     </div>
   {% endif %}
-  <form id="batch-filing-form" method="post" action="/invoices/filing/export">
+  {# 成功時回傳檔案下載、不換頁，所以不顯示處理中遮罩（data-busy=""），否則遮罩會一直留著 #}
+  <form id="batch-filing-form"
+        method="post"
+        action="/invoices/filing/export"
+        data-busy="">
     <div class="filing-controls">
       <div class="field">
         <label for="filing-period">申報所屬期</label>

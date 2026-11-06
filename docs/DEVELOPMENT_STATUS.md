@@ -197,6 +197,16 @@ D 槽實際合併後回歸：889 passed、9 skipped、1 warning，124.72s，exit
 - 本批新增離線案例 47 個；既有來源測試移除臨時閘門 override，真正測本機免登入；原 12 個本機封閉測試改驗雲端仍封閉，依據為使用者明確變更，不放寬共用封網 fixture、checker 或快照。
 - 仍未驗：正式 DB 欄位／RLS／鎖競爭、真實瀏覽器操作、B 登入與切換部門、G 主管 owner／委派／資料範圍及正式 audit。未造角色表、owner 欄位、Session、測試模式或操作者 UUID；登入仍可能 503。使用方式及跨組待辦見 E-FUNCTION-PAGES.md。
 
+2026-11-05 採購在 ADMIN 補正被財務退回的案件（方案 B，分支 `feature/admin-invoice-return-correction`，基底 origin/main `2047931`，**本機改動、尚未 Commit；離線 MockTransport 單元測試，未對真實 API／資料庫實測**）：
+- 新增 `GET/POST /invoices/{id}/correct`、`POST /invoices/{id}/correct/void`（`app/routers/invoice_correction.py`）。發票管理列表中，本人提交且資料庫狀態為 `returned_to_applicant` 的案件按鈕顯示「補正」，留在 ADMIN。
+- 補正頁以使用者自己的 API Session Token 呼叫 API `GET return-items`、`POST resubmit`、`POST void`（`ApiIntakeClient`，`app/services/invoice_correction_service.py`）。可編輯欄位完全取自 API 的 `editable_fields`；欄位白名單、輪次（`expected_round`）、冪等鍵、圖片退件、明細結構與修改歷程都由 API 判斷與保存，ADMIN 不複製規則。
+- 重送與作廢逾時、結果不明（`ambiguous`）時不自動重送；瀏覽器以同一把冪等鍵重試。圖片退件只顯示退回原因與「終止並重新上傳」，終止走 API `/void`，不代表新案件已建立。
+- 步驟 3 對資料庫案件不再顯示終止表單，改連補正頁。舊的 `POST /invoices/{id}/procurement/terminate` 對資料庫案件改呼叫 API `/void`（需帶 `expected_round`，缺少則拒絕；不再直寫資料庫、不再讀取審核資料）；示範發票仍走記憶體流程。
+- 未驗證：正式 DB 是否已有補正結構（API 文件記載 2026-11-04 手動建立，未實測）、雲端 API 是否已部署補正端點、API Token 有效期限、本機無法登入故無端對端操作。
+- **已知限制（跨組整合缺口，未解決）——多部門使用者切換 ADMIN 部門後，補正可能被 API 拒絕**：API Token 在 ADMIN 登入時向 API 換發，其部門固定為登入當下的「主要部門」（API `auth_service.login`）；API 沒有切換部門的端點，ADMIN 的 `/switch-department` 只更新網站 Session、不會更新或換發 API Token。API 的 `get_own_invoice` 以「提交者＝登入者且案件部門＝該 Token 的部門」判斷，所以切換到別的部門後，補正頁（`return-items`／`resubmit`）與終止（`void`）仍以登入時的部門檢查，案件不在該部門時會得到 404，畫面顯示找不到或無權操作。重新登入可取得符合主要部門的 Token。
+- 「補正」按鈕的條件是資料庫狀態 `returned_to_applicant`、案件提交者為目前登入者、案件 ID 為 UUID；**刻意不比對部門**（含財務部門的原提交者），因為 ADMIN 選取部門與 API Token 部門可能不同步，比對 ADMIN 部門反而可能與 API 相反。因此多部門使用者可能看到點進去被拒絕的按鈕，部門的最後檢查一律由 API 負責。
+- 後續：另行評估 API 提供部門同步（切換部門或換發 Token）的方案；本分支未修改 API 登入、Token、Session 或共用授權，也未以 ADMIN 端的比對掩蓋此問題。
+
 2026-11-03 申請人端「退回補正（顯示）」與「終止」改讀寫資料庫（**本機改動、尚未 Commit；離線替身測試，SQL 未在真實 PostgreSQL 驗證**）：
 - 範圍：只針對從資料庫讀到的案件；示範發票仍走記憶體流程。
 - 退回補正（顯示）：步驟 3 對待補正的資料庫案件顯示真實的退回項目（財務退回時寫入的 `invoice_field_reviews.review_comment` 與 `invoice_status_history.reason`），不再顯示舊的示範修改表單；非待補正的資料庫案件顯示唯讀說明。
@@ -250,3 +260,16 @@ ADMIN 人工驗收修正（2026-11-05，分支 `fix/admin-bdc-acceptance`；細�
 - **統編檢查碼**：`static/js/tax-id.js`（與 API、前台同演算法與共用向量）；檢查碼不符顯示 ⚠ 警示，不顯示綠勾或綠框，不阻擋送出；買受人與銷貨人都檢查。
 - **重新上傳**：核對頁的「重新上傳」改為 `POST /invoices/{id}/flow/discard`：刪除這份尚未提交的草稿（辨識結果、核對資料、暫存影像），再導向 `/invoices/new` 開全新草稿回到選檔步驟；准入為登入＋inv.upload VIEW＋同源＋草稿上傳者本人，不要求 inv.intake；不呼叫 API、不碰資料庫與 Storage（API 端已存的影像與辨識紀錄不在此刪除）；已提交的草稿、清單或資料庫案件、已不存在的 id 一律不刪、直接導向新流程。新草稿 id 一律 `uuid4()`（原本由清單數字 id 推算，會撞號覆蓋草稿）。
 - **未驗證**：真實瀏覽器與真實 API 端到端；`inv.upload`／`inv.intake` 的 CREATE 是否另用於上傳准入待團隊確認。
+
+## 2026-11-06 一般部門問答交付
+
+原因：一般同仁需要依目前部門已配置的來源提問，不能借用資訊部維護資格。
+結論：新增 `/knowledge-qa` 及 `rag_qa` 查看權，重用既有 RAG 服務與部門 SQL；每題重查來源，保留同源與切換部門後舊頁面拒絕。既有管理與資訊部測試頁保留。
+驗證：提交前重新執行分層、相關 pytest、格式及樣板檢查；實際指令結果記錄於交付驗收。正式搜尋、Preview 與模型回答品質未在本次發布前驗收。使用方式見 DEPARTMENT-RAG-QA.md。
+
+## 2026-11-06 Show Case 交付
+
+原因：上傳核對需要可追溯的供應商範例，但範例不應直接改寫本次發票，也不應另建第二份供應商主檔。
+結論：ADMIN 維護與人工確認、API 提供有效範例、前台另開唯讀參考。新範例綁定正式供應商，原圖與歷程保留；逐次驗權、版本衝突、來源 SHA-256 與失敗回滾由既有分層處理。正式發票換算／檢核流程保留。
+界線：結構版本檔是待 DB 負責人審查的定義，沒有套用正式 migration。正式範例表與私有歷程擴充須依團隊手動 SQL 流程核對；無權限或缺表時拒絕，不以假成功取代。模型比較、真實角色與 Storage、獨立 PostgreSQL 多連線及 Preview 仍待驗收。
+說明見 FEATURE-DELIVERY-20261106.md；提交前的實際驗證結果另補 TEST_REPORT。

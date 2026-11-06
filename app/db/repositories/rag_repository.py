@@ -8,6 +8,7 @@
 """
 
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -60,6 +61,27 @@ UPDATE_KNOWLEDGE_BASE_REVIEW = text("""
         review_comment = :review_comment,
         updated_at = now()
     WHERE knowledge_base_id = CAST(:id AS uuid)
+""")
+# 查無資料次數（Schema v2.0 rag_no_answer_stats）：只有每日、每個知識庫的次數，不存問題、回答或使用者
+INCREMENT_NO_ANSWER = text("""
+    INSERT INTO public.rag_no_answer_stats (stat_date, knowledge_base_id, no_answer_count)
+    VALUES (CAST(:stat_date AS date), CAST(:id AS uuid), 1)
+    ON CONFLICT (stat_date, knowledge_base_id) DO UPDATE
+    SET no_answer_count = public.rag_no_answer_stats.no_answer_count + 1,
+        updated_at = pg_catalog.clock_timestamp()
+""")
+SUM_NO_ANSWER_SINCE = text("""
+    SELECT knowledge_base_id::text AS knowledge_base_id, SUM(no_answer_count)::integer AS total
+    FROM public.rag_no_answer_stats
+    WHERE stat_date >= CAST(:since AS date)
+    GROUP BY knowledge_base_id
+""")
+NO_ANSWER_TABLE_EXISTS = text("SELECT to_regclass('public.rag_no_answer_stats') IS NOT NULL")
+LIST_QA_KNOWLEDGE_BASE_IDS = text("""
+    SELECT knowledge_base_id::text AS knowledge_base_id
+    FROM public.rag_department_access
+    WHERE department_id = CAST(:department_id AS uuid) AND use_for_qa
+    ORDER BY knowledge_base_id
 """)
 LIST_ACCESS = text(
     f"SELECT {_ACCESS_COLUMNS} FROM public.rag_department_access ORDER BY department_id"
@@ -840,3 +862,70 @@ def get_department_code(db: Session, department_id: str) -> str | None:
     """依部門 UUID 讀取代碼，含已停用部門（既有檔案的上傳部門可能已停用）。"""
     value = db.execute(GET_DEPARTMENT_CODE, {"id": department_id}).scalar_one_or_none()
     return None if value is None else str(value)
+
+
+def list_qa_knowledge_base_ids(db: Session, department_id: str) -> list[str]:
+    """列出部門選用問答的知識庫（查無資料次數依此記錄）。"""
+    rows = db.execute(LIST_QA_KNOWLEDGE_BASE_IDS, {"department_id": department_id}).mappings()
+    return [row["knowledge_base_id"] for row in rows]
+
+
+def increment_no_answer(db: Session, knowledge_base_ids: Sequence[str], stat_date: date) -> None:
+    """當日每個知識庫的查無資料次數各加 1；依 ID 排序寫入避免互鎖，不 commit。"""
+    for knowledge_base_id in sorted(set(knowledge_base_ids)):
+        db.execute(INCREMENT_NO_ANSWER, {"stat_date": stat_date, "id": knowledge_base_id})
+
+
+def sum_no_answer_since(db: Session, since: date) -> dict[str, int]:
+    """各知識庫自 since（含）起的查無資料次數；資料表不存在時回空（不影響列表）。"""
+    if not db.execute(NO_ANSWER_TABLE_EXISTS).scalar_one():
+        return {}
+    rows = db.execute(SUM_NO_ANSWER_SINCE, {"since": since}).mappings()
+    return {row["knowledge_base_id"]: int(row["total"] or 0) for row in rows}
+
+
+LIST_QA_CHOICES = text("""
+    SELECT DISTINCT kb.knowledge_base_id::text AS id, kb.knowledge_name AS title
+    FROM public.v_user_department_rag_access va
+    JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = va.knowledge_base_id
+    WHERE va.user_id = CAST(:user_id AS uuid)
+      AND va.department_id = CAST(:department_id AS uuid)
+      AND va.can_read AND va.use_for_qa
+      AND kb.approval_status = 'approved' AND kb.is_active AND kb.file_count >= 1
+    ORDER BY title, id
+""")
+
+
+def list_qa_choices(db: Session, user_id: UUID, department_id: UUID) -> list[dict[str, str]]:
+    """只列本人目前部門可用的問答知識庫，不回傳其他部門名稱。"""
+    return [
+        dict(row)
+        for row in db.execute(
+            LIST_QA_CHOICES, {"user_id": str(user_id), "department_id": str(department_id)}
+        ).mappings()
+    ]
+
+
+def qa_department_status(db: Session, user_id: UUID, department_id: UUID) -> list[dict[str, Any]]:
+    """唯讀診斷本人目前部門已開放閱讀的知識庫，不回傳其他部門或未授權來源。"""
+    statement = text("""
+        SELECT kb.knowledge_base_id::text AS id, kb.knowledge_name AS title,
+               da.use_for_qa AS selected,
+               (kb.approval_status = 'approved' AND kb.is_active AND kb.file_count >= 1) AS eligible
+        FROM public.v_user_departments ud
+        JOIN public.rag_department_access da ON da.department_id = ud.department_id AND da.can_read
+        JOIN public.rag_knowledge_bases kb ON kb.knowledge_base_id = da.knowledge_base_id
+        WHERE ud.user_id = CAST(:user_id AS uuid)
+          AND ud.department_id = CAST(:department_id AS uuid)
+        ORDER BY kb.knowledge_name, kb.knowledge_base_id
+    """)
+    return [
+        dict(row)
+        for row in db.execute(
+            statement,
+            {
+                "user_id": str(user_id),
+                "department_id": str(department_id),
+            },
+        ).mappings()
+    ]

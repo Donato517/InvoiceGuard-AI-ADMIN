@@ -16,6 +16,7 @@
 .supplier-demo-lines { white-space: pre-line; margin-bottom: 0; }
 .supplier-demo-actions { display: flex; gap: .75rem; padding-bottom: 2rem; }
 .supplier-demo-sidebar { width: auto; }
+.table .supplier-showcase-column { width: 7.5rem; text-align: center; white-space: nowrap; }
 @media (max-width: 768px) {
   .supplier-demo-grid { grid-template-columns: 1fr; }
   .supplier-demo-details > div { grid-template-columns: 1fr; gap: .25rem; }

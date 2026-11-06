@@ -19,6 +19,7 @@ from app.schemas.e_function_settings import (
     FunctionListQuery,
     FunctionStatusInput,
 )
+from app.schemas.showcase import ACTIVATE_CODE, CATALOG_CODE
 from app.services import e_function_settings_service as service
 from app.services.e_registry import REGISTRY
 
@@ -54,6 +55,7 @@ def _render(
         "pages/e_function_settings/" + name,
         {
             "registered_codes": {item.code for item in REGISTRY},
+            "showcase_codes": {CATALOG_CODE, ACTIVATE_CODE},
             "builtin_welcome_code": WELCOME_CODE,
             **values,
         },

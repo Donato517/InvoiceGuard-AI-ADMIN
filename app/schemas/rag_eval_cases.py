@@ -10,7 +10,7 @@
 
 from dataclasses import dataclass
 
-# 預期格式：概念格式（白話說明…）、步驟格式（你可以這樣做…）；空字串代表不檢查
+# 預期格式：概念格式（主要差別／重點…）、步驟格式（你可以這樣做…）；空字串代表不檢查
 FORMAT_CONCEPT = "concept"
 FORMAT_STEPS = "steps"
 

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_engine
 from app.utils.account_display import account_display
+from app.utils.format import TAIPEI_TZ
 
 # Service 以此捕捉資料庫例外（Service 不直接依賴 SQLAlchemy）
 DatabaseError = SQLAlchemyError
@@ -43,7 +44,8 @@ SELECT_INVOICES = text("""
            i.department_id::text AS department_id,
            d.department_name,
            f.original_filename,
-           f.mime_type
+           f.mime_type,
+           it.item_names
     FROM public.invoices i
     LEFT JOIN public.user_profiles p ON p.user_id = i.submitted_by
     LEFT JOIN public.departments d ON d.department_id = i.department_id
@@ -54,6 +56,12 @@ SELECT_INVOICES = text("""
         ORDER BY is_current DESC, version_no DESC
         LIMIT 1
     ) f ON true
+    -- 列表的「品名項目」：依明細順序以「、」串接（2026-11-06：原本沒讀明細，品名一律空白）
+    LEFT JOIN LATERAL (
+        SELECT string_agg(item_name, '、' ORDER BY line_no) AS item_names
+        FROM public.invoice_items
+        WHERE invoice_id = i.invoice_id AND COALESCE(btrim(item_name), '') <> ''
+    ) it ON true
     WHERE (CAST(:is_finance AS boolean) = true OR i.submitted_by::text = CAST(:user_id AS text))
       AND (CAST(:status AS text) IS NULL OR i.status = CAST(:status AS text))
       AND (
@@ -61,7 +69,8 @@ SELECT_INVOICES = text("""
           COALESCE(i.invoice_track, '') || COALESCE(i.invoice_number, '')
               ILIKE CAST(:q_like AS text) OR
           COALESCE(i.seller_name, '') ILIKE CAST(:q_like AS text) OR
-          COALESCE(i.buyer_name, '') ILIKE CAST(:q_like AS text)
+          COALESCE(i.buyer_name, '') ILIKE CAST(:q_like AS text) OR
+          COALESCE(it.item_names, '') ILIKE CAST(:q_like AS text)
       )
     ORDER BY i.submitted_at DESC NULLS LAST, i.created_at DESC
 """)
@@ -157,6 +166,15 @@ def _format_date(val: Any) -> str:
     return str(val)
 
 
+def _format_taipei_date(val: Any) -> str:
+    """timestamptz → 台灣日期（民國年 YYY/MM/DD）；沒有時區的值視為已是台灣時間。"""
+    if not val or not hasattr(val, "year"):
+        return _format_date(val)
+    if getattr(val, "tzinfo", None) is not None:
+        val = val.astimezone(TAIPEI_TZ)
+    return _format_date(val.date() if hasattr(val, "date") else val)
+
+
 def _row_to_invoice_dict(
     row: dict[str, Any], items: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
@@ -201,7 +219,8 @@ def _row_to_invoice_dict(
         tax_category = "應稅"
         tax_type = "1 - 應稅"
 
-    item_desc = ""
+    # 列表查詢不讀整份明細，只帶 item_names（SELECT_INVOICES）；單筆查詢傳入 items
+    item_desc = str(row.get("item_names") or "")
     qty = 1
     unit_p = int(row.get("sales_amount") or 0)
     amt = int(row.get("sales_amount") or 0)
@@ -222,6 +241,8 @@ def _row_to_invoice_dict(
         "format_identification": row.get("format_identification") or "",
         "invoice_number": invoice_number,
         "invoice_date": _format_date(row.get("invoice_date")),
+        # 上傳日期＝案件建立日（台灣日期，民國年）；草稿沒有送出時間，所以用建立時間
+        "uploaded_date": _format_taipei_date(row.get("created_at")),
         "buyer_name": row.get("buyer_name") or "",
         "seller_name": row.get("seller_name") or "",
         "seller_tax_id": row.get("seller_tax_id") or "",
@@ -239,6 +260,7 @@ def _row_to_invoice_dict(
         "stage": stage,
         "status": view_status,
         "review_status": review_status,
+        "db_status": status_raw,  # 資料庫的原始簽核狀態（列表判斷是否顯示「補正」用；示範資料沒有此欄位）
         "is_completed": is_completed,
         "file_name": row.get("original_filename"),
         "file_media_type": row.get("mime_type") or "image/jpeg",

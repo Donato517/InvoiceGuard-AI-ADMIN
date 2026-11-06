@@ -46,6 +46,7 @@ GRANTS = "sys.department-permissions"
 INVOICES = "inv.upload"
 INTAKE = "inv.intake"
 KNOWLEDGE = "rag.manager"
+KNOWLEDGE_QA = "rag.qa"
 
 
 @dataclass
@@ -347,6 +348,22 @@ def get_e_module() -> EModule:
     registry = tuple(
         replace(item, route=routes.get(item.code, item.route)) for item in REGISTRY
     ) + (
+        Capability(
+            "supplier.showcase",
+            "供應商 Show Case 管理",
+            "供應商管理",
+            "/showcases",
+            frozenset({Action.VIEW, Action.CREATE, Action.EDIT}),
+            system_only=False,
+        ),
+        Capability(
+            "supplier.showcase-activation",
+            "Show Case 啟用管理",
+            "供應商管理",
+            "/showcases",
+            frozenset({Action.VIEW, Action.EDIT}),
+            system_only=False,
+        ),
         Capability("sys.accounts", "帳號管理", "系統管理", "/accounts", frozenset(Action)),
         Capability(
             INVOICES,
@@ -370,6 +387,15 @@ def get_e_module() -> EModule:
             "知識庫",
             "/knowledge",
             frozenset(Action),
+            system_only=False,
+        ),
+        Capability(
+            KNOWLEDGE_QA,
+            "RAG知識庫問答",
+            "知識庫",
+            "/knowledge-qa",
+            frozenset({Action.VIEW}),
+            management=False,
             system_only=False,
         ),
     )

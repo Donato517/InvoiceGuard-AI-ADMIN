@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import ValidationError
 
 from app.constants import INVOICE_FLOW_STEPS, INVOICE_STATUS_LABEL
 from app.core.deps import require_admin
@@ -55,6 +56,7 @@ from app.schemas.intake import (
     IntakeNotConfiguredError,
     IntakeTransportError,
 )
+from app.schemas.invoice_correction import CorrectionVoid
 from app.schemas.procurement_case import (
     ATTACHMENT_FIELD,
     RESPONSE_ACTIONS,
@@ -65,6 +67,7 @@ from app.schemas.procurement_case import (
     TerminatePlan,
 )
 from app.services import finance_review_db_service as finance_db
+from app.services import invoice_correction_service as correction_service
 from app.services import invoice_intake_mapping as intake_mapping
 from app.services import invoice_intake_service as intake_service
 from app.services import invoice_review_service
@@ -99,6 +102,7 @@ from app.services.procurement_case_service import (
     prepare_terminate,
 )
 from app.utils.account_display import account_display, is_same_user
+from app.utils.list_paging import page_url, paginate
 
 Module = Annotated[EModule, Depends(get_e_module)]
 
@@ -663,7 +667,24 @@ def _create_draft_invoice(invoice_id: str, uploaded_by: str = "1") -> dict[str, 
     )
 
 
-def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
+def _step1_owner(request: Request) -> str:
+    """步驟 1 補出的空草稿的上傳者：目前登入的使用者（不是固定的 "1"）。"""
+    return str(getattr(request.state, "invoice_user_id", "1"))
+
+
+def _find_flow_invoice(
+    invoice_id: Any, *, owner: str | None = None, persist: bool = True
+) -> dict[str, Any] | None:
+    """依 id 找流程用的發票（草稿、清單或資料庫）。
+
+    草稿只存在單一實例的記憶體，下一個請求可能落在沒有這份草稿的實例。找不到草稿、也不是清單或資料庫的案件時，
+    若 id 是有效 UUID，就補一份空草稿（沒有任何內容）：
+    - owner：草稿的上傳者。只有步驟 1（選檔與上傳）傳入目前使用者，否則上傳者預設為 "1"，一般員工會被擋成 403。
+      已存在的草稿（含別人的）一律照原樣返回，不會被接手或覆寫；清單與資料庫的案件也不會被轉成草稿。
+    - persist：是否把補出的空草稿寫進 _DRAFT_INVOICE_STORE。步驟 1 的 GET 只需要顯示選檔頁，傳 False，
+      單純開頁不留下無用的空草稿；真正上傳（POST flow/upload）與其他呼叫端維持寫入（預設 True）。
+    其他呼叫端不傳這兩個參數，行為與以前完全相同。
+    """
     _validate_invoice_id(invoice_id)
     draft = _DRAFT_INVOICE_STORE.get(invoice_id)
     if draft is not None:
@@ -678,8 +699,9 @@ def _find_flow_invoice(invoice_id: Any) -> dict[str, Any] | None:
     # 若為有效 UUID 但尚未寫入資料庫（如伺服器重啟或剛進入流程的草稿），自動建立記憶體草稿，避免 404
     try:
         UUID(str(invoice_id))
-        draft = _create_draft_invoice(str(invoice_id))
-        _DRAFT_INVOICE_STORE[str(invoice_id)] = draft
+        draft = _create_draft_invoice(str(invoice_id), uploaded_by=owner or "1")
+        if persist:
+            _DRAFT_INVOICE_STORE[str(invoice_id)] = draft
         return draft
     except (ValueError, TypeError, AttributeError):
         return None
@@ -693,6 +715,7 @@ def _build_flow_steps(
     max_stage: int = 9,
     has_file_bytes: bool = False,
     allowed_max_step: int = 9,
+    blocked_steps: frozenset[int] = frozenset(),
 ) -> list[dict[str, Any]]:
     """建立發票作業步驟的中繼資料（非財務部僅顯示前 4 步驟，不顯示步驟 5～9；步驟 2「AI OCR 辨識」已整合至步驟 3 故自步驟列移除）。"""
     steps = []
@@ -712,7 +735,10 @@ def _build_flow_steps(
 
         # 因資安考量不儲存發票影像，已完成核對修正且無暫存圖檔時，步驟 1 僅顯示完成勾號不再連結返回
         can_navigate = (
-            state != "locked" and idx <= allowed_max_step and (has_file_bytes or idx >= 3)
+            state != "locked"
+            and idx <= allowed_max_step
+            and idx not in blocked_steps
+            and (has_file_bytes or idx >= 3)
         )
         steps.append(
             {
@@ -783,15 +809,25 @@ def _build_voucher(invoice: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _purge_submitted_drafts_of(user_id: str) -> None:
+    """移除指定使用者「已提交」的草稿；未提交的草稿與別人的草稿一律不動。"""
+    for key, draft in list(_DRAFT_INVOICE_STORE.items()):
+        if draft.get("submitted_invoice_id") and str(draft.get("uploaded_by", "")) == user_id:
+            _DRAFT_INVOICE_STORE.pop(key, None)
+
+
 def _render_invoice_list_view(
     request: Request,
     *,
     section: str = "invoices",
     status: str | None = None,
     q: str = "",
+    page: int = 1,
 ) -> HTMLResponse:
-    _DRAFT_INVOICE_STORE.clear()
     current_user_id = str(getattr(request.state, "invoice_user_id", "1"))
+    # 草稿只存在伺服器記憶體、所有使用者共用同一個字典：絕不能整個清空（會刪掉別人尚未提交的草稿）。
+    # 只順便清掉「自己、已提交」的草稿：案件已在資料庫、影像已移除，使用者離開步驟 4 前往清單後就不再需要。
+    _purge_submitted_drafts_of(current_user_id)
     is_finance = bool(getattr(request.state, "is_finance_workspace", False))
     section_config = {
         "invoices": (
@@ -824,6 +860,13 @@ def _render_invoice_list_view(
         status_code = _derive_invoice_status(i)
         i["display_status_code"] = status_code
         i["display_status_label"] = INVOICE_STATUS_MAP.get(status_code, "待審核")
+        # 「補正」按鈕：只給資料庫裡真正被退回申請人、且是本人提交的案件；示範資料沒有 db_status。
+        # 這只決定按鈕，真正的補正資格（原提交者、部門、輪次）進補正頁時仍由 API 判斷。
+        i["can_correct"] = (
+            i.get("db_status") == "returned_to_applicant"
+            and str(i.get("uploaded_by", "")) == current_user_id
+            and finance_db.is_uuid(str(i["id"]))
+        )
     invoices = list(base_invoices)
 
     if status:
@@ -882,11 +925,21 @@ def _render_invoice_list_view(
         "flagged": flagged_count,
     }
 
+    # 每頁 30 筆（2026-11-06）；統計卡用上面的完整清單，不受分頁影響
+    paged = paginate(invoices, page)
+    page_urls = {
+        number: page_url(active_route, number, q=q.strip() or None, status=status)
+        for number in {*(n for n in paged.links if n), paged.page - 1, paged.page + 1}
+        if 1 <= number <= paged.pages
+    }
+
     return templates.TemplateResponse(
         request,
         "pages/invoices/list.html",
         {
-            "invoices": invoices,
+            "invoices": list(paged.items),
+            "paging": paged,
+            "page_urls": page_urls,
             "status": status,
             "q": q,
             "counts": counts,
@@ -905,9 +958,10 @@ def invoice_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🗂️ 發票管理列表：財務部可檢視所有發票，非財務部僅限檢視本人上傳發票。"""
-    return _render_invoice_list_view(request, section="invoices", status=status, q=q)
+    """🗂️ 發票管理列表：財務部可檢視所有發票，非財務部僅限檢視本人上傳發票；每頁 30 筆。"""
+    return _render_invoice_list_view(request, section="invoices", status=status, q=q, page=page)
 
 
 @router.get("/upload")
@@ -921,11 +975,12 @@ def invoice_review_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🔍 財會檢核列表（僅財務部工作區開放）。"""
+    """🔍 財會檢核列表（僅財務部工作區開放）；每頁 30 筆。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
-    return _render_invoice_list_view(request, section="review", status=status, q=q)
+    return _render_invoice_list_view(request, section="review", status=status, q=q, page=page)
 
 
 # ---- 申報檔（F09）----
@@ -951,7 +1006,9 @@ def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
     """將示範發票轉為 F09 讀取的 Schema v1.5 欄位，缺值不補預設，交由 F09 檢核。"""
     # TODO(StacieChen): 接上資料庫後改由 repository 讀 invoices，刪除此轉換
     number = str(invoice.get("invoice_number") or "").strip().upper()
-    approved = invoice.get("review_status") == "approved" or invoice.get("status") == "passed"
+    # 只認正式財務核准。status == "passed" 只是「資料檢視通過」，資料庫待審（pending_*）案件也是 passed，
+    # 不能當成核准；是否核准一律看 review_status，F09 才會對未核准案件回報 NOT_APPROVED。
+    approved = invoice.get("review_status") == "approved"
     deduction = str(invoice.get("deduction_code") or "").strip()[:1]
     category = invoice.get("tax_category")
     return {
@@ -1198,11 +1255,12 @@ def invoice_voucher_list(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     q: Annotated[str, Query()] = "",
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
 ) -> HTMLResponse:
-    """🧾 會計傳票列表（僅財務部工作區開放）。"""
+    """🧾 會計傳票列表（僅財務部工作區開放）；每頁 30 筆。"""
     if getattr(request.state, "invoice_max_step", 9) < 9:
         raise DeniedError
-    return _render_invoice_list_view(request, section="voucher", status=status, q=q)
+    return _render_invoice_list_view(request, section="voucher", status=status, q=q, page=page)
 
 
 @router.get("/new")
@@ -1238,6 +1296,18 @@ def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
     )
 
 
+# 使用者已確認本人上傳者不得查看／推進的步驟；步驟 7～9 的本人規則待會計確認，這裡不新增（沿用主線）
+_SELF_BLOCKED_STEPS = frozenset({5, 6})
+
+
+def _deny_self_finance_view(request: Request, invoice: dict[str, Any], step: int) -> None:
+    """本人上傳者不得查看步驟 5、6（2026-11-06 使用者確認，取代「可檢視」的舊設計）。"""
+    if step in _SELF_BLOCKED_STEPS and _is_self_upload(
+        invoice.get("uploaded_by"), _reviewer_id(request)
+    ):
+        raise DeniedError
+
+
 def _render_flow_page(
     request: Request,
     invoice: dict[str, Any],
@@ -1247,10 +1317,12 @@ def _render_flow_page(
     procurement_errors: list[str] | None = None,
     period: str | None = None,
 ) -> HTMLResponse:
+    _deny_self_finance_view(request, invoice, step)  # 錯誤重繪等內部路徑也不得呈現本人不可看的步驟
     _ensure_invoice_14_fields(invoice)
     fields_14 = _build_14_fields_rows(invoice)
     invoice_id = str(invoice["id"])
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
+    is_self_upload = _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request))
     if (
         invoice.get("review_status") == "returned"
         or invoice.get("status") in ("returned", "returned_to_applicant", "returned_to_accounting")
@@ -1272,6 +1344,7 @@ def _render_flow_page(
         max_stage=int(invoice.get("stage", step)),
         has_file_bytes=bool(invoice.get("file_bytes") or invoice.get("file_name")),
         allowed_max_step=max_flow_step,
+        blocked_steps=_SELF_BLOCKED_STEPS if is_self_upload else frozenset(),
     )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
@@ -1316,6 +1389,8 @@ def _render_flow_page(
             "is_first_four_readonly": is_first_four_readonly,
             "intake": _intake_view(invoice),
             "db_invoice": _is_db_invoice(invoice),
+            "is_self_upload": is_self_upload,
+            "persist_first_four": invoice_id not in _DRAFT_INVOICE_STORE,
         },
     )
 
@@ -1331,10 +1406,16 @@ def invoice_flow(
     max_flow_step = getattr(request.state, "invoice_max_step", 9)
     if step > max_flow_step:
         raise DeniedError
-    invoice = _find_flow_invoice(invoice_id)
+    # 步驟 1：找不到草稿時只替本人暫時顯示選檔頁，不寫入草稿字典（真正上傳時才建立並保存）
+    invoice = (
+        _find_flow_invoice(invoice_id, owner=_step1_owner(request), persist=False)
+        if step == 1
+        else _find_flow_invoice(invoice_id)
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice)
+    _deny_self_finance_view(request, invoice, step)
 
     if not invoice.get("file_bytes"):
         fetched = _fetch_storage_file_bytes(invoice_id)
@@ -1369,7 +1450,7 @@ async def upload_invoice_file(
     影像只暫存於記憶體供核對對照；API 另依其保留期限保存影像並寫入辨識紀錄（有成本與副作用）。
     已在發票清單的既有發票（退回補正的重新上傳附件）只更新附件，不重新辨識。
     """
-    invoice = _find_flow_invoice(invoice_id)
+    invoice = _find_flow_invoice(invoice_id, owner=_step1_owner(request))
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
@@ -1793,6 +1874,11 @@ def advance_flow_step(
     invoice = _find_flow_invoice(invoice_id)
     if invoice is not None:
         _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
+        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得在步驟 5、6 推進；步驟 7 起待會計確認，沿用主線
+        if from_step in {4, *_SELF_BLOCKED_STEPS} and _is_self_upload(
+            invoice.get("uploaded_by"), _reviewer_id(request)
+        ):
+            raise DeniedError
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
         return RedirectResponse(f"/invoices/{invoice_id}/flow?step=1", status_code=303)
 
@@ -2166,21 +2252,16 @@ _SELF_REVIEW_MESSAGE = (
 )
 
 
-def _deny_self_review(request: Request, invoice: dict[str, Any]) -> HTMLResponse | None:
-    """三項財務操作（核准、退回、儲存會計欄位）共用的本人限制；須在任何寫入前呼叫。
+def _deny_self_review(request: Request, invoice: dict[str, Any]) -> None:
+    """三項財務操作（核准、退回、儲存會計欄位）與舊 /review 共用的本人限制；須在任何寫入前呼叫。
 
     以案件的 submitted_by 與登入者真實 User ID 比對，不採用請求內容；
-    拒絕時回 403 與清楚訊息，不寫資料庫、不改記憶體，也與資料庫故障訊息分開。
+    拒絕時丟 403 與清楚訊息，不寫資料庫、不改記憶體。本人不得查看步驟 5，
+    所以這裡不再重繪審核頁，只回錯誤頁。
     """
     case = _finance_case(invoice)
     if _is_self_upload(case.submitted_by, _reviewer_id(request)):
-        return _review_error(
-            request,
-            invoice,
-            FinanceReviewError([ReviewBlocker("SELF_REVIEW", _SELF_REVIEW_MESSAGE)]),
-            status_code=403,
-        )
-    return None
+        raise HTTPException(status_code=403, detail=_SELF_REVIEW_MESSAGE)
 
 
 @router.post("/{invoice_id}/finance-review/accounting", response_model=None)
@@ -2197,8 +2278,7 @@ def finance_update_accounting(
     先選費用大項再選會計科目，科目須屬於該大項；扣抵代號為獨立選項，不與會計科目連動。
     """
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     category = expense_category.strip()
     account = account_code.strip()
     current = _finance_case(invoice)
@@ -2249,8 +2329,7 @@ def _save_db_accounting(
 def finance_approve(request: Request, invoice_id: str) -> Response:
     """步驟 5：核准；有任何未處理項目時列出原因並擋下。"""
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     case = _finance_case(invoice)
     db_backed = _is_db_invoice(invoice)
     if db_backed and not finance_db.is_uuid(_reviewer_id(request)):
@@ -2285,8 +2364,7 @@ def finance_return(
     return_allowed 的值為「列序號:相依欄位名稱」（例如 0:total_amount），表示財務一併授權申請人修改的相依表頭欄位。
     """
     invoice = _finance_review_target(request, invoice_id)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied
+    _deny_self_review(request, invoice)
     allowed: dict[int, list[str]] = {}
     for raw in return_allowed or []:
         index, _, name = raw.partition(":")
@@ -2606,70 +2684,56 @@ def _apply_terminate(
 
 
 def _terminate_db_invoice(
-    request: Request, invoice: dict[str, Any], scope: CaseScope, reason: str
+    request: Request, invoice: dict[str, Any], reason: str, expected_round: int | None
 ) -> Response:
-    """資料庫發票：申請人終止被退回的請款單，寫入 invoices.status=voided 與審核歷程（同一交易）。
+    """資料庫發票：申請人終止被退回的請款單——一律呼叫 API /void，ADMIN 不直接寫資料庫。
 
-    規則（待補正才可終止、部門範圍、原因必填）沿用 prepare_terminate；寫入條件為狀態仍是待補正。
-    終止不是財務審核，不改 reviewed_by／reviewed_at。
+    以使用者自己的 API Session Token 呼叫，原提交者、部門、案件狀態與輪次（expected_round）全由 API 判斷；
+    缺少 expected_round 時拒絕，不替呼叫端猜一個輪次。圖片退件與一般退回都走這條（補正頁的終止是同一個 API）。
     """
     require_e_origin(request)
     invoice_id = str(invoice["id"])
-    loaded = _load_db_review(invoice_id)
-    if not finance_db.is_uuid(scope.user_id):
-        return _procurement_error_page(request, invoice, [_NEED_REAL_LOGIN_MESSAGE], loaded.case)
-    row = {
-        "invoice_id": invoice_id,
-        "status": loaded.case.status,
-        "department_id": loaded.department_id,
-    }
+    if expected_round is None:
+        return _terminate_failed(request, invoice, "缺少案件輪次，請從補正頁操作終止。", 400)
+    client = get_intake_client(request)  # 沒有 Token 時 401，要求重新登入
     try:
-        plan = prepare_terminate(row, scope, reason)
-    except ProcurementCaseError as error:
-        return _procurement_error_page(
-            request, invoice, [b.message for b in error.blockers], loaded.case, str(error)
-        )
-    change = StatusChange(
-        invoice_id=invoice_id,
-        old_status=plan.expected_status,
-        new_status=plan.target_status,
-        reason=plan.reason,
-        changed_by=scope.user_id,
-        changed_at=datetime.now(UTC),
-    )
-    try:
-        finance_db.commit_change(change, case=loaded.case, tax_type=None, record_reviewer=False)
-    except finance_db.ReviewConflictError:
-        return _procurement_error_page(request, invoice, [_CONFLICT_MESSAGE], loaded.case)
-    except finance_db.ReviewUnavailableError:
-        return _procurement_error_page(request, invoice, [_DB_UNAVAILABLE_MESSAGE], loaded.case)
+        payload = CorrectionVoid(expected_round=expected_round, reason=reason.strip() or None)
+        correction_service.void(client, invoice_id, payload)
+    except ValidationError:
+        return _terminate_failed(request, invoice, "終止原因或輪次格式不正確。", 400)
+    except IntakeApiError as error:
+        if error.status == 404:
+            raise HTTPException(status_code=404, detail="找不到指定發票") from None
+        status = 502 if error.status >= 500 else error.status
+        return _terminate_failed(request, invoice, correction_service.error_message(error), status)
+    except IntakeError as error:
+        return _terminate_failed(request, invoice, error.public_message, 502)
     return RedirectResponse("/invoices", status_code=303)
 
 
-def _procurement_error_page(
-    request: Request,
-    invoice: dict[str, Any],
-    messages: list[str],
-    case: ReviewCase,
-    header_error: str | None = None,
+def _terminate_failed(
+    request: Request, invoice: dict[str, Any], message: str, status_code: int
 ) -> Response:
-    """申請人端操作失敗：回步驟 3 並列出原因；不在待補正時頁面沒有退回補正區，改用頁首訊息。"""
-    response = _render_flow_page(
+    """終止失敗：顯示錯誤頁與原因。不重新讀取審核資料，所以資料庫暫時無法使用時也能顯示。"""
+    return templates.TemplateResponse(
         request,
-        invoice,
-        3,
-        error=None if case.status == STATUS_RETURNED else (header_error or "；".join(messages)),
-        procurement_errors=messages,
+        "pages/errors/error.html",
+        {"status_code": status_code, "message": message},
+        status_code=status_code,
     )
-    response.status_code = 400
-    return response
 
 
 @router.post("/{invoice_id}/procurement/terminate", response_model=None)
 def procurement_terminate(
-    request: Request, invoice_id: str, reason: Annotated[str, Form()] = ""
+    request: Request,
+    invoice_id: str,
+    reason: Annotated[str, Form()] = "",
+    expected_round: Annotated[int | None, Form()] = None,
 ) -> Response:
-    """步驟 3：申請人終止被退回的請款單（原因必填），終止後不能再重送。"""
+    """步驟 3：申請人終止被退回的請款單，終止後不能再重送。
+
+    示範發票沿用記憶體流程（原因必填）；資料庫發票改呼叫 API /void（需帶 expected_round），不直接寫資料庫。
+    """
     _validate_invoice_id(invoice_id)
     invoice = _find_invoice(invoice_id)
     if not invoice:
@@ -2677,7 +2741,7 @@ def procurement_terminate(
     _check_invoice_access(request, invoice, require_owner=True)
     scope = _case_scope(request)
     if _is_db_invoice(invoice):
-        return _terminate_db_invoice(request, invoice, scope, reason)
+        return _terminate_db_invoice(request, invoice, reason, expected_round)
     case = _finance_case(invoice)
     # 示範發票沒有部門欄位，轉 v1.5 欄位時部門與目前範圍相同
     row = {
@@ -2753,8 +2817,7 @@ def review_invoice(
         raise HTTPException(status_code=404, detail="找不到指定發票")
     # 舊入口只處理記憶體示範案件；資料庫案件不會被它寫入，回成功會誤導，與其他舊示範寫入一致地拒絕
     _refuse_legacy_demo_write(invoice_id, invoice)
-    if (denied := _deny_self_review(request, invoice)) is not None:
-        return denied  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
+    _deny_self_review(request, invoice)  # 舊版審核入口與步驟 5 使用同一個本人限制，避免繞過
     # 以下全部檢核都在修改任何資料之前完成
     case = _finance_case(invoice)
     blockers: list[ReviewBlocker] = []

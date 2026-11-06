@@ -12,7 +12,8 @@
           action="{{ toggle_url }}"
           hx-post="{{ toggle_url }}"
           hx-target="#{{ target }}"
-          hx-swap="outerHTML">
+          hx-swap="outerHTML"
+          data-loading-mode="disable">
       <input type="hidden" name="department_id" value="{{ badge.id }}">
       <input type="hidden"
              name="enable"

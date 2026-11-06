@@ -35,9 +35,25 @@ class SidebarGroup[EntryT: _Entry]:
 
 
 # 使用者核定的群組與順序：(群組代碼, 名稱, 圖示, ((功能代碼, 功能名稱), ...))
+# 2026-11-06：「企業基本作業」改名「系統作業」，本人資訊改名「基本資料」放在此群組；
+# 「範例發票參考」（showcase 取用頁）放在供應商作業。群組代碼不變（瀏覽器記住的開合狀態沿用）。
 _GROUPS: tuple[tuple[str, str, str, tuple[tuple[str, str], ...]], ...] = (
-    ("company", "企業基本作業", "🏛️", (("company.profile", "公司基本資料"),)),
-    ("supplier", "供應商作業", "🏢", (("suppliers", "供應商管理"), ("", "範例發票"))),
+    (
+        "company",
+        "系統作業",
+        "🏛️",
+        (("company.profile", "公司基本資料"), ("account.profile", "基本資料")),
+    ),
+    (
+        "supplier",
+        "供應商作業",
+        "🏢",
+        (
+            ("suppliers", "供應商管理"),
+            ("supplier.showcase-reference", "範例發票參考"),
+            ("", "範例發票"),
+        ),
+    ),
     ("invoice", "發票作業", "📤", (("inv.upload", "發票上傳"), ("inv.manage", "發票管理"))),
     (
         "finance",
@@ -52,6 +68,25 @@ _SYSTEM_GROUP = ("system", "系統管理", "⚙️")
 # 系統管理項目維持既有「部門、功能、帳號」順序
 _SYSTEM_ORDER = ("sys.departments", "sys.features", "sys.accounts")
 _HIDDEN_CODES = frozenset({"sys.department-permissions"})
+
+
+@dataclass(frozen=True)
+class FixedEntry:
+    """不經部門功能目錄、登入後固定顯示的側欄項目（頁面本身另有驗權）。"""
+
+    code: str
+    name: str
+    route: str | None
+    status: str = ""
+
+
+# 原本寫死在工作台版面（layouts/e_admin.html）的兩個連結，2026-11-06 起放進群組；顯示範圍維持原狀：
+# - 基本資料（/account，原「本人資訊」）只在工作台版面顯示（只有歡迎頁權限的帳號開不了，不放進一般側欄）
+# - 範例發票參考（/showcases/reference）：工作台版面照舊顯示；一般側欄在有「供應商管理」時顯示，頁面另依部門權限驗證
+ACCOUNT_ENTRY = FixedEntry("account.profile", "基本資料", "/account")
+SHOWCASE_REFERENCE_ENTRY = FixedEntry(
+    "supplier.showcase-reference", "範例發票參考", "/showcases/reference"
+)
 
 
 def _normalize(name: str) -> str:
@@ -81,19 +116,31 @@ def order_sidebar[EntryT: _Entry](entries: Iterable[EntryT]) -> list[EntryT]:
     return sorted(entries, key=_slot)
 
 
-def group_sidebar[EntryT: _Entry](entries: Iterable[EntryT]) -> list[SidebarGroup[EntryT]]:
+def group_sidebar(entries: Iterable[_Entry], workspace: bool = False) -> list[SidebarGroup[_Entry]]:
     """把已授權的側欄項目分到核定群組；沒有項目的群組不回傳。
 
     Args:
         entries: 已授權的側欄項目（含 code、name）。
+        workspace: 是否為工作台版面（layouts/e_admin.html）；是的話加入基本資料與範例發票參考。
+            一般側欄只在已有「供應商管理」時加入範例發票參考。代碼已存在的不重複加入。
 
     Returns:
         依核定順序的群組；「部門功能設定」不顯示。
     """
+    items: list[_Entry] = list(entries)
+    present = {entry.code for entry in items}
+    extras = (
+        [ACCOUNT_ENTRY, SHOWCASE_REFERENCE_ENTRY]
+        if workspace
+        else [SHOWCASE_REFERENCE_ENTRY]
+        if "suppliers" in present
+        else []
+    )
+    items += [entry for entry in extras if entry.code not in present]
     definitions = [(key, title, icon) for key, title, icon, _ in _GROUPS]
     definitions += [_OTHER_GROUP, _SYSTEM_GROUP]
-    buckets: list[list[EntryT]] = [[] for _ in definitions]
-    for entry in order_sidebar(entries):
+    buckets: list[list[_Entry]] = [[] for _ in definitions]
+    for entry in order_sidebar(items):
         if entry.code not in _HIDDEN_CODES:
             buckets[_slot(entry)[0]].append(entry)
     return [

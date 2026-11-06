@@ -1,5 +1,75 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 Loading UX 模式 A／B／C 整合（側邊欄導覽、按鈕載入、同一動作防重）
+
+- 規則（使用者確認）：模式 A 按鈕載入（登入、發票辨識、啟停／徽章等局部操作）、模式 B 全頁遮罩（導覽、重要寫入）、模式 C 局部或無遮罩（GET 查詢、即時搜尋、下載、已有自己進度的操作）。
+- 側邊欄導覽（模式 B）：`.app-sidebar__link` 的主要左鍵點擊顯示「載入中，請稍候…」。Ctrl／Cmd／Shift／Alt、非左鍵、`target`、`download`、`aria-disabled`、外部網址與同頁錨點不顯示。支援 Navigation API（Chromium）時等 `navigate` 事件確認導覽真的開始才顯示（被取消的點擊不會留下遮罩），並在 `navigateerror`（使用者按停止、導覽失敗或中止）釋放；表單送出則在事件處理完且沒被取消後開始，並忽略「上一次導覽補發」的 `navigateerror`（實測它會在新導覽開始時才補發）。沒有 Navigation API 的瀏覽器退回「確認未被取消就顯示」，Escape（停止載入鍵）盡力釋放。唯一的 `setTimeout` 都是 0 毫秒的工作回合邊界，沒有用固定秒數猜導覽結束。回傳下載檔案的表單不會觸發 `navigateerror`（實測），仍要加 `data-busy=""`。
+- 按鈕載入（模式 A）：新增 `data-loading-mode="button"`（送出鈕轉成「轉圈＋訊息」並停用，`data-loading-text` 指定訊息）與 `data-loading-mode="disable"`（只停用並標示 `aria-busy`，不改內容，給開關與徽章）。停用延到送出事件處理完才做，避免送出鈕的 `name`／`value`／`formaction` 因停用而遺失（真實瀏覽器驗證：`intent=go` 仍在網址上）。`hx-disabled-elt` 先停用的按鈕不當作原本狀態還原（`data-disabled-by-htmx`），否則部門啟停開關會在請求結束後一直停用（真實瀏覽器測試抓到並修正）。與 `data-busy` 不並用（有 `data-loading-mode` 就不顯示全頁遮罩）。
+- 套用：`invoices/_flow_step_upload.html` 的 `flow-upload-form` 加 `data-busy=""`（既有「辨識中…」按鈕載入保留，不再同時蓋全頁遮罩；`_procurement_return.html` 的「重新上傳附件」是另一個表單，維持預設全頁遮罩）；`departments/list.html` 啟停開關與 `knowledge/_dept_badges.html` 徽章加 `data-loading-mode="disable"`（只加屬性，沒有改業務邏輯）。
+- 同一動作防重（前端，不取代後端冪等）：進行中的換頁表單不再送第二次（capture 階段取消 `submit`）；HTMX 對同一元素的重複觸發預設會排隊再送一次（實測 Enter／Space 會多送一個 POST），改在 capture 階段取消進行中寫入元素的 `click`／`submit`（實測伺服器只收到 1 個 POST）；HTMX GET（即時搜尋）不受影響。
+- 驗證：`tests/unit/js/main_busy.test.js`（35 項）與 `busy_manager.test.js`（15 項）、`test_busy_overlay.py` 靜態檢查；以拿掉各項保護的版本對照，測試會失敗。真實瀏覽器（本機測試頁，真實滑鼠與鍵盤）驗證側邊欄左鍵與 `window.stop()` 釋放、按鈕模式、部門啟停、HTMX 重複觸發、Escape 對話框、登入與上傳按鈕。限制：內建瀏覽器無法開新分頁或送出修飾鍵點擊與中鍵，這幾項只有單元測試；未驗證 Safari／Firefox（沒有 Navigation API 的退回路徑）、手機、真實 API、資料庫與正式站。
+
+## 2026-11-06 送出請求後的處理中遮罩：補齊 GET 表單、HTMX 寫入請求與補正頁，並改以擁有者 Token 管理
+
+- 盤點（程式與樣板，85 個 `<form>`）：既有全頁遮罩原本只涵蓋「非 HTMX 的 POST 表單」與明確加了 `data-busy` 的表單／連結。缺口：(1) 非 HTMX 的 GET 查詢／篩選表單；(2) HTMX 寫入請求（`hx-post`）沒有 `data-busy` 時沒有遮罩；(3) 補正頁（`/invoices/{id}/correct`）以 fetch 送出與終止，只有按鈕停用與文字提示。
+- 預設行為（main.js）：POST 表單「處理中，請稍候…」（`target` 開新分頁不顯示）；**GET 查詢與篩選表單預設不顯示全頁遮罩**（模式 C：局部或輕量回饋），只有明確設定非空 `data-busy` 才顯示指定訊息；`data-busy=""` 永遠不顯示；HTMX 非 GET 請求預設顯示「處理中」，即時搜尋的 `hx-get` 不顯示；明確的 `data-busy`（含空字串）永遠優先。（本分支曾短暫加入「GET 預設『載入中，請稍候…』」，因與確認的 UX 規則衝突，已在 Commit 前移除。）
+- Commit 前審查發現的缺陷：原設計只有「遮罩元素在不在」一個共用狀態，任何 `htmx:afterRequest`（含沒有顯示遮罩的 GET）或補正頁的 `finally` 都會關掉別的請求的遮罩（並行時提早消失）；補正頁沒有防重複提交，成功回應後若拋出非預期例外，送出按鈕會停用、也沒有重試。
+- 修正：新增 `static/js/busy.js`（`base.html` 在 `main.js` 前載入）以「擁有者 Token」管理遮罩——每個動作 `acquire(訊息)` 取得自己的 Token、完成時只釋放自己的（重複釋放無效），仍有任何擁有者就維持顯示，全部釋放才移除；空訊息不取得擁有者；`pageshow` 還原頁面時 `clearAll()`，舊的釋放函式之後被呼叫不影響新 Token。HTMX 在 `htmx:beforeSend`（請求確定要送出才觸發）取得 Token，以 HTMX 2.0.11 每個請求唯一的 `detail.xhr` 為識別，於 `afterRequest`／`sendError`／`sendAbort`／`timeout`／`responseError` 釋放，所以 `beforeRequest` 被取消不會留下遮罩。換頁型遮罩不使用固定逾時（成功與失敗由換頁或 `pageshow` 決定）。
+- 對話框（Escape 問題）：遮罩原本掛在開啟中的 `<dialog>`（`showModal()`）裡，使用者在請求進行中按 Escape，對話框關閉、遮罩跟著隱藏，但 Token 仍在、頁面可操作。用真實 Escape 驗證「擋掉 cancel」不可靠：第一次 Escape 的 `cancel` 可取消，第二次不可取消，瀏覽器仍會關閉；且也擋不住按鈕或 `dialog.close()`。因此不阻止關閉，改在 `busy.js` 以 `MutationObserver` 監看 `<dialog>` 的 `open` 屬性：有擁有者時，對話框關閉就把遮罩移回 `body`（背景仍被擋住，實測最上層元素是遮罩、真實點擊無效），之後才開啟的對話框則把遮罩移進去。對話框內請求結束、失敗、逾時、中止都正常釋放；沒有 Loading 時 Escape 與對話框開關不受影響。鍵盤穿透遮罩（Tab／Enter）與換頁被取消後遮罩留存，仍是已知風險，未修正。
+- 補正頁（`invoice-correct.js`）：`window.invoiceGuardBusy(訊息)` 改為回傳 release；送出與終止都在 `finally` 釋放自己的 Token；新增 `inFlight`／`voiding` 防止進行中再次送出，已成功（`form.dataset.done`）也不再送；組資料例外不再被誤判為網路錯誤；非預期例外後依「是否已送出」說明並恢復送出與重試按鈕（已成功的提交不重新開放）。前端防重不取代後端：重試仍靠 `idempotency_key` 與 API 的冪等處理。
+- 刻意不顯示遮罩（`data-busy=""`，由測試清單固定）：登入、批次申報檔（下載不換頁）、知識庫部門選擇、題庫逐題執行。會回傳檔案或 204 的新表單必須加 `data-busy=""`，否則換頁型遮罩不會自己消失。
+- 驗證：`tests/unit/test_busy_overlay.py`（腳本內容與例外清單，已移除固定「任何 afterRequest 都關閉」的舊斷言）、`tests/unit/test_busy_manager_node.py`＋`tests/unit/js/busy_manager.test.js`（Node 假 DOM，10 項）；本機瀏覽器以可控制延遲與失敗的測試頁驗證 HTMX POST 並行（A／B 先完成）、與無遮罩 GET／`data-busy=""` 並行、與補正頁 fetch 並行、一成一敗、404／500／網路失敗／逾時／中止、`beforeRequest` 被取消、重複釋放、`pageshow` 後舊釋放、補正頁重複送出與例外恢復、真實點擊的下載表單。未連真實 API、資料庫或正式站；未驗證「離開頁面確認視窗按取消」後的遮罩（內建瀏覽器無法模擬）；正式站仍是舊版，部署後才生效。
+
+## 2026-11-06 補正頁：API 查不到案件（404）時說明可能原因
+
+- 問題：重新登入後開 `/invoices/{id}/correct` 顯示通用的「找不到頁面」。API 查退件項目的條件是「發票編號＋提交者是本人＋發票部門等於 API 登入時選取的部門（主要部門）」，任一不符都回 404；ADMIN 把它轉成通用 404 頁，使用者看不出原因。
+- 處理：`correction_page` 收到 API 的 404 時不再丟通用 404，改在補正頁版面顯示說明（HTTP 狀態仍是 404）。API 對「案件不存在、不是本人提交、不屬於目前選取部門」回應相同，所以訊息只列出可能性、不把任何一種當成已確定原因，也不透露其他使用者或部門的案件資訊：「找不到這張發票，或目前登入帳號無法存取該案件。請確認發票連結及登入帳號是否正確。若案件屬於其他部門，或您不是原提交者，也可能無法開啟。若確認資料無誤仍無法存取，請聯絡管理員協助查詢。」提交與終止的 JSON 錯誤沿用同一段文字，格式不變。401／403 仍顯示「授權失敗」、5xx 與其他狀態各用原本訊息，不會被當成 404。ADMIN 自己的本人／格式／存在檢查失敗仍是通用 404。
+- 限制：這只是說明，不能真的開頁。ADMIN 頁首的「切換部門」不會同步到 API 的 Session（API 目前沒有切換部門的路由），所以真正解法需要 API 配合（方案 B），或確認發票的部門與帳號主要部門後再處理；發票實際部門尚未查證。
+- 驗證：新增與調整 `test_invoice_correction.py`（404 說明、401／403／5xx 不被誤判、JSON 格式不變、ADMIN 自己的 404 不變；改回舊程式會失敗）；離線測試，未連真實 API 與正式站。
+
+## 2026-11-06 財務退回補正頁：未開放欄位改為反灰、不可點選
+
+- 問題：`/invoices/{id}/correct`（財務退回原因頁）把 API `editable_fields` 以外的文字欄位設為 `readonly`，游標仍可點進去；只有 `tax_type` 下拉用 `disabled`。
+- 處理：表頭與明細的未開放欄位一律改為 `disabled`（不再用 `readonly`），並在 `invoice-flow.css` 以 `#correct-form input:disabled, select:disabled` 反灰、游標 `not-allowed`。開放欄位、API、Schema、驗證與逐項回覆不變。
+- 為何不影響送出：`invoice-correct.js` 的 `buildBody` 直接讀欄位 `.value` 組 JSON，沒有表單序列化，disabled 欄位的上一輪值照常帶回；`change` 事件本來就略過 disabled 欄位。
+- 可讀性：灰色欄位文字 `#4b5a70`、底色 `#e9edf3`，對比約 6:1（WCAG AA 需 4.5:1；原先用 `--color-text-muted` 只有約 3.8:1，已改掉）；另加 `-webkit-text-fill-color` 讓 Safari 套用同一文字色。
+- 權限不變：欄位白名單由 API 的 `invoice_resubmit_rules`（`RESUBMIT_FIELD_NOT_ALLOWED`）在 origin/main 上驗證，ADMIN 只轉送並顯示錯誤訊息；disabled 只是畫面保護，不是權限控制。
+- 驗證：更新 `test_invoice_correction.py` 的斷言並新增一項（JS 不使用 FormData、CSS 規則與顏色存在）；相關測試離線通過。瀏覽器：用 TestClient 輸出的靜態 HTML 以內建瀏覽器開啟（fetch 以替身攔截、未連 API）——16 個欄位中只有 2 個開放；未開放欄位無法聚焦、點擊並輸入後值不變；修改「總計」後送出，送出內容含未開放欄位的原值（銷售額 1000 等）且 `changes` 只有總計一筆。這不是端到端驗收，未連真實 API、資料庫與正式站。
+
+## 2026-11-06 本人上傳的發票不得查看步驟 5、6；步驟 4 統一「檢視我的發票」
+
+- 需求（使用者確認，取代同日前一筆與主線 `bb6dc42` 的「本人可檢視步驟 5、只是不能操作」設計）：本人上傳的發票，本人不得執行財務審核動作，也不得查看步驟 5、6；不論財務部或非財務部門，本人在步驟 4 完成後顯示「檢視我的發票」並回發票管理列表（`/invoices`）。
+- 後端：`invoice_flow` 與 `_render_flow_page` 對本人上傳且 `step in {5, 6}`（`_SELF_BLOCKED_STEPS`）回 403（`DeniedError`，錯誤重繪路徑也一併擋住）；`/flow/advance` 對 `from_step in {4, 5, 6}` 的本人上傳回 403，不改案件狀態；`_deny_self_review` 不再重繪步驟 5 審核頁，改回 403 錯誤頁（訊息不變）。判斷沿用主線 `_is_self_upload`（只比對真實 User ID）。
+- 步驟 4 按鈕：本人上傳者不再看到「確認並繼續」或「前往步驟 5」。非暫存草稿的案件，「檢視我的發票」仍以 POST 送到原本的 `/flow/finish-first-four`（資料庫案件只轉址，舊記憶體示範發票寫入「前四步已核對」標記），再導回 `/invoices`；暫存草稿因該端點回 409，改用一般連結。不呼叫 `/flow/advance`，不改審核狀態。步驟列只停用步驟 5、6 的連結；列表本人那列的「檢視詳情」若會連到步驟 5、6 則改連步驟 4。
+- 【待決】步驟 7～9 的本人規則等會計確認，本次不新增、也不放寬主線：本人 GET 步驟 7～9、`/flow/advance`（from_step 7 起）與 `/flow/complete` 的行為與主線相同。上一版（`19e7d8c`）曾一併封鎖 `step >= 5`、`from_step >= 4` 與 `/flow/complete`，已縮回到使用者確認的步驟 5、6。風險：目前本人若取得步驟 7～9 的連結或直接 POST，仍可操作（與主線相同）；會計決議後只需調整 `_SELF_BLOCKED_STEPS` 與 `test_steps_7_to_9_follow_main_until_accounting_decides`。
+- 未改：`_flow_step_review.html` 內主線的本人唯讀區塊現在到不了（保留）；`/filing`、`/import-confirm`、匯出與批次申報的本人限制待另行協調。
+- 驗證：`test_self_upload_flow_gates.py`（24 項）、更新 `test_finance_self_upload.py` 與 `test_department_login.py` 的舊斷言；ADMIN 全套 3165 passed、41 skipped（含需要隔離資料庫的整合測試被略過）；Ruff、djLint、check_project、`git diff --check` 通過。離線測試，未連資料庫與正式站，未做瀏覽器實測。
+
+## 2026-11-06 本人上傳的發票不得自行推進財務流程（補主線缺口）
+
+- 問題與原因：主線已擋本人上傳的核准、退回、儲存會計欄位與舊 `/review`，但步驟 5 起的「確認並繼續」（`/flow/advance`）沒有本人限制。
+- 處理：已由下一筆（步驟 5、6 不得查看／推進）取代並縮小範圍；原本一併加在 `/flow/complete` 的本人限制已移除（步驟 9 的本人規則待會計確認，沿用主線）。
+
+## 2026-11-06 步驟 3 與退回補正頁：凍結分欄改為比照步驟 5 的捲動
+
+- 問題與原因：PR #44 的凍結分欄有高度門檻（47rem／52rem），常見筆電視窗（約 640～750px 高）低於門檻，步驟 3 看起來沒有凍結；使用者要求捲動比照步驟 5（只看寬度，矮視窗停在 32rem 下限）。另外 PR #45 新增的退回補正頁（`/invoices/{id}/correct`）沒有套用凍結。
+- 處理：`invoice-flow.css` 的 `.correction-split--frozen` 移除高度門檻，改為寬 ≥1101px 一律凍結，高度 = `max(32rem, 100dvh − 版面扣除值)`（dvh 有 vh 後備）；有提示 `--notice` 扣 31rem、退回補正頁 `--compact` 扣 15rem。`correct.html` 的分欄加上凍結 class，並把「第 N 輪提示」與「財務退回原因」移到右欄最上方（內容與 id 不變；終止／不可補正時沒有分欄，仍在卡片最上方），讓分欄上方的版面高度固定。`.fr-split` 與步驟 5 不變。
+- 取捨：矮視窗（例如 638px 高）分欄停在 512px，外層頁面會多捲約 256px 才看得到完整分欄，與步驟 5 現況相同。
+- 驗證：新增 `tests/unit/test_correct_page_frozen.py`，更新 `test_step3_frozen_split.py`；以本機合成資料的隔離瀏覽器驗收（見 PR 說明）。未做正式環境與真實 API 驗收；PDF 內容是否繪出仍未確認。
+
+## 2026-11-05 人工核對頁：改為「發票基本資料」版面與品名明細卡片
+
+- 說明：下方 2026-11-04 條目所述的標題「核對欄位（表頭 10 項；第 6～9 項見下方品名明細）」已被本次新版面取代，現行標題是「發票基本資料」；該條目保留為移除佔位列的原始紀錄。
+- 問題與原因：依使用者核定的設計圖調整核對表單。`/intake` 核對頁與發票流程步驟 3 共用 `_review_form.html`，兩個入口同時生效。
+- 處理：標題改為「發票基本資料」，第 1～4 項（聯式、字軌號碼、日期、買受人名稱）保留；第 5 項與第 10 項同列雙欄，第 11、12、13 項各佔一列。品名明細由表格改為每個項次一張卡（上列品名，下列數量、單價、金額），欄位標籤「品名／用途」改為「品名」，欄位 name 與送出內容（`item_*`）不變；新增「明細總金額」（各筆金額加總，只顯示、不送出，輸入時由 `item-total.js` 即時更新）。`invoice-flow-review.js` 的欄位提醒選擇器加入 `.item-cell`，讓新卡片的提醒仍對應到正確欄位。API、Schema、檢核規則與 B（本人上傳不得自行審核）都沒有改動。
+- 驗證：新增版面回歸測試（第 1～4 項保留、第 11～13 項獨佔一列、卡片與欄位名稱、明細總金額）；全部單元測試 2905 passed、9 skipped、1 failed（`test_shared_integrations` 的 `gemini.py` 跨站比對，因本機 API 檢出版本落後，與本次無關）；ruff、djlint、check_project 通過；桌面寬度以本機假資料環境在瀏覽器窗格確認，並經使用者人工驗收通過。手機寬度與正式資料未驗證。
+
+## 2026-11-04 人工核對頁：移除重複的 6～9 佔位列
+
+- 問題與原因：核對表單的「6～9 品名／數量／單價／金額 → 請見下方品名明細」是唯讀佔位列，與下方品名明細重複。`/intake` 核對頁與發票流程步驟 3 共用 `_review_form.html`，兩個入口都會出現。
+- 處理：移除佔位列（欄位 name、API、Schema、檢核規則不變，品名明細表不動），標題改為「核對欄位（表頭 10 項；第 6～9 項見下方品名明細）」。
+- 驗證：新增步驟 3 與 `/intake` 兩個入口的回歸斷言（無佔位文字、品名明細四個欄位與新增／刪除按鈕仍在）；相關單元測試、ruff、djlint、check_project 通過。未做瀏覽器實測。
+
 ## 2026-10-27 ADMIN 登入與取消匿名例外（本批最新）
 
 - 使用者核定 ADMIN 共用桌機／手機登入頁，B／G 尚未提供時先交付 UI 與接點測試；取消 /accounts、/department、/functions、/department-functions 的本機免登入。此決定取代下列早期匿名開放紀錄，部門／主管授權規則不變。
@@ -1121,6 +1191,17 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 - 處理檔案：app/static/js/intake-amounts.js、app/utils/chinese_amount.py、app/services/invoice_intake_mapping.py、app/routers/intake.py、app/routers/invoices.py、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests/js/test_intake_amounts.cjs、tests/unit/test_intake_amount_alignment.py、tests/unit/test_intake_zh_suggestion.py、tests/unit/test_invoice_flow_intake.py、tests/unit/test_invoice_intake_mapping.py、tests/fixtures/amount_to_chinese_vectors.json、docs/DEVELOPMENT_STATUS.md、docs/REVIEW_FIX_LOG.md。
 
 
+## 2026-11-05 發票清單頁不再清空所有人的草稿
+
+- 問題：草稿只存在伺服器程序的記憶體，所有使用者共用同一個字典 `_DRAFT_INVOICE_STORE`；`_render_invoice_list_view`（`GET /invoices`、`/invoices/review`、`/invoices/voucher`）與 `GET /dashboard` 一進入就 `_DRAFT_INVOICE_STORE.clear()`（2026-10-28 示範版遺留，用意是丟掉未完成的示範草稿）。同一個實例上乙打開清單，甲正在核對的草稿就消失，甲的檢核與提交都回 404；自己打開清單也會丟掉自己的草稿。離線重現：兩位使用者、同一個記憶體實例。
+- 處理：兩處 `clear()` 都移除。清單頁改為只清掉「目前使用者自己、已提交」的草稿（`uploaded_by` 等於本人且有 `submitted_invoice_id`；案件已在資料庫、影像已在提交時移除，使用者離開步驟 4 後不再需要）；未提交的草稿與別人的草稿（含已提交的）一律不動。沒有新增任何跨使用者讀寫權限；`discard` 維持只能刪本人指定的未提交草稿。
+- 驗證（離線；假 API、假部門模組）：新增 `tests/unit/test_list_pages_keep_drafts.py` 8 項，先對未修正的程式確認 8 項全部失敗，修正後全部通過；突變驗證：清單頁 `clear()` 加回（7 項失敗）、儀表板 `clear()` 加回（1 項）、清除不看擁有者（1 項）、清除不看已提交（4 項）都會被抓到。
+- 未解決的限制：
+  1. 草稿仍只在單一實例的記憶體：實例回收、或上傳與核對被不同實例處理（核對回 404），草稿仍會遺失；真正的解法是共享草稿保存，需要與 API／架構負責人決定（API 沒有讀取辨識紀錄的端點；`ai_recognition_logs` 只保存 AI 辨識結果與影像 1 小時，使用者的修改沒有任何地方保存）。
+  2. 移除 `clear()` 後，被放棄的未提交草稿（每份最多 4 MB 影像）會留到實例回收，沒有數量或時間上限；需要另案設計上限或 TTL。
+  3. 正式環境同一個實例是否常同時服務多位使用者、`/dashboard` 在正式環境是否可達，尚無證據。
+
+
 ## 2026-11-05 人工驗收修正：重新上傳、國字寫法不標準、統編檢查碼提示
 
 - 問題 D（重新上傳）：核對頁「重新上傳」原本是 `<a href="/intake">`，`/intake` 要求部門的 `inv.intake` 新增權限，只有發票上傳權限的人得到 403。業務定義（2026-11-05 使用者確認）：系統發現資料庫已有相同發票時，使用者放棄這次、改傳另一張新發票；按「重新上傳」要刪除本次尚未成功提交的原草稿（辨識結果、核對資料、暫存影像），不刪除或修改資料庫中已存在的重複發票，不影響其他使用者或其他草稿，保留登入 Session，回到新發票上傳頁。處理：流程頁的按鈕改為 `POST /invoices/{id}/flow/discard`（有副作用所以不用 GET）→ 303 `/invoices/new`（建立全新草稿、步驟 1 選檔）。准入沿用整條上傳流程：有效登入＋inv.upload VIEW（router 層）＋同源＋草稿上傳者本人（財務部也不能刪別人的草稿）；不要求 inv.intake。只刪 `_DRAFT_INVOICE_STORE` 裡這一份草稿並清空其中的辨識結果、核對資料、暫存影像等欄位（避免別處仍握著物件時殘留）；已提交的草稿（結果頁還在）、清單或資料庫的案件、已不存在的 id（重複點擊）都不刪，直接導向 `/invoices/new`，且不會為未知 id 自動建立空草稿；刪不掉時回 500，不假裝成功。不呼叫 API、不碰資料庫與 Storage。舊 `/intake` 頁沒有草稿，連結改為 `/invoices/new`。曾評估並放棄 POST `…/flow/restart`（重設同一份草稿，與業務定義不符）與純 GET `/invoices/new` 連結（不刪原草稿）。
@@ -1131,3 +1212,77 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 - 處理檔案：app/routers/invoices.py、app/services/invoice_intake_mapping.py、app/static/js/tax-id.js、app/static/js/invoice-flow-review.js、app/static/css/pages/invoice-flow.css、app/templates/pages/intake/_review_form.html、app/templates/pages/invoices/_flow_step_correct.html、tests（test_invoice_flow_intake、test_pages、test_intake_zh_suggestion、test_intake_amount_alignment、test_tax_id.cjs、tax_id_vectors.json）。
 - 驗證（離線，假 API／假部門模組，不是正式環境或真實瀏覽器驗收）：ADMIN pytest 2910 passed／23 skipped、ruff、djlint、check_project 通過；本次相關 JS 測試 53 項通過。ADMIN `tests/js/*.cjs` 全部另有 5 項既有失敗（`test_e_department_permissions` 4 項的測試替身過時、`test_sidebar_logout` 缺 Playwright），`origin/main` 同樣失敗，與本次無關。未驗：真實瀏覽器、真實 API、修改紀錄端到端。
 - 已知限制：發票清單頁（`_render_invoice_list_view`）每次顯示都會 `_DRAFT_INVOICE_STORE.clear()`，會清掉所有人的草稿（既有行為，本次未改）。整條上傳流程（/invoices/new、flow/upload、flow/review）仍只要求 inv.upload 檢視，是否另設新增權限待團隊確認。
+
+
+## 2026-11-05 重新上傳：確保一定回到新的上傳頁（沒有 403）— 方案 C
+
+- 驗收要求：無論有沒有重複發票，按「重新上傳」都停在新的上傳頁（可選檔）、仍登入、沒有 403 或被導回登入頁。
+- 檢查結果：沒有重複發票時，discard → `/invoices/new` → 步驟 1 本來就能正常運作（採購部、財務部都有測試）。唯一會得到 403 的情況：草稿只存在單一實例的記憶體，若下一個請求落在沒有這份草稿的實例，`_find_flow_invoice` 會補一份上傳者固定為 `"1"` 的空草稿，一般（非財務）員工就被 `_check_invoice_access` 擋成 403；財務部因為一律放行而不受影響。第一次從側邊欄進入上傳流程時也會發生。
+- 處理（方案 C）：`_find_flow_invoice` 新增 `owner` 與 `persist`。
+  - 步驟 1 的 `GET …/flow?step=1`：`owner`＝目前使用者、`persist=False`——找不到草稿時只暫時顯示選檔頁，**不寫入** `_DRAFT_INVOICE_STORE`，單純開頁不留下空草稿。
+  - `POST …/flow/upload`：`owner`＝目前使用者、`persist` 維持預設的寫入——真正上傳時才建立並保存屬於本人的草稿，再進入既有的 OCR 流程。
+  - 其他呼叫端（核對、檢核、discard 之外的所有路由）不傳參數，行為與以前完全相同：步驟 3 以後對沒看過的 id 仍是一般員工 403。
+  - 已存在的草稿（含別人的）一律照原樣返回，不覆寫、不接手；清單與資料庫的案件不會被轉成草稿；`discard`、`/invoices/new` 沒有改動。
+- 驗證（離線；假 API、假部門模組；兩個各自獨立的記憶體字典模擬兩個實例，**不是**真實 Vercel 多實例驗證）：`test_invoice_flow_intake.py` 50 項；方案 A 版本會在「GET 不保存草稿」相關 3 項失敗，方案 C 全部通過；突變驗證：GET 保存草稿、上傳草稿上傳者為 `"1"`、步驟 1 略過存取檢查（可接手他人草稿）、其他步驟也自動補草稿，都會被測試抓到。
+- 未解決的限制：
+  1. 上傳在實例 B、核對回到實例 A 時，核對會回 404「找不到指定發票」（辨識結果只在 B 的記憶體）；測試確認這種情況不會顯示成功、不會呼叫 API 提交、也不會洩漏 B 的資料。真正的解法是共享草稿保存（資料庫、Storage 或快取），需與 API／架構負責人決定；API 目前沒有可讀回辨識結果的端點。
+  2. 發票清單頁每次顯示都會 `_DRAFT_INVOICE_STORE.clear()`，會清掉該實例上所有人的草稿（既有行為，未改）。
+  3. 重新上傳後孤兒草稿（在另一個實例的記憶體）與 API 已存入 Storage 的影像與辨識紀錄不會被清除。
+  4. 一般員工之外，財務部對未知 id 在步驟 3 以後仍會被補一份空草稿（既有行為，未改）。
+
+## 2026-11-06 一般部門問答交付
+
+原因：一般同仁需要依目前部門已配置的來源提問，不能借用資訊部維護資格。
+結論：新增 `/knowledge-qa` 及 `rag_qa` 查看權，重用既有 RAG 服務與部門 SQL；每題重查來源，保留同源與切換部門後舊頁面拒絕。既有管理與資訊部測試頁保留。
+驗證：提交前重新執行分層、相關 pytest、格式及樣板檢查；實際指令結果記錄於交付驗收。正式搜尋、Preview 與模型回答品質未在本次發布前驗收。使用方式見 DEPARTMENT-RAG-QA.md。
+
+
+驗證結果：獨立 RAG 提交的登入／部門問答／既有 RAG 回歸 324 passed、1 skipped（27.36 秒），保留既有 Starlette 警告；三站契約 check_project、Ruff lint 與 249 檔格式通過。
+
+## 2026-11-06 Show Case 交付
+
+原因：上傳核對需要可追溯的供應商範例，但範例不應直接改寫本次發票，也不應另建第二份供應商主檔。
+結論：ADMIN 維護與人工確認、API 提供有效範例、前台另開唯讀參考。新範例綁定正式供應商，原圖與歷程保留；逐次驗權、版本衝突、來源 SHA-256 與失敗回滾由既有分層處理。正式發票換算／檢核流程保留。
+界線：結構版本檔是待 DB 負責人審查的定義，沒有套用正式 migration。正式範例表與私有歷程擴充須依團隊手動 SQL 流程核對；無權限或缺表時拒絕，不以假成功取代。模型比較、真實角色與 Storage、獨立 PostgreSQL 多連線及 Preview 仍待驗收。
+說明見 FEATURE-DELIVERY-20261106.md；提交前的實際驗證結果另補 TEST_REPORT。
+
+交付驗證（2026-11-06）：包含 main 新版補正及本機兩項功能的完整 pytest 3151 passed、31 skipped（542.82 秒），1 個既有 Starlette 警告；check_project --project-root ..、Ruff lint、91 份樣板 djLint 通過。供應商新建／修訂／回滾另有合成記憶體 PostgreSQL 驗收；正式角色、Storage、多連線、模型與 Preview 待驗收。
+
+## 2026-11-06 Show Case 狀態操作返回供應商範例
+
+問題：啟用或停用後固定返回同一張範例詳情，連續新增範例需手動尋找列表入口。
+原因：狀態路由固定導向範例詳情錨點。
+處理：`app/services/showcase_service.py` 在成功提交後回傳已驗權範例所綁定的供應商 ID；`app/routers/showcases.py` 僅在啟用、停用成功且有供應商關聯時導向該供應商範例列表。退回補正與無關聯的舊範例沿用詳情頁。`tests/unit/test_showcase.py` 補轉址斷言。列表既有桌面五欄響應式排版與新增入口不變。
+驗證：`git diff --check` 通過。專案 `.venv` 指向已不存在的 Python 3.12 路徑，本次 pytest 未能啟動；未執行正式 DB 或 Storage 驗收。
+
+## 2026-11-06 Show Case 顯示與供應商列表補正
+
+問題：多列明細顯示為「其他明細欄位」、只有查看權的部門看到管理資訊、供應商列表無範例張數，範例按更新時間排列造成名稱順序跳動。
+處理：明細路徑依列號產生欄名；唯讀頁僅展示目前原圖與狀態；供應商列表以單次額外讀取顯示正式範例張數，讀取失敗標示不可用且不影響主檔；範例清單改按名稱排序。不更動資料表或範例內容。
+驗證：Python AST 語法解析及 `git diff --check` 通過。原 `.venv` 的 Python 3.12 已失效，pytest 與網頁／正式 DB 驗收未執行。
+
+## 2026-11-06 Show Case 提交前整合修正
+
+原因：狀態轉址測試缺少合成供應商 UUID；新增歷程讀取未納入測試替身，且 ADMIN/API 共用 reader 版本不同。
+處理：補齊合成替身、同步 API 共用 reader、整理 import 與格式。保留最新 main 與雙方開發紀錄，不修改正式資料庫。
+驗證：ADMIN Show Case／供應商／目前版本／跨站 reader 相關測試 65 passed；專案檢查及 Ruff lint/format 通過。正式 DB、Storage 與網頁人工驗收尚未執行。
+
+## 2026-11-06 F09 快照不再把「資料檢視通過」當成財務核准
+
+原因：`_to_filing_snapshot` 以 `review_status == "approved" or status == "passed"` 判斷核准。資料庫映射（`_row_to_invoice_dict`）把 `pending_*` 待審案件的檢視狀態也設成 `passed`（`review_status` 是 `pending`），所以待審資料庫案件的快照狀態被寫成 `approved`，F09 的 `NOT_APPROVED` 檢核不會出現；在其他欄位檢核都通過時，批次申報清單會顯示可勾選、批次產檔與步驟 6 單張預覽也會放行。F09 本身（`validate_snapshot`，只認快照狀態 `approved`）沒有問題。
+
+處理：只改 `app/routers/invoices.py` 的一行，核准一律只看正式的 `review_status == "approved"`。F09 共用檢核、API、Schema、資料庫與認證沒有動。
+
+行為差異（影響**所有**財務使用者，不只本人上傳者）：
+- 待審資料庫案件：申報清單不再可勾選，改顯示「請款單未核准，不可匯出」；件數與金額合計不再計入。
+- 批次產檔：選到待審案件，整批 400 不產檔（原本其餘欄位合格時會產出）。
+- 步驟 6 單張檢核：待審案件回報 `NOT_APPROVED`，不再產生 81 字元預覽。
+- 資料庫已核准案件、示範案件 id 1、2、5（核准）與 id 3、4（待審）：行為不變；既有測試中所有 `status: "passed"` 的資料都同時是 `review_status: "approved"`，沒有測試把 `passed` 當作核准。
+- 與本人權限補丁（`feat/self-steps-7-9-after-finance-review`，`debbf0f`）：功能不衝突，該分支在 `/filing/export` 對本人案件的整批 403 保留為第二道防線，並額外處理示範案件「已核准但階段未到 7」。
+
+測試：新增 `tests/unit/test_f09_snapshot_approval.py`，使用真實的 `_row_to_invoice_dict`、`_to_filing_snapshot`、`validate_snapshot`、`check_snapshot`、`build_format21_file`；只有「發票清單來源」與公司資料以替身（`HardcodedCompanyProfileProvider`）取代。離線測試，不連資料庫，不是正式環境驗收。把修正換回舊條件時 11 個新測試失敗，確認測試守得住。
+
+未驗證與待確認：
+- 真實資料庫中待審案件的實際資料與正式環境行為。
+- 這個修正會讓非本人財務人員無法再對待審案件批次產檔，需申報功能負責人確認「只有正式核准才可產檔」符合預期（`EXPORTABLE_STATUS = "approved"` 與既有測試顯示設計意圖如此）。
+- F09 真正的 TXT 產檔內容與財政部申報軟體匯入仍須實測。

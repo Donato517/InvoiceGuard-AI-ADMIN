@@ -5,7 +5,9 @@
   @context invoices: list[dict] 發票資料清單
   @context status: str | None   篩選狀態
   @context q: str               搜尋字串
-  @context counts: dict         統計數量 {total, pending, passed, flagged}
+  @context counts: dict         統計數量 {total, pending, passed, flagged}（完整清單，不受分頁影響）
+  @context paging: PageView     目前頁（每頁 30 筆，app.utils.list_paging）：page、pages、total、start、end、links
+  @context page_urls: dict      頁碼 → 保留 q／status 的換頁網址
 #}
 {% extends "layouts/admin.html" %}
 {% block title %}發票審核{% endblock %}
@@ -89,12 +91,13 @@
         <table class="table">
           <thead>
             <tr>
+              <th scope="col" class="col-no">序號</th>
+              <th scope="col">上傳日期</th>
               <th scope="col">發票號碼</th>
               {% if is_finance %}<th scope="col">上傳者帳號</th>{% endif %}
               <th scope="col">開立日期</th>
               <th scope="col">品名項目</th>
-              <th scope="col">未稅金額</th>
-              <th scope="col">稅額</th>
+              <th scope="col" class="col-money">含稅總額</th>
               <th scope="col">狀態</th>
               <th scope="col">進度</th>
               <th scope="col">操作</th>
@@ -103,14 +106,15 @@
           <tbody>
             {% for inv in invoices %}
               <tr {% if inv.is_self_upload %}class="row--self-upload"{% endif %}>
+                <td class="col-no">{{ paging.start + loop.index0 if paging is defined else loop.index }}</td>
+                <td>{{ inv.uploaded_date | default("—", true) }}</td>
                 <td>
                   <a href="/invoices/{{ inv.id }}">{{ inv.invoice_number }}</a>
                 </td>
                 {% if is_finance %}<td data-submitter-account>{{ inv.submitter_account | default("未提供") }}</td>{% endif %}
                 <td>{{ inv.invoice_date }}</td>
-                <td>{{ inv.item_description }}</td>
-                <td>{{ inv.net_amount | currency }}</td>
-                <td>{{ inv.tax_amount | currency }}</td>
+                <td class="col-item" title="{{ inv.item_description }}">{{ inv.item_description }}</td>
+                <td class="col-money">{{ inv.total_amount | currency }}</td>
                 <td>
                   {% if is_finance %}
                     {% if inv.display_status_code == "processed" %}
@@ -149,8 +153,15 @@
                 <td>
                   {% set raw_step = 9 if inv.is_completed else (inv.stage if inv.stage else 4) %}
                   {% set target_step = max_flow_step if (max_flow_step is defined and raw_step > max_flow_step) else raw_step %}
+                  {#- 本人上傳者不得查看步驟 5、6，連結改到步驟 4；步驟 7 起待會計確認，沿用主線 -#}
+                  {% if inv.is_self_upload and target_step in (5, 6) %}{% set target_step = 4 %}{% endif %}
                   {% set step_done = inv.is_completed or (max_flow_step is defined and max_flow_step < 9 and (inv.first_four_checked or inv.stage >= max_flow_step)) %}
-                  {% if inv.is_self_upload %}
+                  {% if inv.can_correct %}
+                    {#- 被退回申請人的本人案件：先補正（含財務部門的本人案件）；真正的補正資格進頁面時由 API 判斷 -#}
+                    <a href="/invoices/{{ inv.id }}/correct"
+                       class="btn btn--primary btn--small"
+                       data-correct-action>補正</a>
+                  {% elif inv.is_self_upload %}
                     <a href="/invoices/{{ inv.id }}/flow?step={{ target_step }}"
                        class="btn btn--secondary btn--small"
                        data-self-upload-action>檢視詳情</a>
@@ -163,6 +174,37 @@
             {% endfor %}
           </tbody>
         </table>
+        {#- 分頁列放在 #invoice-table-wrap 內：搜尋／篩選以 HTMX 換掉表格時一起更新（並回到第 1 頁） -#}
+        {% if paging is defined %}
+          <nav class="pagination pagination--table" aria-label="發票列表分頁">
+            {% if paging.pages > 1 %}
+              <span class="pagination__summary">第 {{ paging.start }}–{{ paging.end }} 筆，共 {{ paging.total }} 筆</span>
+              <div class="pagination__pages">
+                {% if paging.page > 1 %}
+                  <a class="pagination__item" href="{{ page_urls[paging.page - 1] }}">上一頁</a>
+                {% else %}
+                  <span class="pagination__item" aria-disabled="true">上一頁</span>
+                {% endif %}
+                {% for number in paging.links %}
+                  {% if number is none %}
+                    <span class="pagination__gap" aria-hidden="true">…</span>
+                  {% elif number == paging.page %}
+                    <span class="pagination__item pagination__num pagination__item--active" aria-current="page">{{ number }}</span>
+                  {% else %}
+                    <a class="pagination__item pagination__num" href="{{ page_urls[number] }}">{{ number }}</a>
+                  {% endif %}
+                {% endfor %}
+                {% if paging.page < paging.pages %}
+                  <a class="pagination__item" href="{{ page_urls[paging.page + 1] }}">下一頁</a>
+                {% else %}
+                  <span class="pagination__item" aria-disabled="true">下一頁</span>
+                {% endif %}
+              </div>
+            {% else %}
+              <span class="pagination__summary">共 {{ paging.total }} 筆</span>
+            {% endif %}
+          </nav>
+        {% endif %}
       {% else %}
         <p class="empty-state">目前沒有符合條件的發票</p>
       {% endif %}

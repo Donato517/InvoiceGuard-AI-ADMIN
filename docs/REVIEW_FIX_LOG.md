@@ -41,7 +41,7 @@
 - 需求（使用者確認，取代同日前一筆與主線 `bb6dc42` 的「本人可檢視步驟 5、只是不能操作」設計）：本人上傳的發票，本人不得執行財務審核動作，也不得查看步驟 5、6；不論財務部或非財務部門，本人在步驟 4 完成後顯示「檢視我的發票」並回發票管理列表（`/invoices`）。
 - 後端：`invoice_flow` 與 `_render_flow_page` 對本人上傳且 `step in {5, 6}`（`_SELF_BLOCKED_STEPS`）回 403（`DeniedError`，錯誤重繪路徑也一併擋住）；`/flow/advance` 對 `from_step in {4, 5, 6}` 的本人上傳回 403，不改案件狀態；`_deny_self_review` 不再重繪步驟 5 審核頁，改回 403 錯誤頁（訊息不變）。判斷沿用主線 `_is_self_upload`（只比對真實 User ID）。
 - 步驟 4 按鈕：本人上傳者不再看到「確認並繼續」或「前往步驟 5」。非暫存草稿的案件，「檢視我的發票」仍以 POST 送到原本的 `/flow/finish-first-four`（資料庫案件只轉址，舊記憶體示範發票寫入「前四步已核對」標記），再導回 `/invoices`；暫存草稿因該端點回 409，改用一般連結。不呼叫 `/flow/advance`，不改審核狀態。步驟列只停用步驟 5、6 的連結；列表本人那列的「檢視詳情」若會連到步驟 5、6 則改連步驟 4。
-- 【待決】步驟 7～9 的本人規則等會計確認，本次不新增、也不放寬主線：本人 GET 步驟 7～9、`/flow/advance`（from_step 7 起）與 `/flow/complete` 的行為與主線相同。上一版（`19e7d8c`）曾一併封鎖 `step >= 5`、`from_step >= 4` 與 `/flow/complete`，已縮回到使用者確認的步驟 5、6。風險：目前本人若取得步驟 7～9 的連結或直接 POST，仍可操作（與主線相同）；會計決議後只需調整 `_SELF_BLOCKED_STEPS` 與 `test_steps_7_to_9_follow_main_until_accounting_decides`。
+- 【已定案，見下方 2026-11-06「步驟 7～9」條目】步驟 7～9 的本人規則原本待會計確認，現已由使用者指示：開放本人作業，但須先由具財務部權限的他人核准。
 - 未改：`_flow_step_review.html` 內主線的本人唯讀區塊現在到不了（保留）；`/filing`、`/import-confirm`、匯出與批次申報的本人限制待另行協調。
 - 驗證：`test_self_upload_flow_gates.py`（24 項）、更新 `test_finance_self_upload.py` 與 `test_department_login.py` 的舊斷言；ADMIN 全套 3165 passed、41 skipped（含需要隔離資料庫的整合測試被略過）；Ruff、djLint、check_project、`git diff --check` 通過。離線測試，未連資料庫與正式站，未做瀏覽器實測。
 
@@ -1247,3 +1247,22 @@ Service 控制交易與關閉連線，重複統編由本機唯一限制把關，
 說明見 FEATURE-DELIVERY-20261106.md；提交前的實際驗證結果另補 TEST_REPORT。
 
 交付驗證（2026-11-06）：包含 main 新版補正及本機兩項功能的完整 pytest 3151 passed、31 skipped（542.82 秒），1 個既有 Starlette 警告；check_project --project-root ..、Ruff lint、91 份樣板 djLint 通過。供應商新建／修訂／回滾另有合成記憶體 PostgreSQL 驗收；正式角色、Storage、多連線、模型與 Preview 待驗收。
+
+## 2026-11-06 本人上傳者的步驟 7～9：他人核准後才開放（含產檔與下載）
+
+- 需求（使用者）：本人一律不得查看或操作步驟 5、6；其他財務人員核准後，本人可進入並操作步驟 7～9，包含單張與批次的產檔、下載；駁回、作廢、補正重送後尚未重新核准的案件不得放行；其他原有檢核與角色權限不變。
+- 放行條件（`_other_finance_approved`）：`review_status == "approved"`，且（`stage >= 7` 或 `is_completed`）。**`is_completed` 不等於核准**：資料庫的駁回、作廢案件也會被標成已完成，所以一定先看 `review_status`（上一版先看 `is_completed`，會讓駁回或作廢的本人案件被放行，已修正）。
+- 資料庫案件的映射（`invoice_repository._row_to_invoice_dict`）：`approved` → 階段 9、已核准、已完成；`pending_*` → 階段 5、待審；`returned_*` → 階段 3；`rejected`／`voided` → 階段 5、已完成但審核狀態為駁回。因此**正式資料庫案件核准後直接映射到步驟 9，資料庫沒有獨立的步驟 7 推進紀錄**；「階段 ≥ 7」只對記憶體示範案件（由 `/flow/advance` 推進）有實際作用。上一版寫的「財務須先推進到步驟 7」不適用於資料庫案件，已更正。
+- 核准者身分：ADMIN 讀到的案件資料沒有核准者欄位，無法直接驗證。實際採用的授權依據是：本人無法核准或退回自己的發票（路由層 `_deny_self_review` 加服務層 `SELF_APPROVAL`／`SELF_RETURN`），資料庫核准時會寫入審核者（`record_reviewer`）。限制：這是「本人走不到核准路由」的推論，不是從資料證明；API 目前沒有核准或匯出路由，若日後新增或有其他系統直接改資料庫，需要另行確認。
+- 路由行為（本人上傳者，修改前 → 修改後）：
+  - `GET /flow?step=5、6`、`/flow/advance` from 4～6：403 → 403（不變）。
+  - `GET /flow?step=7～9`、`/flow/advance` from 7～9、`/flow/complete`：核准前 403；核准後放行；駁回、作廢、僅標記完成不再被放行。
+  - `POST /{id}/filing`（步驟 6 單張申報）：原本不檢查 → **一律 403**。
+  - `POST /{id}/import-confirm`（步驟 7）：原本不檢查 → 核准前 403、核准後放行。
+  - `GET /{id}/export/{kind}`（步驟 9 單張匯出下載）：原本不檢查 → 核准前 403、核准後放行。
+  - `POST /filing/export`（批次申報檔）：原本只有 F09 檢核 → 選取中只要有「本人上傳且未核准」的發票，整批 403 且不呼叫產檔；核准後仍須通過原有 F09 檢核。
+  - 非本人使用者：以上路由行為不變。
+- 發票清單與步驟列：本人不可進入的步驟顯示為不可點，清單連結退到步驟 4。
+- 已知的跨組風險（本次未改，僅報告）：F09 的狀態判斷（`_to_filing_snapshot`）把資料庫「待審」案件的檢視狀態 `passed` 也視為已核准，所以**非本人**的待審資料庫案件目前也可能通過批次檢核；本次只對本人案件在路由上直接把關，沒有改動這個共用判斷。另外 `/filing` 頁面仍會列出本人未核准的案件供勾選，但產檔會被擋。
+- 測試：`tests/unit/test_self_upload_flow_gates.py`（TestClient 離線測試；批次產檔以替身代替 `build_format21_file`，不代表 F09 實際檢核；資料庫映射測試只呼叫 `_row_to_invoice_dict`，沒有連資料庫）。沒有真實資料庫、API 或正式環境的整合測試。
+- 獨立待辦（不屬本次補丁）：(1) F09 快照把 `status == "passed"` 視為核准，須與申報功能負責人協調；(2) 資料庫風格案件對 `/filing`、`/import-confirm`、`/export`、`/filing/export` 的路由整合測試；(3) 真實 F09 產檔驗證（本次批次測試以替身取代）；(4) 真實 API、資料庫與正式站驗收；(5) 批次申報清單仍可勾選本人未核准案件，與實際權限不一致的介面問題。

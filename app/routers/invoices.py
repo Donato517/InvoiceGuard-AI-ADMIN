@@ -857,6 +857,7 @@ def _render_invoice_list_view(
     base_invoices = [_ensure_invoice_14_fields(i) for i in active_invoices if section_filter(i)]
     for i in base_invoices:
         i["is_self_upload"] = is_finance and _is_self_upload(i.get("uploaded_by"), current_user_id)
+        i["self_blocked_steps"] = sorted(_self_blocked_steps(i, i["is_self_upload"]))
         status_code = _derive_invoice_status(i)
         i["display_status_code"] = status_code
         i["display_status_label"] = INVOICE_STATUS_MAP.get(status_code, "待審核")
@@ -1226,6 +1227,14 @@ def export_batch_filing(
     selected_invoices = [i for i in all_invoices if str(i["id"]) in id_strs]
     if not selected_invoices:
         raise HTTPException(status_code=400, detail="找不到勾選的發票")
+    # 本人上傳的發票須先由他人核准才可納入產檔。F09 的狀態判斷把資料庫「待審」案件的檢視狀態也當成通過，
+    # 所以這裡直接用審核狀態把關，在產生任何檔案之前拒絕。
+    me = _reviewer_id(request)
+    if any(
+        _is_self_upload(i.get("uploaded_by"), me) and not _other_finance_approved(i)
+        for i in selected_invoices
+    ):
+        raise DeniedError
 
     result = build_format21_file(
         [_to_filing_snapshot(i) for i in selected_invoices], _FILING_PROFILE, target_period
@@ -1294,15 +1303,46 @@ def invoice_detail(request: Request, invoice_id: str) -> HTMLResponse:
     )
 
 
-# 使用者已確認本人上傳者不得查看／推進的步驟；步驟 7～9 的本人規則待會計確認，這裡不新增（沿用主線）
+# 使用者已確認本人上傳者不得查看／推進步驟 5、6；步驟 7～9 開放本人作業，
+# 但須先由具財務部權限的「他人」核准（2026-11-06 使用者確認）。
 _SELF_BLOCKED_STEPS = frozenset({5, 6})
+_SELF_LATE_STEPS = frozenset({7, 8, 9})
+_LATE_STEP_FIRST = 7
+
+
+def _other_finance_approved(invoice: dict[str, Any]) -> bool:
+    """步驟 7～9 對本人的放行條件：案件「已核准」，且（已推進到步驟 7 或流程已完成）。
+
+    `is_completed` 不等於核准：資料庫的駁回、作廢案件也會被標成已完成，所以必須先看 `review_status`。
+    資料庫案件的階段由狀態推導（approved → 9、pending_* → 5），核准後即滿足階段條件；
+    記憶體示範案件的階段由 /flow/advance 推進，核准後還要有人推進到步驟 7。
+    本人不能核准或退回自己的發票（SELF_APPROVAL／SELF_RETURN），所以「已核准」只可能來自他人；
+    ADMIN 讀到的案件資料不含核准者欄位，這個推論無法在這裡直接驗證。補正重送會把審核狀態重置，須重新核准。
+    """
+    if invoice.get("review_status") != "approved":
+        return False
+    if invoice.get("is_completed"):
+        return True
+    try:
+        stage = int(invoice.get("stage") or 1)
+    except (TypeError, ValueError):
+        return False
+    return stage >= _LATE_STEP_FIRST
+
+
+def _self_blocked_steps(invoice: dict[str, Any], is_self_upload: bool) -> frozenset[int]:
+    """本人上傳者目前不可進入的步驟：5、6 一律不可；7～9 待他人核准後才開放。"""
+    if not is_self_upload:
+        return frozenset()
+    if _other_finance_approved(invoice):
+        return _SELF_BLOCKED_STEPS
+    return _SELF_BLOCKED_STEPS | _SELF_LATE_STEPS
 
 
 def _deny_self_finance_view(request: Request, invoice: dict[str, Any], step: int) -> None:
-    """本人上傳者不得查看步驟 5、6（2026-11-06 使用者確認，取代「可檢視」的舊設計）。"""
-    if step in _SELF_BLOCKED_STEPS and _is_self_upload(
-        invoice.get("uploaded_by"), _reviewer_id(request)
-    ):
+    """本人上傳者不得查看步驟 5、6；步驟 7～9 須待他人核准（取代「可檢視」的舊設計）。"""
+    is_self = _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request))
+    if is_self and step in _self_blocked_steps(invoice, is_self):
         raise DeniedError
 
 
@@ -1342,7 +1382,7 @@ def _render_flow_page(
         max_stage=int(invoice.get("stage", step)),
         has_file_bytes=bool(invoice.get("file_bytes") or invoice.get("file_name")),
         allowed_max_step=max_flow_step,
-        blocked_steps=_SELF_BLOCKED_STEPS if is_self_upload else frozenset(),
+        blocked_steps=_self_blocked_steps(invoice, is_self_upload),
     )
     checks = _build_checks(invoice)
     voucher = _build_voucher(invoice)
@@ -1872,9 +1912,10 @@ def advance_flow_step(
     invoice = _find_flow_invoice(invoice_id)
     if invoice is not None:
         _check_invoice_access(request, invoice, require_owner=(from_step <= 3))
-        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得在步驟 5、6 推進；步驟 7 起待會計確認，沿用主線
-        if from_step in {4, *_SELF_BLOCKED_STEPS} and _is_self_upload(
-            invoice.get("uploaded_by"), _reviewer_id(request)
+        # 本人上傳者不得從步驟 4 進入財務審核（步驟 5），也不得在步驟 5、6 推進；
+        # 步驟 7～9 須待他人核准後才可作業（核准前連步驟 7 本身都不可進入或推進）
+        if _is_self_upload(invoice.get("uploaded_by"), _reviewer_id(request)) and (
+            from_step == 4 or from_step in _self_blocked_steps(invoice, True)
         ):
             raise DeniedError
     if invoice_id in _DRAFT_INVOICE_STORE and from_step == 1 and not invoice.get("file_name"):
@@ -1915,6 +1956,7 @@ def complete_invoice_flow(request: Request, invoice_id: str) -> RedirectResponse
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _deny_self_finance_view(request, invoice, 9)  # 本人須待他人核准後才可確認完成
 
     invoice["is_completed"] = True
     invoice["stage"] = 9
@@ -2857,6 +2899,7 @@ def generate_filing(request: Request, invoice_id: str) -> RedirectResponse:
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _deny_self_finance_view(request, invoice, 6)  # 本人一律不得操作步驟 6
 
     inv_no = invoice["invoice_number"]
     buyer = invoice["buyer_tax_id"]
@@ -2875,6 +2918,7 @@ def confirm_import(request: Request, invoice_id: str) -> RedirectResponse:
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _deny_self_finance_view(request, invoice, 7)  # 本人須待他人核准後才可操作
 
     invoice["import_confirmed_at"] = datetime.now(UTC)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=7", status_code=303)
@@ -2888,6 +2932,7 @@ def export_invoice_data(request: Request, invoice_id: str, kind: str) -> Respons
     invoice = _find_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
+    _deny_self_finance_view(request, invoice, 9)  # 本人須待他人核准後才可產檔、下載
 
     inv_no = invoice["invoice_number"]
 

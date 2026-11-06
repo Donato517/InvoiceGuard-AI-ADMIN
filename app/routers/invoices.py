@@ -1006,7 +1006,9 @@ def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
     """將示範發票轉為 F09 讀取的 Schema v1.5 欄位，缺值不補預設，交由 F09 檢核。"""
     # TODO(StacieChen): 接上資料庫後改由 repository 讀 invoices，刪除此轉換
     number = str(invoice.get("invoice_number") or "").strip().upper()
-    approved = invoice.get("review_status") == "approved" or invoice.get("status") == "passed"
+    # 只認正式財務核准。status == "passed" 只是「資料檢視通過」，資料庫待審（pending_*）案件也是 passed，
+    # 不能當成核准；是否核准一律看 review_status，F09 才會對未核准案件回報 NOT_APPROVED。
+    approved = invoice.get("review_status") == "approved"
     deduction = str(invoice.get("deduction_code") or "").strip()[:1]
     category = invoice.get("tax_category")
     return {

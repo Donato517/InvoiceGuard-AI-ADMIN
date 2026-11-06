@@ -1055,8 +1055,13 @@ def _to_filing_snapshot(invoice: dict[str, Any]) -> dict[str, Any]:
         "invoice_date": _roc_to_iso(invoice.get("invoice_date")),
         "seller_tax_id": invoice.get("seller_tax_id"),
         "buyer_tax_id": invoice.get("buyer_tax_id"),
-        "sales_amount": invoice.get("net_amount"),
-        "tax_amount": invoice.get("tax_amount"),
+        # 資料庫案件用原始金額（NULL 保持 None 交給 F09 判定缺漏、小數不被 int() 截斷）；示範案件沿用顯示值
+        "sales_amount": invoice["sales_amount_db"]
+        if "sales_amount_db" in invoice
+        else invoice.get("net_amount"),
+        "tax_amount": invoice["tax_amount_db"]
+        if "tax_amount_db" in invoice
+        else invoice.get("tax_amount"),
         "tax_type": _TAX_CATEGORY_TO_TYPE.get(str(category), category),
         "status": "approved" if approved else str(invoice.get("status") or ""),
         "deduction_code": deduction if deduction and deduction in "1234" else "",

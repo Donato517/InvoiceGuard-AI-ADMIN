@@ -1,5 +1,6 @@
 """模組名稱：app.routers.showcases；功能說明：已登入的供應商範例管理與測試核對入口。"""
 
+import re
 from datetime import date
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
@@ -13,6 +14,7 @@ from app.core.templating import templates
 from app.routers.e_admin import CurrentIdentity, Module, require_e_origin
 from app.schemas.e_admin import DeniedError, EError, Identity, UnavailableError
 from app.schemas.showcase import MAX_BYTES, MAX_TRUTH_FIELDS, SampleInput, SearchInput
+from app.schemas.showcase_v2 import invoice_date as parse_invoice_date
 from app.services import showcase_service as service
 
 router = APIRouter(prefix="/showcases", tags=["供應商 Show Case"])
@@ -37,6 +39,24 @@ FIELD_LABELS = {
     "items.1.amount": "第 1 列金額",
 }
 
+ITEM_LABELS = {"name": "品名", "quantity": "數量", "unit_price": "單價", "amount": "金額"}
+
+
+def field_label(path: str) -> str:
+    """將明細路徑轉為可辨識的列號與欄名。"""
+    match = re.fullmatch(r"items\.([1-9][0-9]*)\.(name|quantity|unit_price|amount)", path)
+    if match:
+        return f"第 {match.group(1)} 列{ITEM_LABELS[match.group(2)]}"
+    return FIELD_LABELS.get(path, "其他明細欄位")
+
+
+def format_invoice_date(value: str) -> str:
+    """僅對可解析日期顯示統一的民國年月日，無法解析時保留原文供核對。"""
+    day = parse_invoice_date(value)
+    if day is None or day.year < 1912:
+        return value
+    return f"{day.year - 1911}年{day.month}月{day.day}日"
+
 
 def render(
     request: Request,
@@ -51,15 +71,25 @@ def render(
     truths = {item["path"]: item for item in data.get("truths", [])}
     original = data.get("recognition", {}).get("values", {})
     paths = list(dict.fromkeys([*FIELD_LABELS, *original, *truths]))
-    item_paths = [path for path in paths if path.startswith("items.")]
+    item_order = {"name": 0, "quantity": 1, "unit_price": 2, "amount": 3}
+
+    def item_sort_key(path: str) -> tuple[int, int, str]:
+        match = re.fullmatch(r"items\.([1-9][0-9]*)\.([a-z_]+)", path)
+        if match:
+            return int(match.group(1)), item_order.get(match.group(2), 4), path
+        return 10**9, 4, path
+
+    item_paths = sorted((path for path in paths if path.startswith("items.")), key=item_sort_key)
     paths = [path for path in paths if path not in item_paths]
     paths[4:4] = item_paths
     fields = [
         {
             "path": path,
-            "label": FIELD_LABELS.get(path, "其他明細欄位"),
+            "label": field_label(path),
             "state": truths.get(path, {}).get("state", "unconfirmed"),
-            "text": truths.get(path, {}).get("text", original.get(path, "")),
+            "text": format_invoice_date(truths.get(path, {}).get("text", original.get(path, "")))
+            if path == "invoice_date"
+            else truths.get(path, {}).get("text", original.get(path, "")),
             "original": original.get(path, ""),
             "modified": path in truths and truths[path]["text"] != original.get(path, ""),
         }
@@ -73,6 +103,7 @@ def render(
             "e_menu": module.sidebar_menu(identity),
             "effective_access": request.state.e_access,
             "fields": fields,
+            "format_invoice_date": format_invoice_date,
             **values,
         },
         status_code=status_code,
@@ -398,7 +429,7 @@ async def showcase_status(
     command = str(form.get("command", ""))
     reason = str(form.get("reason", ""))
     try:
-        await run_in_threadpool(
+        master_supplier_id = await run_in_threadpool(
             service.change_status,
             identity,
             sample,
@@ -425,6 +456,8 @@ async def showcase_status(
             },
             status_code=422,
         )
+    if command in {"activate", "deactivate"} and master_supplier_id:
+        return RedirectResponse(f"/showcases/by-supplier/{master_supplier_id}", status_code=303)
     return RedirectResponse(f"/showcases/{sample}#showcase-status", status_code=303)
 
 

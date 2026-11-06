@@ -133,10 +133,12 @@ def supplier_list(
 ) -> HTMLResponse:
     """真實主檔列表、搜尋及分頁。"""
     rows, total = service.list_suppliers(q.strip(), page)
+    counts = service.showcase_counts([UUID(row["supplier_id"]) for row in rows])
     return render(
         request,
         "list",
         suppliers=rows,
+        showcase_counts=counts,
         q=q,
         page=page,
         total=total,

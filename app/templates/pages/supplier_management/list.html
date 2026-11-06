@@ -59,6 +59,7 @@
                 <a href="/showcases/by-supplier/{{ item.supplier_id }}"
                    class="btn btn--primary btn--small"
                    title="{{ item.supplier_name }}的 Show Case">showcase</a>
+                <p class="muted small-text">{% if showcase_counts is none %}範例張數暫無法讀取{% else %}範例發票{{ showcase_counts.get(item.supplier_id, 0) }}張{% endif %}</p>
               </td>
               <td class="small-text">
                 {{ item.updated_at[:19].replace('T', ' ') }}

@@ -129,11 +129,18 @@ def test_showcase_explains_missing_department_grant_and_unavailable_store(
     missing = browser.get(path)
     assert missing.status_code == 503 and "Show Case 資料服務暫時無法使用" in missing.text
     monkeypatch.setattr(showcase_service.v2, "supplier_examples", lambda *args, **kwargs: [])
+    monkeypatch.setattr(showcase_service.repository, "archive_available", lambda db: False)
     monkeypatch.setattr(showcase_service.repository, "archive_writable", lambda db: False)
     opened = browser.get(path)
     assert opened.status_code == 200 and "合成測試供應商" in opened.text
     assert "目前沒有範例" in opened.text and "啟用歷程保存後" in opened.text
     assert "加入範例發票</a>" not in opened.text
+    monkeypatch.setattr(showcase_service.repository, "archive_available", lambda db: True)
+    monkeypatch.setattr(
+        showcase_service.repository,
+        "read",
+        lambda *args, **kwargs: {"payload": {"revisions": [{"id": "synthetic-unmatched"}]}},
+    )
     monkeypatch.setattr(showcase_service.repository, "archive_writable", lambda db: True)
     assert "加入範例發票</a>" in browser.get(path).text
     assert 'href="/showcases"' not in browser.get("/suppliers").text
@@ -255,6 +262,12 @@ def test_showcase_taiwan_supplier_keeps_v2_gallery(
     monkeypatch.setattr(showcase_service.repository, "search", failing_read("42P01", legacy))
     monkeypatch.setattr(
         showcase_service.v2, "supplier_examples", lambda db, key, page: [item] if has_sample else []
+    )
+    monkeypatch.setattr(showcase_service.repository, "archive_available", lambda db: True)
+    monkeypatch.setattr(
+        showcase_service.repository,
+        "read",
+        lambda *args, **kwargs: {"payload": {"revisions": [{"id": "synthetic-unmatched"}]}},
     )
     monkeypatch.setattr(showcase_service.repository, "archive_writable", lambda db: True)
     response = browser.get(f"/showcases/by-supplier/{KEY}")

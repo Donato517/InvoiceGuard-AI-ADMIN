@@ -103,6 +103,33 @@ def save_example(
     return version
 
 
+def sync_example_invoice_identity(
+    db: Session, sample: UUID, version: int, header: dict[str, Any]
+) -> None:
+    """啟用時將剛確認的日期與字軌號碼同步到正式範例欄位。"""
+    if not any(key in header for key in ("invoice_date", "invoice_track", "invoice_number")):
+        return
+    count = db.execute(
+        text("""
+        UPDATE public.supplier_invoice_examples SET
+          invoice_date=COALESCE(CAST(:invoice_date AS date), invoice_date),
+          invoice_track=COALESCE(:invoice_track, invoice_track),
+          invoice_number=COALESCE(:invoice_number, invoice_number)
+        WHERE example_id=:id AND example_version=:version
+          AND source_invoice_id IS NULL AND source_file_id IS NULL AND source_recognition_id IS NULL
+        """),
+        {
+            "id": sample,
+            "version": version,
+            "invoice_date": header.get("invoice_date"),
+            "invoice_track": header.get("invoice_track"),
+            "invoice_number": header.get("invoice_number"),
+        },
+    ).rowcount
+    if count != 1:
+        raise ConflictError
+
+
 def set_example_status(
     db: Session,
     sample: UUID,

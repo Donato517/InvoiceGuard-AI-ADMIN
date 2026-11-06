@@ -87,7 +87,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   intakeFile?.form?.addEventListener('submit', event => {
     if (event.submitter?.name === 'run_ocr' && intakeStatus && intakeFile.checkValidity()) {
-      intakeStatus.textContent = '正在上傳與辨識，請稍候；完成後會開啟左圖右欄的核對頁。';
+      intakeStatus.textContent = intakeFile.files.length
+        ? '正在上傳與辨識新圖片，請稍候。'
+        : '正在重新辨識目前原圖，請稍候。';
     }
   });
   const file = document.getElementById('showcase-test-file');

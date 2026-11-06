@@ -11,7 +11,7 @@
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -26,6 +26,7 @@ from app.schemas.intake import (
     IntakeNotConfiguredError,
     IntakeTransportError,
     OutboundRequest,
+    PdfPageClassifyView,
     RecognitionView,
     RequiredCheckView,
     ResubmitView,
@@ -139,6 +140,19 @@ class ApiIntakeClient:
             timeout=RECOGNIZE_TIMEOUT_SECONDS,
         )
 
+    def classify_pdf_pages(self, images: Sequence[tuple[str, bytes, str]]) -> PdfPageClassifyView:
+        """多頁 PDF 找發票頁：送頁面縮圖（依頁序，每次 1～9 張），取得是否為三聯式發票與聯別；API 不存檔、不寫資料。"""
+        return self._call(
+            "check",
+            "POST",
+            f"{API_PREFIX}/pdf-pages/classify",
+            PdfPageClassifyView,
+            200,
+            files=[("files", image) for image in images],
+            bind_bytes=b"".join(content for _, content, _ in images),
+            timeout=RECOGNIZE_TIMEOUT_SECONDS,
+        )
+
     def check_required(self, body: Mapping[str, Any]) -> RequiredCheckView:
         return self._call(
             "check", "POST", f"{API_PREFIX}/check-required", RequiredCheckView, 200, json_body=body
@@ -203,7 +217,9 @@ class ApiIntakeClient:
         expected: int | frozenset[int],
         *,
         json_body: Mapping[str, Any] | None = None,
-        files: Mapping[str, tuple[str, bytes, str]] | None = None,
+        files: Mapping[str, tuple[str, bytes, str]]
+        | Sequence[tuple[str, tuple[str, bytes, str]]]
+        | None = None,
         bind_bytes: bytes | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> Model:

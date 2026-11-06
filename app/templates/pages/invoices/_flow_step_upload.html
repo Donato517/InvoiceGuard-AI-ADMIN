@@ -3,12 +3,17 @@
   @description 步驟 1：上傳發票圖檔（HTML 原型 flowStep 0），支援拖曳檔案與即時預覽。
   @route POST /invoices/{invoice_id}/flow/upload
   @context invoice: dict  發票資料；invoice.file_name 為已上傳的檔名
+  @context pdf_page_pick: bool  新上傳（會送 API 辨識）時為真：選 PDF 會先由 flow-upload-pdf.js 挑出三聯式發票頁再送出
 #}
 {% if is_first_four_readonly %}
   <p class="alert alert--warning">進度已進入步驟 5（財務審核）以上，步驟 1～4 為唯讀模式，不可重新上傳發票。</p>
 {% else %}
   <p class="alert alert--info">
-    支援 JPG、PNG、PDF（單頁，4 MB 以下），可點擊或直接拖曳發票檔案至下方區域。送出後會把影像傳到 API 做 Document AI OCR 辨識；API 會暫存影像（保留期限見辨識結果）並寫入辨識紀錄，逾期未提交即刪除。
+    {% if pdf_page_pick %}
+      支援 JPG、PNG、PDF（4 MB、45 頁以內，自動找出三聯式發票頁；第一聯存根聯不能報帳），可點擊或直接拖曳發票檔案至下方區域。
+    {% else %}
+      支援 JPG、PNG、PDF（單頁，4 MB 以下），可點擊或直接拖曳發票檔案至下方區域。
+    {% endif %}送出後會把影像傳到 API，由 Gemini 擷取發票欄位、再由程式檢核統編、稅額與金額；API 會暫存影像並寫入辨識紀錄，1 小時內未提交即刪除。
   </p>
 {% endif %}
 <form id="flow-upload-form"
@@ -16,7 +21,8 @@
       action="/invoices/{{ invoice.id }}/flow/upload"
       enctype="multipart/form-data"
       class="form"
-      data-busy="">
+      data-busy=""
+      {% if pdf_page_pick %}data-pdf-pick="true"{% endif %}>
   {#- 「上傳並開始辨識」用按鈕載入（main.js 的 flow-upload-form 處理，模式 A）；data-busy="" 避免再蓋全頁遮罩 -#}
   <div class="dropzone {% if is_first_four_readonly %}dropzone--disabled{% endif %}"
        id="invoiceDrop"
@@ -54,4 +60,9 @@
       尚未選擇檔案
     {% endif %}
   </p>
+  <p id="pdf-pick-status"
+     class="pdf-pick-status"
+     role="status"
+     aria-live="polite"
+     hidden></p>
 </form>

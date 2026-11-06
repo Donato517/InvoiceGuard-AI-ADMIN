@@ -1,5 +1,7 @@
 > 2026-11-04：新增「公司基本資料」`/company-profile`（名稱、統一編號、稅籍編號必填，稅籍編號輸入兩次確認；負責人、地址、稽徵機關、聯絡窗口選填），F09 申報檔改讀此資料，未設定時擋下產檔。正式 DB 已有資料表與功能碼（手動 SQL，Schema v2.1），由部門管理勾選後即可使用，詳見 [COMPANY_PROFILE](COMPANY_PROFILE.md)。
 
+> 2026-11-06（分支 feature/pdf-invoice-page-pick）：發票流程步驟 1 新上傳選多頁 PDF 時，按「上傳並開始辨識」先由瀏覽器挑出三聯式發票頁（`static/js/pdf-invoice-page.js` 與前台同一份、`static/js/flow-upload-pdf.js` 攔截送出；pdf.js 4.10.38 在 vendor/pdfjs）：4 MB、45 頁以內，每頁縮圖經 `POST /invoices/pdf-pages/classify`（同源檢查，`ApiIntakeClient.classify_pdf_pages` 轉 API）判斷是不是三聯式發票與聯別，第一聯擋下、多頁可用時跳選擇視窗；處理中按鈕顯示「辨識中…」並停用、蓋全頁遮罩（busy.js，文字隨進度更新；選擇視窗出現前先拿掉），找到後遮罩顯示「已找到第 X 頁…正在上傳辨識」，把檔案換成該頁 JPEG（已裁掉四周空白，只留發票）後送出（之後流程不變）；一般影像上傳也蓋同樣的遮罩。上傳說明與步驟 2 文字改為現行的 Gemini 擷取＋程式檢核、未提交影像保留 1 小時。既有案件補附件（不辨識）不攔截，PDF 原檔照舊上傳。離線測試 14 案（API 替身）＋本機 Chromium 以替身操作實際渲染頁面；尚未以真實 API／Gemini 與真實多頁 PDF 實測。
+
 > 2026-11-04：正式供應商列表／內容／新增修改／停用啟用、部門四操作及交易重驗已接線，2718 項 ADMIN 離線測試通過、32 項略過。正式 DB 套用與實際端到端驗收尚未執行，詳見 [SUPPLIER_MANAGEMENT](SUPPLIER_MANAGEMENT.md)。
 
 > 2026-10-28 側欄最新狀態：依目前部門的啟用功能及四操作勾選動態顯示；已接線且可查看才提供連結，其他已授權目錄項目顯示未接線／未授權查看。詳見 [登入說明](E-LOGIN-ACCESS.md)。

@@ -1,0 +1,94 @@
+/* 多頁 PDF 找發票頁（電腦上傳頁）：進度文字與多頁選擇視窗；搭配 js/pdf-invoice-page.js */
+
+.pdf-pick-status {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--color-primary-soft, #eef5ff);
+  color: var(--color-primary-soft-text, #42648c);
+  font-weight: 600;
+}
+
+.pdf-pick-status--found {
+  background: #e3f8ec;
+  color: #157a45;
+}
+
+.pdf-pick-status--error {
+  background: #ffe9e9;
+  color: #b13a3a;
+}
+
+.pdf-pick-note {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #e3f8ec;
+  color: #157a45;
+  font-weight: 600;
+}
+
+/* 挑頁處理中：選檔按鈕顯示「辨識中…」並反灰，不能再點 */
+.is-busy,
+.is-busy:hover {
+  opacity: 0.55;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.pdf-pick-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 24px;
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(15, 40, 80, 0.3);
+}
+
+.pdf-pick-dialog::backdrop {
+  background: rgba(10, 20, 40, 0.5);
+}
+
+.pdf-pick-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.pdf-pick-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.pdf-pick-dialog__option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 2px solid var(--color-border, #dfe7f2);
+  border-radius: 12px;
+  background: #fff;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-pick-dialog__option:hover,
+.pdf-pick-dialog__option:focus-visible {
+  border-color: var(--color-primary, #216de0);
+  outline: none;
+}
+
+.pdf-pick-dialog__option img {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #f2f6fb;
+}
+
+.pdf-pick-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+}

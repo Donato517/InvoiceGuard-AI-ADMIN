@@ -86,6 +86,21 @@ class DuplicateView(_ApiModel):
     is_duplicate: bool
 
 
+class PdfPageView(_ApiModel):
+    """多頁 PDF 找發票頁：單張頁面縮圖的判斷（copy_no：1 存根聯、2 扣抵聯、3 收執聯、None 看不清楚）。"""
+
+    index: int
+    is_triplicate_invoice: bool
+    copy_no: Literal[1, 2, 3] | None = None
+
+
+class PdfPageClassifyView(_ApiModel):
+    """API POST /invoices/pdf-pages/classify 的回應；pages 依上傳順序排列。"""
+
+    pages: tuple[PdfPageView, ...]
+    model: str
+
+
 class ModifiedFieldView(_ApiModel):
     field_scope: str
     line_no: int | None = None

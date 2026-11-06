@@ -6,7 +6,7 @@
   @context intake: dict             API 辨識結果（form、recognition）；空字典時為舊的預覽資料
 #}
 {% if intake %}
-  <p class="alert alert--info">以下是 Document AI OCR 與模型整理的辨識結果，可能有誤；請在下一步對照原圖逐欄核對與修正。</p>
+  <p class="alert alert--info">以下是 Gemini 擷取與程式檢核的辨識結果，可能有誤；請在下一步對照原圖逐欄核對與修正。</p>
   {% if intake.recognition %}
     <p class="muted small-text">辨識結果：{{ intake.recognition.result_status }}；影像保留到 {{ intake.recognition.expires_at.strftime("%Y-%m-%d %H:%M") }}，逾時需重新上傳。</p>
     {% if intake.recognition.printed %}

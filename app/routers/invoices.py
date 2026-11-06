@@ -1492,6 +1492,7 @@ async def upload_invoice_file(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
+    _refuse_db_memory_only_write(invoice)  # 資料庫案件的附件不會保存到 Storage，不可回成功
     if int(invoice.get("stage", 1)) >= 5 or invoice.get("is_completed"):
         raise HTTPException(
             status_code=400,
@@ -1774,6 +1775,32 @@ def _refuse_legacy_demo_write(invoice_id: str, invoice: dict[str, Any]) -> None:
         raise HTTPException(status_code=409, detail=_LEGACY_WRITE_MESSAGE)
 
 
+_DB_MEMORY_ONLY_MESSAGE = (
+    "此步驟尚未支援保存到資料庫，這次沒有儲存任何變更。"
+    "退回補正請到補正頁（前往補正）由系統正式重送；其餘狀態以財務審核結果為準。"
+)
+_NOT_APPROVED_EXPORT_MESSAGE = "此案件尚未經財務核准，不能匯出或產生申報資料。"
+
+
+def _refuse_db_memory_only_write(invoice: dict[str, Any]) -> None:
+    """資料庫案件不得走只改記憶體的舊入口：改了也不會保存，卻會顯示成功。
+
+    示範案件與草稿不受影響（草稿本來就只在記憶體；示範案件沒有資料庫列）。
+    """
+    if _is_db_invoice(invoice):
+        raise HTTPException(status_code=409, detail=_DB_MEMORY_ONLY_MESSAGE)
+
+
+def _require_approved_db_invoice(invoice: dict[str, Any]) -> None:
+    """資料庫案件的舊匯出／申報預覽入口：只有財務已核准（review_status == approved）才放行。
+
+    review_status 由資料庫 status 推導（_row_to_invoice_dict），請求內容無法影響；
+    與 _to_filing_snapshot 的核准規則一致。示範案件維持原行為。
+    """
+    if _is_db_invoice(invoice) and invoice.get("review_status") != "approved":
+        raise HTTPException(status_code=409, detail=_NOT_APPROVED_EXPORT_MESSAGE)
+
+
 def _commit_draft_after_correction(invoice_id: str, invoice: dict[str, Any]) -> None:
     """完成步驟 3 舊的示範核對後，清除暫存影像並放入記憶體清單；不寫入資料庫（見 _refuse_legacy_demo_write）。"""
     invoice.pop("file_bytes", None)
@@ -1956,6 +1983,10 @@ def complete_invoice_flow(request: Request, invoice_id: str) -> RedirectResponse
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
+    if _is_db_invoice(invoice):
+        # 資料庫案件的完成狀態由審核結果決定，這裡不能改；未核准的案件不假裝完成
+        _require_approved_db_invoice(invoice)
+        return RedirectResponse("/invoices", status_code=303)
     invoice["is_completed"] = True
     invoice["stage"] = 9
     return RedirectResponse("/invoices", status_code=303)
@@ -2666,6 +2697,7 @@ def procurement_resubmit(
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
     _check_invoice_access(request, invoice, require_owner=True)
+    _refuse_db_memory_only_write(invoice)  # 正式重送只走補正頁 → API；這裡只改記憶體
     case = _finance_case(invoice)
     scope = _case_scope(request)
     notes = list(response_note or [])
@@ -2906,6 +2938,10 @@ def generate_filing(request: Request, invoice_id: str) -> RedirectResponse:
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
+    if _is_db_invoice(invoice):
+        # 資料庫案件：未核准不產生預覽；預覽只存在記憶體，不保存。步驟 6 畫面本來就由資料即時檢核
+        _require_approved_db_invoice(invoice)
+        return RedirectResponse(f"/invoices/{invoice_id}/flow?step=6", status_code=303)
     inv_no = invoice["invoice_number"]
     buyer = invoice["buyer_tax_id"]
     net = str(invoice["net_amount"]).zfill(10)
@@ -2924,6 +2960,7 @@ def confirm_import(request: Request, invoice_id: str) -> RedirectResponse:
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
+    _refuse_db_memory_only_write(invoice)  # 匯入確認時間沒有資料庫欄位，不能顯示成已確認
     invoice["import_confirmed_at"] = datetime.now(UTC)
     return RedirectResponse(f"/invoices/{invoice_id}/flow?step=7", status_code=303)
 
@@ -2937,6 +2974,9 @@ def export_invoice_data(request: Request, invoice_id: str, kind: str) -> Respons
     if not invoice:
         raise HTTPException(status_code=404, detail="找不到指定發票")
 
+    _check_invoice_access(request, invoice)
+    # 舊匯出是示範格式（非 F09 正式申報檔）；資料庫案件須先經財務核准，不能繞過正式核准門檻
+    _require_approved_db_invoice(invoice)
     inv_no = invoice["invoice_number"]
 
     if kind == "report":

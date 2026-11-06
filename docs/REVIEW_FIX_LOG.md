@@ -1,5 +1,13 @@
 # AI 協作規範檢驗與修正紀錄
 
+## 2026-11-06 PR #21 第二輪審查 Batch 1：資料庫案件不得走只改記憶體的舊入口，舊匯出須先核准
+
+- 問題：`procurement/resubmit`、`flow/upload`、`import-confirm`、`filing`、`flow/complete` 對資料庫案件只修改 `_find_invoice` 回傳的一份用完即丟的字典卻回成功（畫面已隱藏表單，但直接 POST 仍可觸發）；`GET /invoices/{id}/export/{kind}` 沒有核准檢查，也沒有 `_check_invoice_access`，財務可匯出未核准的資料庫案件。
+- 處理（`app/routers/invoices.py`）：新增 `_refuse_db_memory_only_write`（資料庫案件回 409，示範案件與草稿不受影響）與 `_require_approved_db_invoice`（資料庫案件須 `review_status == "approved"`；該值只由資料庫 status 推導，請求無法影響，與 `_to_filing_snapshot` 同一規則）。`flow/complete`、`filing` 對資料庫案件不再修改記憶體；`export` 加上 `_check_invoice_access`。
+- 刻意不做：不把示範匯出改成 F09；已核准的資料庫案件仍可用舊示範格式匯出（見待業務確認）。不改 `_to_filing_snapshot`、不改任何 API／Schema。
+- 待業務確認：舊匯出是示範格式且資料來自 `_row_to_invoice_dict`（尚含固定會計科目／扣抵代號預設值，Batch 2 處理）；是否整個停用舊匯出由業務決定。
+- 驗證：`tests/unit/test_legacy_db_write_guards.py` 17 項（離線，monkeypatch 資料庫讀取）；全套 3269 通過、23 略過、3 失敗（皆為與本機兄弟 API 檔案比對的既有失敗：`test_shared_integrations[gemini.py]`、`test_showcase_gemini_contract`、`test_showcase_reader_contract`，在未修改的 origin/main 同樣失敗）。ruff／format／check_project 通過。未做隔離 PostgreSQL 與跨服務測試。
+
 ## 2026-11-06 Loading UX 模式 A／B／C 整合（側邊欄導覽、按鈕載入、同一動作防重）
 
 - 規則（使用者確認）：模式 A 按鈕載入（登入、發票辨識、啟停／徽章等局部操作）、模式 B 全頁遮罩（導覽、重要寫入）、模式 C 局部或無遮罩（GET 查詢、即時搜尋、下載、已有自己進度的操作）。
